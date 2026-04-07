@@ -1,0 +1,16 @@
+.git
+node_modules
+client/node_modules
+server/node_modules
+client/dist
+server/public
+server/.env
+server/serviceAccountKey.json
+server/testdownloadpage
+server/processed_images_hash.json
+server/processed_visual_hashes.json
+server/extracted_league_data.json
+server/ai_analysis_log.json
+server/ocr_output.txt
+*.traineddata
+*.log
