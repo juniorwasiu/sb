@@ -904,9 +904,11 @@ app.delete('/api/screenshots/:filename', (req, res) => {
 // React Router can handle the path on the client side.
 // ─────────────────────────────────────────────────────────────────────────────
 if (fs.existsSync(PUBLIC_DIR)) {
-    app.get('*', (req, res) => {
-        // Don't catch API routes
-        if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API route not found' });
+    app.use((req, res, next) => {
+        // Only serve index.html for GET requests that are not API routes
+        if (req.method !== 'GET' || req.path.startsWith('/api')) {
+            return next();
+        }
         res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
     });
 }
