@@ -1,267 +1,293 @@
 require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const fs = require('fs');
+const { uploadMatchesToDatabase } = require('./db_uploader');
+const fs   = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const Jimp = require('jimp');
 
-// Initialize Gemini API
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// ─────────────────────────────────────────────────────────────────────────────
+// gemini_extractor.js
+//
+// Sends a screenshot to Gemini Vision for native table extraction.
+// Extracted matches are stamped with extractedAt + source, then pushed
+// immediately to Firebase Firestore.
+//
+// No local JSON storage. No hash tracking. Clean and direct.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// System Paths
-const PROCESSED_DB_PATH = path.join(__dirname, 'processed_images_hash.json');
-const VISUAL_HASH_DB_PATH = path.join(__dirname, 'processed_visual_hashes.json');
-const OUTPUT_DATA_PATH = path.join(__dirname, 'extracted_league_data.json');
+const genAIClients = [];
 
-// --- HASH LOGIC (Zero AI Tokens Wasted on duplicates) ---
-function getFileHash(filePath) {
-    const fileBuffer = fs.readFileSync(filePath);
-    const hashSum = crypto.createHash('md5');
-    hashSum.update(fileBuffer);
-    return hashSum.digest('hex');
-}
-
-function isImageProcessed(hash) {
-    if (!fs.existsSync(PROCESSED_DB_PATH)) return false;
-    const db = JSON.parse(fs.readFileSync(PROCESSED_DB_PATH));
-    return db.includes(hash);
-}
-
-function markImageProcessed(hash) {
-    let db = [];
-    if (fs.existsSync(PROCESSED_DB_PATH)) {
-        db = JSON.parse(fs.readFileSync(PROCESSED_DB_PATH));
-    }
-    if (!db.includes(hash)) {
-        db.push(hash);
-        fs.writeFileSync(PROCESSED_DB_PATH, JSON.stringify(db, null, 2));
-    }
-}
-
-// --- LEVEL 1.5: PERCEPTUAL HASH LOGIC (Offline Duplicate Detection) ---
-function hammingDistance(hash1, hash2) {
-    if (hash1.length !== hash2.length) return 1.0;
-    let diff = 0;
-    for(let i = 0; i < hash1.length; i++) {
-        if(hash1[i] !== hash2[i]) diff++;
-    }
-    return diff / hash1.length;
-}
-
-async function getTopVisualHash(filePath) {
-    try {
-        const image = await Jimp.read(filePath);
-        const w = image.bitmap.width;
-        const h = image.bitmap.height;
-        // Ignore top 10% (headers, dates). Crop next 40% (top rows of results list).
-        image.crop(0, Math.floor(h * 0.1), w, Math.floor(h * 0.4));
-        return image.hash(2); // Base 2 binary string exactly 64 bits
-    } catch (err) {
-        console.error("[⚠️] Failed to calculate visual hash:", err.message);
-        return null;
-    }
-}
-
-async function isTopVisuallyDuplicate(incomingHash) {
-    if (!incomingHash) return false;
-    if (!fs.existsSync(VISUAL_HASH_DB_PATH)) return false;
-    const db = JSON.parse(fs.readFileSync(VISUAL_HASH_DB_PATH));
-    for (const storedHash of db) {
-        // Find if any previously synced image is 100% similar locally
-        const distance = hammingDistance(incomingHash, storedHash);
-        if (distance <= 0.00) { 
-            return true; 
+// ── Multi-Key Array Builder ──────────────────────────────────────────────────
+// Only keys starting with "AIza" are valid Google API keys.
+// Invalid/placeholder values are logged and skipped to prevent 400 crashes.
+const activeKeys = Object.keys(process.env)
+    .filter(k => k.startsWith('GEMINI_API_KEY'))
+    .map(k => ({ name: k, value: process.env[k] }))
+    .filter(({ name, value }) => {
+        const isValid = value && value.startsWith('AIza') && value.length > 20;
+        if (!isValid && value && value.length > 3) {
+            console.warn(`[Gemini Extractor] ⚠️ Skipping invalid key "${name}" — must start with "AIza"`);
         }
-    }
-    return false;
+        return isValid;
+    })
+    .map(({ value }) => value);
+
+activeKeys.forEach(k => genAIClients.push(new GoogleGenerativeAI(k)));
+
+
+if (genAIClients.length === 0) {
+    console.warn('[Gemini Extractor] ⚠️ Warning: No Gemini API keys found in .env!');
+} else {
+    console.log(`[Gemini Extractor] 🗝️ Active API Keys loaded: ${genAIClients.length}`);
 }
 
-function markVisualHashProcessed(hash) {
-    if (!hash) return;
-    let db = [];
-    if (fs.existsSync(VISUAL_HASH_DB_PATH)) {
-        db = JSON.parse(fs.readFileSync(VISUAL_HASH_DB_PATH));
-    }
-    if (!db.includes(hash)) {
-        db.push(hash);
-        fs.writeFileSync(VISUAL_HASH_DB_PATH, JSON.stringify(db, null, 2));
-    }
+const MODEL = 'gemini-2.5-flash'; // Best accuracy for tabular vision data
+
+// ── Rate Limit & Quota Memory Tracker ────────────────────────────────────────
+const requestTimestamps = []; 
+const tokenTimestamps = [];   
+
+let currentKeyIndex = 0;
+let currentKeyDailyUsage = 0; // Rough local estimate of RPD used for the currently active key
+
+function trackUsage(totalTokens) {
+    const now = Date.now();
+    requestTimestamps.push(now);
+    tokenTimestamps.push({ time: now, tokens: totalTokens });
+    currentKeyDailyUsage++;
+    
+    // Keep window strictly 60 seconds
+    while(requestTimestamps.length > 0 && now - requestTimestamps[0] > 60000) requestTimestamps.shift();
+    while(tokenTimestamps.length > 0 && now - tokenTimestamps[0].time > 60000) tokenTimestamps.shift();
 }
 
-// Format the image for Gemini
+function getUsageStats() {
+    return {
+        rpm: requestTimestamps.length,
+        rpmMax: 5,
+        tpm: tokenTimestamps.reduce((sum, item) => sum + item.tokens, 0),
+        tpmMax: 250000,
+        rpd: currentKeyDailyUsage,
+        rpdMax: 20,
+        keyIndex: currentKeyIndex + 1,
+        totalKeys: genAIClients.length || 1
+    };
+}
+
+/**
+ * Converts an image file to a Gemini-compatible inline base64 part.
+ * @param {string} filepath
+ * @param {string} mimeType
+ * @returns {object} Gemini inlineData part
+ */
 function fileToGenerativePart(filepath, mimeType) {
-  return {
-    inlineData: {
-      data: Buffer.from(fs.readFileSync(filepath)).toString("base64"),
-      mimeType
-    },
-  };
+    return {
+        inlineData: {
+            data: Buffer.from(fs.readFileSync(filepath)).toString('base64'),
+            mimeType,
+        },
+    };
 }
 
-// --- CORE EXTRACTION PROCESS ---
-async function processScreenshot(imagePath, leagueName) {
-    if (!process.env.GEMINI_API_KEY) {
-        console.error("\n❌ ERROR: GEMINI_API_KEY is missing from your environment.");
-        console.log("👉 How to run: GEMINI_API_KEY=\"your_key_here\" node gemini_extractor.js \"England - Virtual\"\n");
-        return;
+// ─────────────────────────────────────────────────────────────────────────────
+// CORE EXTRACTION — screenshot → Gemini Vision → Firebase
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sends an image to Gemini Vision, extracts match rows as JSON,
+ * stamps metadata, and pushes directly to Firebase Firestore.
+ *
+ * @param {string} imagePath  - Absolute path to PNG screenshot
+ * @param {string} leagueName - Firestore DB league name (e.g. "England - Virtual")
+ * @returns {Promise<Array>}  - Extracted match objects (already uploaded)
+ */
+async function extractMatchDataFromImage(imagePath, leagueName) {
+    console.log(`\n[Gemini Extractor] 🚀 Processing: ${path.basename(imagePath)}`);
+    console.log(`[Gemini Extractor] 🏆 Target League: ${leagueName}`);
+
+    // ── Pre-flight checks ─────────────────────────────────────────────────────
+    if (genAIClients.length === 0) {
+        console.error('[Gemini Extractor] ❌ GEMINI_API_KEY is missing from your environment.');
+        return { matches: [], totalPages: 1 };
     }
 
     if (!fs.existsSync(imagePath)) {
-        console.error(`❌ Image not found at: ${imagePath}`);
-        return;
+        console.error(`[Gemini Extractor] ❌ Image not found: ${imagePath}`);
+        return { matches: [], totalPages: 1 };
     }
-
-    const hash = getFileHash(imagePath);
-
-    // AI TOKEN OPTIMIZATION: Check Hash DB before doing any heavy lifting
-    if (isImageProcessed(hash)) {
-        console.log(`[⏭️] Level 1 Guard: Skipping image ${path.basename(imagePath)} - Exact MD5 Hash matches.`);
-        console.log(`[💰] 0 tokens consumed.`);
-        return; 
-    }
-
-    // LEVEL 1.5 GUARD: Offline Image Recognition (80% top match)
-    console.log(`[👁️] Level 1.5 Guard: Analyzing local visual structure...`);
-    const visualHash = await getTopVisualHash(imagePath);
-    if (await isTopVisuallyDuplicate(visualHash)) {
-        console.log(`[⏭️] Level 1.5 Guard: Skipped! The top 40% match content is >= 80% identical to a previous sync.`);
-        console.log(`[💰] 0 AI tokens consumed.`);
-        return;
-    }
-
-    console.log(`\n[🚀] New Target Identified: ${path.basename(imagePath)}`);
-    console.log(`[🏆] Assigned League Database Value: ${leagueName}`);
-    console.log(`[🧠] Sending to Google Gemini Vision for extreme precision...`);
-
-    const imagePart = fileToGenerativePart(imagePath, "image/png");
 
     const prompt = `
-    You are an expert data extraction bot prioritizing absolute precision. 
-    Extract the virtual football match results from this table image into a clean, structured JSON array.
-    The image contains columns for Time/Date, Game ID, and Match Result.
-    Notice that the Team names and Scores are formatted inside a single block like "ARS 0:1 BOU".
-    
-    CRITICAL: The target league for these records is specifically: "${leagueName}". 
-    You MUST perfectly inject the property "league": "${leagueName}" into EVERY single match object in the array.
+    You are an expert data extraction bot with perfect vision capabilities.
+    Extract the virtual football match results directly from this screenshot into a clean JSON object.
+    The image shows a SportyBet results table with columns: Time, Game ID, and Match Result (Home Team, Score, Away Team).
 
-    Return ONLY a valid JSON array matching this exact schema for every row you see:
-    [
-      {
-        "time": "23:48",
-        "date": "05/04/2026",
-        "gameId": "32001",
-        "homeTeam": "ARS",
-        "awayTeam": "BOU",
-        "score": "0:1",
-        "league": "${leagueName}"
-      }
-    ]
+    We need you to extract TWO things:
+    1. "pagesAvailable": Find the pagination section at the bottom (e.g., "< 1 2 3 >"). Return the highest page number you can see. If there is no pagination or only 1 page, return 1.
+    2. "matches": The JSON array of match results. 
+
+    CRITICAL: Every match object MUST include "league": "${leagueName}".
+
+    Return ONLY a valid JSON object. No markdown code blocks. No conversational text.
+
+    Required schema:
+    {
+      "pagesAvailable": 2,
+      "matches": [
+        {
+          "time": "07:20",
+          "date": "11/04/2026",
+          "gameId": "36579",
+          "homeTeam": "ARS",
+          "awayTeam": "MUN",
+          "score": "2:1",
+          "league": "${leagueName}"
+        }
+      ]
+    }
     `;
 
-    // Try a cascade of viable models since certain iterations might be deprecated
-    const viableModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
-    let result = null;
-    let successfulModelName = "";
-    let errors = [];
+    try {
+        const IS_MOCK = false; // Toggle to true to bypass API limits during testing
+        let extractedData;
+        if (IS_MOCK) {
+            console.log("[Gemini Extractor] ⚠️ USING MOCK DATA DUE TO API QUOTA LIMITS ⚠️");
+            extractedData = {
+                pagesAvailable: 2,
+                matches: [
+                    { "time": "13:37", "date": "15/04/2026", "gameId": "m_100", "homeTeam": "SYS", "awayTeam": "BOT", "score": "5:0", "league": leagueName }
+                ]
+            };
+        } else {
+            console.log(`[Gemini Extractor] 🧠 Sending to ${MODEL} on Key #${currentKeyIndex + 1}...`);
+            const imagePart = fileToGenerativePart(imagePath, 'image/png');
 
-    for (const modelName of viableModels) {
-        try {
-            const model = genAI.getGenerativeModel({ model: modelName });
-            
-            let attempts = 0;
-            while (attempts < 2) {
+            // ── Multi-Key Auto-Rotation & Request ────────────────────────────────
+            let result;
+            let attempt = 0;
+            const MAX_RETRIES = 3;
+            const startTime = Date.now();
+
+            while (true) {
                 try {
+                    const model = genAIClients[currentKeyIndex].getGenerativeModel({ model: MODEL });
                     result = await model.generateContent([prompt, imagePart]);
-                    break;
+                    break; // Success
                 } catch (e) {
-                    if ((e.status === 429 || e.status === 503) && attempts < 1) {
-                        console.log(`[⏳] Gemini [${modelName}] hit quota/load (HTTP ${e.status}). Retrying in 3s...`);
-                        await new Promise(r => setTimeout(r, 3000));
-                        attempts++;
+                    attempt++;
+                    const isRateLimit  = e.status === 429;
+                    const isDeadKey    = e.status === 400 && e.message && e.message.includes('API key not valid');
+                    const isForbidden  = e.status === 403;
+                    const isOverloaded = e.status === 503;
+
+                    // Multi-key switch protocol when daily RPD is crushed (429) or key is strictly invalid
+                    if (isRateLimit || isDeadKey || isForbidden) {
+                        console.warn(`[Gemini Extractor] ⚠️ Quota Exceeded/Invalid Key on Key #${currentKeyIndex + 1}! (${isRateLimit ? '429' : '400/403'})`);
+                        currentKeyIndex++;
+                        if (currentKeyIndex >= genAIClients.length) {
+                            console.error('[Gemini Extractor] ❌ FATAL: ALL active Google Gemini API Keys exhausted or invalid.');
+                            throw new Error('All Google Gemini keys exhausted or invalid for today. Wait 24h or add valid keys to .env.');
+                        }
+                        console.log(`[Gemini Extractor] 🔄 ROTATING API KEY. Switching to Key #${currentKeyIndex + 1}.`);
+                        currentKeyDailyUsage = 0; 
+                        attempt--; // Undo attempt cost
+                        continue; // instantly loop again under new key
+                    }
+
+                    if (isOverloaded && attempt < MAX_RETRIES) {
+                        const waitSec = 15 * attempt;
+                        console.log(`[Gemini Extractor] ⏳ Service overload (503) — waiting ${waitSec}s before retry...`);
+                        await new Promise(r => setTimeout(r, waitSec * 1000));
                     } else {
-                        throw e; // throw to outer catch
+                        throw e; // Non-retriable or out of total service bounds
                     }
                 }
             }
             
-            successfulModelName = modelName;
-            break; // Break loop if successful
-        } catch (err) {
-            console.warn(`[DEBUG] Gemini ${modelName} failed: ${err.message}`);
-            let shortErr = err.message || "Unknown error";
-            shortErr = shortErr.replace(/\[GoogleGenerativeAI Error\]: /, '')
-                               .replace(/Error fetching from https?:\/\/[^\s]+:\s*/, '')
-                               .trim()
-                               .substring(0, 100);
-            errors.push(`${modelName}(${shortErr})`);
+            const endTime = Date.now();
+            const durationMs = endTime - startTime;
             
-            if (modelName === viableModels[viableModels.length - 1]) {
-                throw new Error(`All models failed: ${errors.join(' | ')}`);
+            let usageMetadata = {};
+            if (result.response && result.response.usageMetadata) {
+                usageMetadata = result.response.usageMetadata;
+            }
+            
+            const inputTokens = usageMetadata.promptTokenCount || 0;
+            const outputTokens = usageMetadata.candidatesTokenCount || 0;
+            
+            // Advance the telemetry gauges
+            trackUsage(inputTokens + outputTokens);
+            const enrichedStats = { input: inputTokens, output: outputTokens, durationMs, ...getUsageStats() };
+            
+            const rawText = result.response.text().trim();
+            const jsonStr = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+            try {
+                extractedData = JSON.parse(jsonStr);
+                extractedData.tokenStats = enrichedStats;
+                console.log(`[Gemini Extractor] ⏱️ Extraction took ${durationMs}ms | Tokens: ${inputTokens} in / ${outputTokens} out (Key #${enrichedStats.keyIndex})`);
+            } catch (parseErr) {
+                console.error('[Gemini Extractor] ❌ Gemini returned non-JSON output:');
+                console.log(rawText.substring(0, 500));
+                return { matches: [], totalPages: 1, tokenStats: enrichedStats };
             }
         }
-    }
 
-    if (!result) {
-        console.error("\n[❌] Exhausted all Vision models and could not connect to Gemini API (All returned 404 Not Found). Please verify your Google API project capabilities.");
-        return;
-    }
-
-    try {
-        const responseText = result.response.text();
-        
-        // Clean out markdown blocks from the AI response
-        let jsonStr = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
-        
-        let extractedData = {};
-        try {
-            extractedData = JSON.parse(jsonStr);
-        } catch (jsonErr) {
-            console.error("[❌] Gemini returned invalid JSON format. It may have tried to converse.");
-            console.log(responseText);
-            return;
+        if (!extractedData.matches || !Array.isArray(extractedData.matches) || extractedData.matches.length === 0) {
+            console.warn('[Gemini Extractor] ⚠️ Gemini returned empty or invalid matches array. Skipping Firebase push.');
+            return { matches: [], totalPages: 1, tokenStats: extractedData.tokenStats || { input: 0, output: 0, durationMs: 0 } };
         }
 
-        // Save to Final Database File and Deduplicate
-        let allData = [];
-        if (fs.existsSync(OUTPUT_DATA_PATH)) {
-            allData = JSON.parse(fs.readFileSync(OUTPUT_DATA_PATH));
-        }
-        
-        let newRecordsCount = 0;
-        let duplicateCount = 0;
+        const matchArray = extractedData.matches;
+        const totalPages = parseInt(extractedData.pagesAvailable) || 1;
 
-        extractedData.forEach(match => {
-            // Compare the unique gameId and league to ensure we never write a duplicate match
-            const isDuplicate = allData.some(existing => existing.gameId === match.gameId && existing.league === match.league);
-            
-            if (!isDuplicate) {
-                allData.push(match);
-                newRecordsCount++;
-            } else {
-                duplicateCount++;
-            }
+        // ── Stamp metadata on every record ────────────────────────────────────
+        const extractedAt = new Date().toISOString();
+        matchArray.forEach(match => {
+            // Force league in case Gemini omits it
+            if (!match.league) match.league = leagueName;
+            // Stamp extraction metadata (who created it & when)
+            match.extractedAt = extractedAt;
+            match.source      = 'gemini-vision';
+            match.sourceTag   = 'gemini-vision';
         });
 
-        fs.writeFileSync(OUTPUT_DATA_PATH, JSON.stringify(allData, null, 2));
+        console.log(`[Gemini Extractor] ✅ Extracted ${matchArray.length} records (Pages detected: ${totalPages}). Pushing to Firebase...`);
 
-        // Mark Image as Processed (Protects AI tokens next time)
-        markImageProcessed(hash);
-        markVisualHashProcessed(visualHash);
+        // Debug dump for troubleshooting — written once per extraction run
+        const debugPath = path.join(__dirname, 'debug_gemini_output.json');
+        fs.writeFileSync(debugPath, JSON.stringify(extractedData, null, 2));
+        console.log(`[Gemini Extractor] 🔍 Debug output written to: ${path.basename(debugPath)}`);
 
-        console.log(`\n[✅] SUCCESS! Extracted ${extractedData.length} records using model version: [${successfulModelName}]`);
-        console.log(`[🔄] Deduplication Filter: Saved ${newRecordsCount} New Records | Skipped ${duplicateCount} Duplicates`);
-        console.log(`[💾] Data safely appended to ./server/${path.basename(OUTPUT_DATA_PATH)}`);
-        console.log(`[🔒] Database locked. Image hash recorded in ./server/${path.basename(PROCESSED_DB_PATH)}`);
-        console.log(`\n--- PREVIEW OF EXTRACTED DATA ---`);
-        console.log(extractedData.slice(0, 2));
+        // ── Push to Database ──────────────────────────────────────────────────
+        try {
+            const { uploaded, skipped } = await uploadMatchesToDatabase(
+                matchArray,
+                (msg) => console.log(`[Gemini Extractor → DB] ${msg}`)
+            );
+            console.log(`[Gemini Extractor] 📤 DB push complete: ${uploaded} written, ${skipped} skipped.`);
+        } catch (fbErr) {
+            // DB failure does NOT block returning data to the caller
+            console.error('[Gemini Extractor] ❌ DB upload failed:', fbErr.message);
+        }
 
-    } catch (error) {
-        console.error("\n[❌] Failed during AI processing:", error.message);
+        console.log(`[Gemini Extractor] ✅ Extracted ${matchArray.length} records (Pages detected: ${totalPages}). Returning to caller...`);
+        console.log(JSON.stringify(matchArray.slice(0, 2), null, 2));
+
+        return { matches: matchArray, totalPages, tokenStats: extractedData.tokenStats || { input: 0, output: 0, durationMs: 0 } };
+
+    } catch (err) {
+        console.error('\n[Gemini Extractor] ❌ Extraction failed:', err.message);
+        // Re-throw so the caller (screenshot_scraper) knows extraction failed
+        throw err;
     }
 }
 
-// Support command line arguments or default test data
-const defaultImage = path.join(__dirname, 'testdownloadpage', 'screenshot_testdate_1775514268389.png');
-const leagueNameArg = process.argv[2] || "England - Virtual";
+// Allow running directly from command line for manual testing
+if (require.main === module) {
+    const testImage = process.argv[2] || path.join(__dirname, 'testdownloadpage', 'screenshot_1776255799103.png');
+    const league    = process.argv[3] || 'England - Virtual';
+    extractMatchDataFromImage(testImage, league).then(data => {
+        console.log(`\n[Gemini Extractor] Total extracted: ${data.matches ? data.matches.length : 0}`);
+        console.log(`\n[Gemini Extractor] Total pages detected: ${data.totalPages}`);
+    });
+}
 
-processScreenshot(defaultImage, leagueNameArg);
+module.exports = { extractMatchDataFromImage };

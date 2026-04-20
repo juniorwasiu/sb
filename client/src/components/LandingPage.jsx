@@ -1,17 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  Chart as ChartJS,
-  ArcElement, BarElement, CategoryScale, LinearScale,
-  RadialLinearScale, PointElement, LineElement,
-  Tooltip, Legend, Filler,
-} from 'chart.js';
-import { Doughnut, Bar, Radar, PolarArea } from 'react-chartjs-2';
-
-ChartJS.register(
-  ArcElement, BarElement, CategoryScale, LinearScale,
-  RadialLinearScale, PointElement, LineElement,
-  Tooltip, Legend, Filler,
-);
+import RecommendedPicks from './RecommendedPicks';
 
 // ── Colour helpers ─────────────────────────────────────────────────────────
 const NEON    = '#00E5FF';
@@ -20,17 +8,39 @@ const GOLD    = '#FFD700';
 const PURPLE  = '#A78BFA';
 const RED     = '#FF3355';
 const ORANGE  = '#FF6B35';
-const LEAGUES = {
+
+// ── Known league metadata — any league NOT listed here gets a dynamic fallback
+const KNOWN_LEAGUES = {
   'England - Virtual': { icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: '#00E5FF' },
   'Germany - Virtual': { icon: '🇩🇪', color: '#FFD700' },
   'Italy - Virtual':   { icon: '🇮🇹', color: '#00FF88' },
   'Spain - Virtual':   { icon: '🇪🇸', color: '#FF3355' },
+  'France - Virtual':  { icon: '🇫🇷', color: '#FF6B35' },
+  'Portugal - Virtual':{ icon: '🇵🇹', color: '#A78BFA' },
+  'Netherlands - Virtual': { icon: '🇳🇱', color: '#FF8C00' },
+  'Turkey - Virtual':  { icon: '🇹🇷', color: '#FF4500' },
 };
-const leagueColor = (lg) => LEAGUES[lg]?.color || PURPLE;
-const leagueIcon  = (lg) => LEAGUES[lg]?.icon  || '🌐';
+
+// Dynamic colour palette for unknown leagues (cycles through these)
+const FALLBACK_COLORS = ['#A78BFA', '#FF6B35', '#00E5FF', '#FFD700', '#00FF88', '#FF3355', '#FF8C00', '#4BD4FB'];
+const colorCache = {};
+
+const leagueColor = (lg) => {
+  if (KNOWN_LEAGUES[lg]) return KNOWN_LEAGUES[lg].color;
+  if (!colorCache[lg]) {
+    // Assign a deterministic colour based on string hash
+    let hash = 0;
+    for (let i = 0; i < lg.length; i++) hash = (hash * 31 + lg.charCodeAt(i)) >>> 0;
+    colorCache[lg] = FALLBACK_COLORS[hash % FALLBACK_COLORS.length];
+  }
+  return colorCache[lg];
+};
+
+const leagueIcon = (lg) => KNOWN_LEAGUES[lg]?.icon || '🌐';
 
 // ── Score parser ───────────────────────────────────────────────────────────
-function parseScore(score = '0:0') {
+function parseScore(score) {
+  if (!score || typeof score !== 'string') score = '0:0';
   const [h, a] = score.split(':').map(Number);
   return { home: h || 0, away: a || 0, total: (h || 0) + (a || 0) };
 }
@@ -51,6 +61,12 @@ export default function LandingPage() {
   const [pageSize]                          = useState(3);
   const [leagueFilter,   setLeagueFilter]   = useState('');
   
+  // ── Dedicated state for ALL available leagues (never lost when a filter is active)
+  const [allLeagues,     setAllLeagues]     = useState([]);
+  const [leaguesLoading, setLeaguesLoading] = useState(true);
+  const [allDates,       setAllDates]       = useState([]);
+  const [datesLoading,   setDatesLoading]   = useState(true);
+
   // Date filtering
   const [dateFrom,       setDateFrom]       = useState(''); // YYYY-MM-DD for input
   const [dateTo,         setDateTo]         = useState(''); // YYYY-MM-DD for input
@@ -69,7 +85,45 @@ export default function LandingPage() {
     return `${d}/${m}/${y}`;
   };
 
-  // ── Fetch results ─────────────────────────────────────────────────────────
+  const formatToIso = (apiStr) => {
+    if (!apiStr) return '';
+    const [d, m, y] = apiStr.split('/');
+    return `${y}-${m}-${d}`;
+  };
+
+  // ── Fetch ALL leagues once on mount (unfiltered — always shows the full list) ─
+  useEffect(() => {
+    const fetchAllLeagues = async () => {
+      setLeaguesLoading(true);
+      try {
+        console.log('[LandingPage] 🔍 Step 1: Fetching all available leagues from Database...');
+        const res = await fetch('/api/public/results?page=1&pageSize=1');
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Failed to load leagues');
+        setAllLeagues(json.availableLeagues || []);
+      } catch {
+        setAllLeagues(Object.keys(KNOWN_LEAGUES));
+      }
+      setLeaguesLoading(false);
+    };
+    const fetchAllDates = async () => {
+        setDatesLoading(true);
+        try {
+            const res = await fetch('/api/vfootball/available-dates');
+            const data = await res.json();
+            if (data.success) {
+                setAllDates(data.dates || []);
+            }
+        } catch (err) {
+            console.error('[LandingPage] Failed to fetch all dates:', err);
+        }
+        setDatesLoading(false);
+    };
+    fetchAllLeagues();
+    fetchAllDates();
+  }, []); // runs only once on mount
+
+  // ── Fetch paginated results (reacts to filters) ──────────────────────────
   const fetchResults = useCallback(async (p = page) => {
     setLoading(true);
     setError(null);
@@ -79,25 +133,34 @@ export default function LandingPage() {
       if (dateFrom) params.set('dateFrom', formatForApi(dateFrom));
       if (dateTo)   params.set('dateTo', formatForApi(dateTo));
       
-      console.log(`[LandingPage] Fetching results page=${p} league=${leagueFilter || 'ALL'}`);
+      console.log(`[LandingPage] 🔍 Step 2: Fetching results page=${p} league=${leagueFilter || 'ALL'} dateFrom=${dateFrom||'ANY'} dateTo=${dateTo||'ANY'}`);
       const res = await fetch(`/api/public/results?${params}`);
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Unknown server error');
-      console.log(`[LandingPage] Got ${json.dates.length} date blocks, totalDates=${json.totalDates}`);
+      console.log(`[LandingPage] ✅ Step 2 done: ${json.dates.length} date blocks, totalDates=${json.totalDates}, pages=${json.totalPages}`);
       setData(json);
+
+      // Also update allLeagues if the response contains more (e.g. fresh data)
+      if (json.availableLeagues && json.availableLeagues.length > allLeagues.length) {
+        console.log(`[LandingPage] 🔄 Updating league list from results response: ${json.availableLeagues.length} leagues`);
+        setAllLeagues(json.availableLeagues);
+      }
       
       // Auto-expand first date if not already set
-      if (json.dates.length > 0 && Object.keys(expandedDates).length === 0) {
-        setExpandedDates({ [json.dates[0].date]: true });
-      }
+      setExpandedDates(prev => {
+        if (Object.keys(prev).length === 0 && json.dates.length > 0) {
+          return { [json.dates[0].date]: true };
+        }
+        return prev;
+      });
     } catch (err) {
-      console.error('[LandingPage] Fetch error:', err);
+      console.error('[LandingPage] ❌ Fetch error:', err);
       setError(err.message);
     }
     setLoading(false);
-  }, [page, pageSize, leagueFilter, dateFrom, dateTo]);
+  }, [page, pageSize, leagueFilter, dateFrom, dateTo, allLeagues.length]);
 
-  useEffect(() => { fetchResults(page); }, [page, leagueFilter, dateFrom, dateTo]);
+  useEffect(() => { fetchResults(page); }, [page, fetchResults]);
 
   // ── Pagination handlers ───────────────────────────────────────────────────
   const goPage = (p) => { setPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }); };
@@ -129,13 +192,14 @@ export default function LandingPage() {
         dateLabel = `Specific Date: ${dateBlock.date}`;
     }
 
-    const { date, leagues } = dateBlock;
+    const { date } = dateBlock;
 
     setAnalyzing(date);
     setAnalysisError(prev => ({ ...prev, [date]: null }));
     console.log(`[LandingPage] Requesting AI Analysis scope=${scope} for ${date}`);
 
     try {
+      console.log(`[LandingPage] 🤖 Step 1: Sending analysis request scope=${scope}, date=${date}...`);
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -148,13 +212,30 @@ export default function LandingPage() {
         }),
       });
       const json = await res.json();
-      if (!json.success) throw new Error(json.error || 'Analysis failed');
-      console.log(`[LandingPage] Analysis complete for ${date}, tokens=${json.tokensUsed}`);
+      console.log(`[LandingPage] 📨 Analysis API response: status=${res.status}, success=${json.success}, errorType=${json.errorType || 'none'}`);
+      
+      if (!json.success) {
+        // Special handling for Database quota/index error (errorType: FIREBASE_QUOTA)
+        if (json.errorType === 'FIREBASE_QUOTA') {
+          console.error('[LandingPage] ❌ Database quota/index error detected:', json.error);
+          if (json.indexUrl) {
+            console.error('[LandingPage] 🔗 CREATE FIREBASE INDEX HERE:', json.indexUrl);
+          }
+          // Show a clear, friendly message with instructions
+          const tipMsg = json.indexUrl
+            ? `⚠️ Database needs a composite index to run this query.\n\n👉 Click here to create it:\n${json.indexUrl}\n\nAfter creating the index (takes ~1 min), retry the analysis.`
+            : '⚠️ Database quota exceeded or a required index is missing.\n\nThis resets daily. Try again later, or check the server console for the index creation link.';
+          throw new Error(tipMsg);
+        }
+        throw new Error(json.error || 'Analysis failed');
+      }
+      
+      console.log(`[LandingPage] ✅ Analysis complete for ${date}, tokens=${json.tokensUsed}, cached=${json.cached}`);
       setAnalysisMap(prev => ({ ...prev, [date]: json.analysis }));
       // Scroll to analysis
       setTimeout(() => document.getElementById(`analysis-${date}`)?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch (err) {
-      console.error('[LandingPage] Analysis error:', err);
+      console.error('[LandingPage] ❌ Analysis error:', err.message);
       setAnalysisError(prev => ({ ...prev, [date]: err.message }));
     }
     setAnalyzing(null);
@@ -177,6 +258,7 @@ export default function LandingPage() {
     setPage(1);
   };
 
+
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', fontFamily: 'Inter, sans-serif' }}>
@@ -192,28 +274,50 @@ export default function LandingPage() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
                 <div style={{ width: 10, height: 10, borderRadius: '50%', background: GREEN, boxShadow: `0 0 12px ${GREEN}`, animation: 'pulse 1.5s infinite' }} />
-                <span style={{ fontSize: '0.72rem', color: GREEN, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Live vFootball Results</span>
+                <span style={{ fontSize: '0.72rem', color: GREEN, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase' }}>High-Speed Native Sync</span>
               </div>
               <h1 style={{ margin: 0, fontSize: '2.4rem', fontWeight: 900, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
                 vFootball <span style={{ color: NEON, textShadow: `0 0 20px ${NEON}55` }}>Terminal</span>
               </h1>
               <p style={{ margin: '8px 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                Real match results · AI Pattern Memory · Live Firebase Sync
+                Real-time Native Extraction · AI Pattern Memory · Live Database Sync
               </p>
             </div>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-              {data && (
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {[
-                    { label: 'Dates Found', value: data.totalDates, color: NEON },
-                  ].map(s => (
-                    <div key={s.label} style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: '8px 16px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.3rem', fontWeight: 900, color: s.color }}>{s.value}</div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
-                    </div>
-                  ))}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {/* Leagues count — always visible, uses allLeagues which is fetched independently */}
+                <div style={{
+                  background: `${PURPLE}15`, border: `1px solid ${PURPLE}35`,
+                  borderRadius: 10, padding: '8px 16px', textAlign: 'center', minWidth: 72,
+                }}>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 900, color: PURPLE }}>
+                    {leaguesLoading ? '…' : allLeagues.length}
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Leagues</div>
                 </div>
-              )}
+
+                {/* Dates found — only when data loaded */}
+                {data && (
+                  <div style={{
+                    background: `${NEON}15`, border: `1px solid ${NEON}35`,
+                    borderRadius: 10, padding: '8px 16px', textAlign: 'center', minWidth: 72,
+                  }}>
+                    <div style={{ fontSize: '1.3rem', fontWeight: 900, color: NEON }}>{data.totalDates}</div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Dates Found</div>
+                  </div>
+                )}
+              </div>
+              <a href="/daily-tips" style={{
+                background: 'rgba(0,229,255,0.12)', border: '1px solid rgba(0,229,255,0.35)',
+                color: NEON, borderRadius: 10, padding: '10px 18px',
+                textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
+                display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease',
+              }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,229,255,0.22)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,229,255,0.12)'}
+              >
+                🔮 Daily Tips
+              </a>
               <a href="/admin" style={{
                 background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.35)',
                 color: PURPLE, borderRadius: 10, padding: '10px 18px',
@@ -232,23 +336,57 @@ export default function LandingPage() {
 
       <main style={{ maxWidth: 1100, margin: '0 auto', padding: '24px' }}>
 
+        <RecommendedPicks />
+        <LivePredictionHub />
+
         {/* ── FILTERS BAR ──────────────────────────────────────────────────── */}
         <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '24px', display: 'flex', gap: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
           
-          {/* League Filter */}
+          {/* League Filter — always uses allLeagues which is independently fetched */}
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600 }}>League:</span>
-            {['', ...(data?.availableLeagues || [])].map(lg => (
-              <button key={lg || 'all'} onClick={() => { setLeagueFilter(lg); setPage(1); }}
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+              League:
+              {leaguesLoading && (
+                <span style={{ marginLeft: 6, fontSize: '0.68rem', color: NEON, opacity: 0.7 }}>loading…</span>
+              )}
+              {!leaguesLoading && allLeagues.length > 0 && (
+                <span style={{
+                  marginLeft: 8, background: `${PURPLE}20`, border: `1px solid ${PURPLE}40`,
+                  borderRadius: 20, padding: '2px 8px', fontSize: '0.65rem', color: PURPLE, fontWeight: 800,
+                }}>{allLeagues.length} active</span>
+              )}
+            </span>
+            {/* All button */}
+            <button
+              onClick={() => { setLeagueFilter(''); setPage(1); }}
+              style={{
+                background: leagueFilter === '' ? NEON : 'rgba(255,255,255,0.04)',
+                color: leagueFilter === '' ? '#000' : 'var(--text-secondary)',
+                border: `1px solid ${leagueFilter === '' ? 'transparent' : 'rgba(255,255,255,0.08)'}`,
+                borderRadius: 20, padding: '6px 14px', cursor: 'pointer',
+                fontSize: '0.78rem', fontWeight: 700, transition: 'all 0.2s ease',
+              }}
+            >🌍 All</button>
+
+            {/* Per-league filter buttons — always renders from allLeagues (independent of page data) */}
+            {leaguesLoading && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Discovering leagues…</span>
+            )}
+            {!leaguesLoading && allLeagues.length === 0 && (
+              <span style={{ fontSize: '0.75rem', color: RED, fontStyle: 'italic' }}>⚠️ No leagues found in Database</span>
+            )}
+            {allLeagues.map(lg => (
+              <button key={lg} onClick={() => { setLeagueFilter(lg); setPage(1); }}
                 style={{
-                  background: leagueFilter === lg ? (lg ? leagueColor(lg) : NEON) : 'rgba(255,255,255,0.04)',
+                  background: leagueFilter === lg ? leagueColor(lg) : 'rgba(255,255,255,0.04)',
                   color: leagueFilter === lg ? '#000' : 'var(--text-secondary)',
                   border: `1px solid ${leagueFilter === lg ? 'transparent' : 'rgba(255,255,255,0.08)'}`,
                   borderRadius: 20, padding: '6px 14px', cursor: 'pointer',
                   fontSize: '0.78rem', fontWeight: 700, transition: 'all 0.2s ease',
+                  boxShadow: leagueFilter === lg ? `0 0 10px ${leagueColor(lg)}55` : 'none',
                 }}
               >
-                {lg ? `${leagueIcon(lg)} ${lg.replace(' - Virtual', '')}` : '🌍 All'}
+                {leagueIcon(lg)} {lg.replace(' - Virtual', '')}
               </button>
             ))}
           </div>
@@ -257,19 +395,40 @@ export default function LandingPage() {
 
           {/* Date Filter */}
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Date Range:</span>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Filter by Date:</span>
             
-            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
-              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 6, padding: '6px 12px', colorScheme: 'dark', fontSize: '0.8rem' }} />
-            <span style={{ color: 'var(--text-muted)' }}>to</span>
-            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
-              style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 6, padding: '6px 12px', colorScheme: 'dark', fontSize: '0.8rem' }} />
-            
+            <select
+              value={dateFrom === dateTo ? dateFrom : ''}
+              onChange={(e) => {
+                const iso = e.target.value;
+                setDateFrom(iso);
+                setDateTo(iso);
+                setPage(1);
+              }}
+              style={{
+                background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+                color: 'white', borderRadius: 6, padding: '7px 12px', fontSize: '0.8rem', outline: 'none',
+                cursor: 'pointer', minWidth: '140px'
+              }}
+              disabled={datesLoading}
+            >
+              <option value="">🌍 All Available Dates</option>
+              {allDates.map(d => (
+                <option key={d} value={formatToIso(d)}>{d}</option>
+              ))}
+            </select>
+
             <button onClick={setToday} style={{ background: `${GREEN}15`, color: GREEN, border: `1px solid ${GREEN}40`, borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}>
               Today
             </button>
             {(dateFrom || dateTo) && (
-              <button onClick={clearDates} style={{ background: 'rgba(255,51,85,0.1)', color: RED, border: `1px solid rgba(255,51,85,0.3)`, borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}>
+              <button 
+                onClick={() => {
+                   clearDates();
+                   setPage(1);
+                }} 
+                style={{ background: 'rgba(255,51,85,0.1)', color: RED, border: `1px solid rgba(255,51,85,0.3)`, borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+              >
                 Clear
               </button>
             )}
@@ -302,7 +461,7 @@ export default function LandingPage() {
             <div style={{ fontSize: '3rem', marginBottom: '16px' }}>📭</div>
             <h3 style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>No Results Found</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-              {leagueFilter ? `No data for ${leagueFilter}` : 'Upload screenshots via the Admin panel to populate results'}
+              {leagueFilter ? `No data for ${leagueFilter}` : 'Trigger a native sync via the Admin panel to populate results'}
             </p>
           </div>
         )}
@@ -442,9 +601,7 @@ export default function LandingPage() {
                         background: 'rgba(0,0,0,0.2)', borderRadius: 10,
                         overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)',
                       }}>
-                        {/* Table head */}
-                        <div style={{
-                          display: 'grid', gridTemplateColumns: '70px 1fr 90px 1fr 70px',
+                        <div className="match-row-grid" style={{
                           padding: '8px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)',
                           fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
                         }}>
@@ -461,8 +618,7 @@ export default function LandingPage() {
                           const awayWin = s.away > s.home;
                           const draw    = s.home === s.away;
                           return (
-                            <div key={m.gameId || i} style={{
-                              display: 'grid', gridTemplateColumns: '70px 1fr 90px 1fr 70px',
+                            <div key={m.gameId || i} className="match-row-grid" style={{
                               padding: '11px 16px', alignItems: 'center',
                               borderBottom: i < lgMatches.length - 1 ? '1px solid rgba(255,255,255,0.03)' : 'none',
                               background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)',
@@ -603,9 +759,7 @@ function QuickStats({ matches }) {
   const avg = matches.length > 0 ? (stats.total / matches.length).toFixed(1) : 0;
 
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginTop: '16px',
-    }}>
+    <div className="stats-grid-mobile">
       {[
         { label: 'Avg Goals/Match', value: avg, color: NEON },
         { label: 'Home Wins', value: stats.homeWins, color: GREEN },
@@ -624,301 +778,259 @@ function QuickStats({ matches }) {
   );
 }
 
-// ── Analysis Panel with Charts ────────────────────────────────────────────
+// ── AI Predictive Engine Panel ──────────────────────────────────────────────
 function AnalysisPanel({ id, analysis, date, matches }) {
-  const [activeTab, setActiveTab] = useState('overview');
-
-  // Build chart data from analysis + raw match data
-  const winnerChartData = {
-    labels: ['Home Wins', 'Draws', 'Away Wins'],
-    datasets: [{
-      data: [analysis.winnerStats?.homeWins || 0, analysis.winnerStats?.draws || 0, analysis.winnerStats?.awayWins || 0],
-      backgroundColor: [`${GREEN}CC`, `${GOLD}CC`, `${RED}CC`],
-      borderColor: [GREEN, GOLD, RED],
-      borderWidth: 2,
-    }],
-  };
-
-  const goalDistData = {
-    labels: Object.keys(analysis.goalDistribution || {}),
-    datasets: [{
-      label: 'Matches',
-      data: Object.values(analysis.goalDistribution || {}),
-      backgroundColor: [NEON, GREEN, GOLD, PURPLE, RED].map(c => `${c}99`),
-      borderColor: [NEON, GREEN, GOLD, PURPLE, RED],
-      borderWidth: 2,
-      borderRadius: 6,
-    }],
-  };
-
-  const topScorerData = {
-    labels: (analysis.topScorers || []).slice(0, 8).map(t => t.team),
-    datasets: [
-      {
-        label: 'Goals Scored',
-        data: (analysis.topScorers || []).slice(0, 8).map(t => t.goalsScored),
-        backgroundColor: `${GREEN}99`,
-        borderColor: GREEN,
-        borderWidth: 2,
-        borderRadius: 4,
-      },
-      {
-        label: 'Goals Conceded',
-        data: (analysis.topScorers || []).slice(0, 8).map(t => t.goalsConceded),
-        backgroundColor: `${RED}99`,
-        borderColor: RED,
-        borderWidth: 2,
-        borderRadius: 4,
-      },
-    ],
-  };
-
-  // Radar: team performance
-  const radarData = analysis.topScorers?.length >= 3 ? {
-    labels: ['Attack', 'Defence', 'Consistency', 'Form', 'Goals/Match'],
-    datasets: (analysis.topScorers || []).slice(0, 4).map((t, i) => {
-      const colors = [NEON, GREEN, GOLD, PURPLE];
-      const c = colors[i % colors.length];
-      const scored = t.goalsScored || 0;
-      const conceded = t.goalsConceded || 0;
-      return {
-        label: t.team,
-        data: [
-          Math.min(10, scored * 1.5),
-          Math.max(0, 10 - conceded * 1.2),
-          Math.min(10, (scored + (10 - conceded)) / 2),
-          Math.min(10, scored * 1.2 + (10 - conceded) * 0.8),
-          Math.min(10, scored),
-        ],
-        backgroundColor: `${c}22`,
-        borderColor: c,
-        borderWidth: 2,
-        pointBackgroundColor: c,
-        pointRadius: 3,
-      };
-    }),
-  } : null;
-
-  const TABS = ['overview', 'charts', 'insights'];
+  if (!analysis) return null;
 
   return (
     <div id={id} style={{
       marginTop: 20,
-      background: 'linear-gradient(135deg, rgba(167,139,250,0.04) 0%, rgba(0,0,0,0.3) 100%)',
-      border: '1px solid rgba(167,139,250,0.2)', borderRadius: 12, overflow: 'hidden',
+      background: 'linear-gradient(135deg, rgba(167,139,250,0.04) 0%, rgba(0,0,0,0.4) 100%)',
+      border: '1px solid rgba(167,139,250,0.3)', borderRadius: 12, overflow: 'hidden',
     }}>
-      {/* Analysis header */}
+      {/* ── Header ── */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)',
-        background: 'rgba(167,139,250,0.06)',
+        display: 'flex', alignItems: 'center',
+        padding: '16px 20px', borderBottom: '1px solid rgba(167,139,250,0.1)',
+        background: 'rgba(167,139,250,0.08)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '1.3rem' }}>🤖</span>
-          <div>
-            <div style={{ fontSize: '0.85rem', fontWeight: 800, color: PURPLE }}>DeepSeek AI Analysis</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{date} · {matches.length} matches analysed</div>
-          </div>
-          {analysis.formRating && (
-            <span style={{
-              background: `${PURPLE}20`, border: `1px solid ${PURPLE}40`,
-              borderRadius: 20, padding: '3px 12px', fontSize: '0.72rem',
-              color: PURPLE, fontWeight: 700, marginLeft: 4,
-            }}>
-              {analysis.formRating.label} · {analysis.formRating.score}/10
-            </span>
-          )}
-        </div>
-        {/* Tab nav */}
-        <div style={{ display: 'flex', gap: '4px' }}>
-          {TABS.map(t => (
-            <button key={t} onClick={() => setActiveTab(t)}
-              style={{
-                background: activeTab === t ? PURPLE : 'transparent',
-                color: activeTab === t ? '#000' : 'var(--text-secondary)',
-                border: 'none', borderRadius: 6, padding: '5px 12px',
-                cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700,
-                textTransform: 'capitalize', transition: 'all 0.15s ease',
-              }}>
-              {t === 'overview' ? '📋 Overview' : t === 'charts' ? '📊 Charts' : '💡 Insights'}
-            </button>
-          ))}
+        <span style={{ fontSize: '1.4rem', marginRight: 12 }}>🤖</span>
+        <div>
+          <div style={{ fontSize: '0.9rem', fontWeight: 800, color: PURPLE, letterSpacing: '0.04em' }}>DeepSeek AI Predictive Engine</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{date} · {matches.length} matches analyzed in memory</div>
         </div>
       </div>
 
-      <div style={{ padding: '20px' }}>
+      <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
-        {/* ── OVERVIEW TAB ─────────────────────────────────────────────────── */}
-        {activeTab === 'overview' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {/* Summary */}
-            <p style={{
-              margin: 0, fontSize: '0.88rem', color: 'var(--text-primary)', lineHeight: 1.7,
-              padding: '14px 18px', background: 'rgba(167,139,250,0.06)',
-              border: '1px solid rgba(167,139,250,0.15)', borderRadius: 10,
-            }}>{analysis.summary}</p>
+        {/* ── Summary ── */}
+        <div style={{
+            fontSize: '0.9rem', color: 'var(--text-primary)', lineHeight: 1.6,
+            padding: '16px', background: 'rgba(255,255,255,0.03)',
+            borderLeft: `4px solid ${PURPLE}`, borderRadius: '4px 10px 10px 4px',
+        }}>{analysis.summary}</div>
 
-            {/* Stats grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
-              {[
-                { icon: '⚽', label: 'Avg Goals/Match', value: analysis.avgGoalsPerMatch?.toFixed(1) || '—', color: NEON },
-                { icon: '🏆', label: 'Highest Scoring', value: analysis.highestScoring?.score || '—', sub: analysis.highestScoring?.teams, color: GREEN },
-                { icon: '🛡️', label: 'Lowest Scoring', value: analysis.lowestScoring?.score || '—', sub: analysis.lowestScoring?.teams, color: GOLD },
-                { icon: '🏠', label: 'Home Wins', value: analysis.winnerStats?.homeWins || 0, color: GREEN },
-                { icon: '🤝', label: 'Draws', value: analysis.winnerStats?.draws || 0, color: GOLD },
-                { icon: '✈️', label: 'Away Wins', value: analysis.winnerStats?.awayWins || 0, color: RED },
-              ].map(s => (
-                <div key={s.label} style={{ background: `${s.color}09`, border: `1px solid ${s.color}20`, borderRadius: 10, padding: '12px 14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                    <span>{s.icon}</span>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</span>
-                  </div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 900, color: s.color }}>{s.value}</div>
-                  {s.sub && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sub}</div>}
-                </div>
-              ))}
+        {/* ── AI Self-Reflection & Strategy ── */}
+        {(analysis.reflection || analysis.strategyCommand) && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1fr)', gap: '16px' }}>
+                {analysis.reflection && (
+                    <div style={{ padding: '16px', background: 'rgba(255,215,0,0.05)', border: `1px solid ${GOLD}40`, borderRadius: 10 }}>
+                        <div style={{ fontSize: '0.75rem', color: GOLD, fontWeight: 700, textTransform: 'uppercase', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>🧠</span> Past Prediction Reflection
+                        </div>
+                        <p style={{ margin: 0, fontSize: '0.84rem', color: 'rgba(255,255,255,0.85)', lineHeight: 1.5 }}>
+                            {analysis.reflection}
+                        </p>
+                    </div>
+                )}
+                {analysis.strategyCommand && (
+                    <div style={{ padding: '16px', background: 'rgba(0,229,255,0.05)', border: `1px solid ${NEON}40`, borderRadius: 10 }}>
+                        <div style={{ fontSize: '0.75rem', color: NEON, fontWeight: 700, textTransform: 'uppercase', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>⚙️</span> Strategy Pulse
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'white', marginBottom: '8px' }}>
+                            Action: <strong style={{ color: analysis.strategyCommand.action === 'pivot' ? RED : GREEN, textTransform: 'uppercase' }}>{analysis.strategyCommand.action}</strong>
+                        </div>
+                        {(analysis.strategyCommand.newRules || []).length > 0 && analysis.strategyCommand.action === 'pivot' && (
+                            <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.5 }}>
+                                {analysis.strategyCommand.newRules.map((r, i) => <li key={i}>{r}</li>)}
+                            </ul>
+                        )}
+                        {analysis.strategyCommand.action === 'maintain' && (
+                            <p style={{ margin: 0, fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)' }}>Maintaining current trajectory and constraints.</p>
+                        )}
+                    </div>
+                )}
             </div>
-
-            {/* Prediction */}
-            {analysis.prediction && (
-              <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', background: 'rgba(255,215,0,0.05)', border: '1px solid rgba(255,215,0,0.2)', borderRadius: 10 }}>
-                <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>🔮</span>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: GOLD, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Pattern Prediction</div>
-                  <p style={{ margin: 0, fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>{analysis.prediction}</p>
-                </div>
-              </div>
-            )}
-          </div>
         )}
 
-        {/* ── CHARTS TAB ──────────────────────────────────────────────────── */}
-        {activeTab === 'charts' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              {/* Doughnut: Win/Draw/Loss */}
-              <ChartCard title="🏆 Result Distribution">
-                <div style={{ height: 200 }}>
-                  <Doughnut data={winnerChartData} options={{
-                    ...CHART_OPTS,
-                    cutout: '65%',
-                    plugins: {
-                      ...CHART_OPTS.plugins,
-                      legend: { ...CHART_OPTS.plugins.legend, position: 'bottom' },
-                    },
-                  }} />
+        {/* ── Draw Analysis ── */}
+        {analysis.drawAnalysis && (
+            <div>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>🤝 Specific Draw Analysis</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '12px' }}>
+                    <div style={{ background: '#111', padding: '12px', borderRadius: 8, textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fff' }}>{analysis.drawAnalysis['0:0'] || 0}</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>0:0 DRAWS</div>
+                    </div>
+                    <div style={{ background: '#111', padding: '12px', borderRadius: 8, textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fff' }}>{analysis.drawAnalysis['1:1'] || 0}</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>1:1 DRAWS</div>
+                    </div>
+                    <div style={{ background: '#111', padding: '12px', borderRadius: 8, textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fff' }}>{analysis.drawAnalysis['2:2'] || 0}</div>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>2:2 DRAWS</div>
+                    </div>
                 </div>
-              </ChartCard>
-
-              {/* Polar Area: Goal score types */}
-              <ChartCard title="⚽ Goal Distribution">
-                <div style={{ height: 200 }}>
-                  <PolarArea data={goalDistData} options={{
-                    ...CHART_OPTS,
-                    scales: { r: { ticks: { color: '#3A4A5A', backdropColor: 'transparent' }, grid: { color: 'rgba(255,255,255,0.06)' } } },
-                    plugins: { ...CHART_OPTS.plugins, legend: { ...CHART_OPTS.plugins.legend, position: 'bottom' } },
-                  }} />
-                </div>
-              </ChartCard>
+                {analysis.drawAnalysis.insights && (
+                    <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.7)', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', borderRadius: 8 }}>
+                        {analysis.drawAnalysis.insights}
+                    </div>
+                )}
             </div>
-
-            {/* Bar: Team attack/defence */}
-            {analysis.topScorers?.length > 0 && (
-              <ChartCard title="📊 Team Attack vs Defence">
-                <div style={{ height: 220 }}>
-                  <Bar data={topScorerData} options={{
-                    ...CHART_OPTS,
-                    scales: {
-                      x: { ticks: { color: '#7A8AA0', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-                      y: { ticks: { color: '#7A8AA0' }, grid: { color: 'rgba(255,255,255,0.04)' } },
-                    },
-                    plugins: { ...CHART_OPTS.plugins, legend: { ...CHART_OPTS.plugins.legend, position: 'top' } },
-                  }} />
-                </div>
-              </ChartCard>
-            )}
-
-            {/* Radar: Team comparison */}
-            {radarData && (
-              <ChartCard title="🕸️ Performance Radar (Top 4 Teams)">
-                <div style={{ height: 260 }}>
-                  <Radar data={radarData} options={{
-                    ...CHART_OPTS,
-                    scales: {
-                      r: {
-                        min: 0, max: 10,
-                        ticks: { stepSize: 2, color: '#3A4A5A', backdropColor: 'transparent', font: { size: 9 } },
-                        grid: { color: 'rgba(255,255,255,0.06)' },
-                        pointLabels: { color: '#7A8AA0', font: { size: 10 } },
-                      },
-                    },
-                    plugins: { ...CHART_OPTS.plugins, legend: { ...CHART_OPTS.plugins.legend, position: 'bottom' } },
-                  }} />
-                </div>
-              </ChartCard>
-            )}
-          </div>
         )}
 
-        {/* ── INSIGHTS TAB ────────────────────────────────────────────────── */}
-        {activeTab === 'insights' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {(analysis.keyInsights || []).map((insight, i) => (
-              <div key={i} style={{
-                display: 'flex', gap: '12px', alignItems: 'flex-start',
-                padding: '14px 16px',
-                background: i % 2 === 0 ? 'rgba(0,229,255,0.04)' : 'rgba(167,139,250,0.04)',
-                border: `1px solid ${i % 2 === 0 ? 'rgba(0,229,255,0.12)' : 'rgba(167,139,250,0.12)'}`,
-                borderRadius: 10, animation: `slide-in 0.3s ease ${i * 0.08}s both`,
-              }}>
-                <div style={{
-                  width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
-                  background: i % 2 === 0 ? `${NEON}20` : `${PURPLE}20`,
-                  border: `1px solid ${i % 2 === 0 ? NEON : PURPLE}40`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '0.72rem', fontWeight: 900,
-                  color: i % 2 === 0 ? NEON : PURPLE,
-                }}>
-                  {i + 1}
-                </div>
-                <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: 1.65 }}>{insight}</p>
-              </div>
-            ))}
+        {/* ── Betting Predictions Engine ── */}
+        {analysis.bettingPredictions && (
+            <div>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>🎯 Predictive Targets</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    
+                    <div style={{ padding: '14px', background: 'rgba(0,255,136,0.05)', border: `1px solid ${GREEN}40`, borderRadius: 10 }}>
+                        <div style={{ fontSize: '0.7rem', color: GREEN, fontWeight: 700, marginBottom: 8, letterSpacing: '0.04em' }}>OVER 1.5 GOALS</div>
+                        <div style={{ fontSize: '0.85rem', color: '#fff', lineHeight: 1.5 }}>{analysis.bettingPredictions.over1_5 || 'No specific targets.'}</div>
+                    </div>
 
-            {/* Dominant teams */}
-            {analysis.dominantTeams?.length > 0 && (
-              <div style={{ marginTop: 4, padding: '12px 16px', background: 'rgba(0,255,136,0.05)', border: '1px solid rgba(0,255,136,0.15)', borderRadius: 10 }}>
-                <div style={{ fontSize: '0.7rem', color: GREEN, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
-                  🏅 Dominant Teams Today
+                    <div style={{ padding: '14px', background: 'rgba(255,107,53,0.05)', border: `1px solid ${ORANGE}40`, borderRadius: 10 }}>
+                        <div style={{ fontSize: '0.7rem', color: ORANGE, fontWeight: 700, marginBottom: 8, letterSpacing: '0.04em' }}>OVER 2.5 GOALS</div>
+                        <div style={{ fontSize: '0.85rem', color: '#fff', lineHeight: 1.5 }}>{analysis.bettingPredictions.over2_5 || 'No specific targets.'}</div>
+                    </div>
+
+                    <div style={{ padding: '14px', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 10 }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 700, marginBottom: 8, letterSpacing: '0.04em' }}>BOTH TEAMS TO SCORE (GG)</div>
+                        <div style={{ fontSize: '0.85rem', color: '#fff', lineHeight: 1.5 }}>{analysis.bettingPredictions.GG || 'No specific targets.'}</div>
+                    </div>
+
+                    <div style={{ padding: '14px', background: 'rgba(167,139,250,0.05)', border: `1px solid ${PURPLE}40`, borderRadius: 10 }}>
+                        <div style={{ fontSize: '0.7rem', color: PURPLE, fontWeight: 700, marginBottom: 8, letterSpacing: '0.04em' }}>CORRECT SCORE</div>
+                        <div style={{ fontSize: '0.85rem', color: '#fff', lineHeight: 1.5 }}>{analysis.bettingPredictions.correctScore || 'No specific targets.'}</div>
+                    </div>
+
                 </div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  {analysis.dominantTeams.map((t, i) => (
-                    <span key={t} style={{
-                      background: `${GREEN}15`, border: `1px solid ${GREEN}30`,
-                      borderRadius: 20, padding: '4px 14px',
-                      fontSize: '0.8rem', fontWeight: 700, color: GREEN,
-                    }}>
-                      {i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'} {t}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
         )}
+
       </div>
     </div>
   );
 }
 
-// ── Chart card wrapper ─────────────────────────────────────────────────────
-function ChartCard({ title, children }) {
+// ── Live Prediction Hub ──────────────────────────────────────────────────────
+function LivePredictionHub() {
+  const LEAGUES = ['England - Virtual', 'Germany - Virtual', 'Italy - Virtual', 'Spain - Virtual'];
+  const [league, setLeague] = useState(LEAGUES[0]);
+  const [homeTeam, setHomeTeam] = useState('');
+  const [awayTeam, setAwayTeam] = useState('');
+  const [predicting, setPredicting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handlePredict = async () => {
+      if(!homeTeam || !awayTeam) return alert('Enter both teams!');
+      setPredicting(true);
+      console.log(`[LivePredictionHub] Requesting venue-aware prediction: ${homeTeam} (HOME) vs ${awayTeam} (AWAY) in ${league}`);
+      try {
+          const rs = await fetch('/api/vfootball/predict-live', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ league, homeTeam, awayTeam })
+          });
+          const data = await rs.json();
+          if(data.success) {
+              setResult(data.prediction);
+              console.log(`[LivePredictionHub] ✅ Prediction received. match_winner=${data.prediction.match_winner} winner_team=${data.prediction.winner_team_name}`);
+          } else {
+              console.error('[LivePredictionHub] Prediction failed:', data.error);
+              alert('Prediction failed: ' + data.error);
+          }
+      } catch(err) {
+          console.error('[LivePredictionHub] Network error:', err.message);
+          alert('Error predicting: ' + err.message);
+      }
+      setPredicting(false);
+  };
+
   return (
-    <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: '14px 16px' }}>
-      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        {title}
+      <div style={{ marginBottom: '24px', background: 'linear-gradient(135deg, rgba(0,255,136,0.08) 0%, rgba(0,0,0,0.8) 100%)', border: `1px solid ${GREEN}40`, borderRadius: 12, overflow: 'hidden' }}>
+          
+          <div style={{ padding: '16px 20px', borderBottom: `1px solid ${GREEN}20`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: '1.4rem' }}>🎯</span>
+                  <div>
+                      <div style={{ color: GREEN, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Live Match Predictor</div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                        Uses Home/Away Win% · H2H Venue Bias · League Baseline — <span style={{ color: ORANGE, fontWeight: 700 }}>Odds never used</span>
+                      </div>
+                  </div>
+              </div>
+          </div>
+
+          <div style={{ padding: '20px', display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
+              <select value={league} onChange={e => setLeague(e.target.value)} style={{ padding: '10px 14px', background: 'rgba(0,0,0,0.4)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, outline: 'none', minWidth: 200 }}>
+                  {LEAGUES.map(l => <option key={l} value={l}>{l.replace(' - Virtual', '')}</option>)}
+              </select>
+
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flex: 1 }}>
+                  <input type="text" placeholder="Home Team (e.g. Arsenal)" value={homeTeam} onChange={e => setHomeTeam(e.target.value)} style={{ flex: 1, padding: '10px 14px', background: 'rgba(0,0,0,0.4)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, outline: 'none' }} />
+                  <strong style={{ color: 'var(--text-muted)' }}>VS</strong>
+                  <input type="text" placeholder="Away Team (e.g. Chelsea)" value={awayTeam} onChange={e => setAwayTeam(e.target.value)} style={{ flex: 1, padding: '10px 14px', background: 'rgba(0,0,0,0.4)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, outline: 'none' }} />
+              </div>
+
+              <button onClick={handlePredict} disabled={predicting} style={{ padding: '10px 24px', background: GREEN, color: '#000', border: 'none', borderRadius: 8, fontWeight: 800, cursor: 'pointer', opacity: predicting ? 0.7 : 1 }}>
+                  {predicting ? 'Computing...' : 'Predict Match'}
+              </button>
+          </div>
+
+          {result && (() => {
+            // match_winner is 'Home', 'Away', or 'Draw' — NOT a team name
+            const winnerColor = result.match_winner === 'Home' ? GREEN
+                              : result.match_winner === 'Away' ? ORANGE
+                              : GOLD;
+            const winnerEmoji = result.match_winner === 'Home' ? '🏠'
+                              : result.match_winner === 'Away' ? '🛘'
+                              : '🤝';
+            return (
+              <div style={{ padding: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {/* Analysis text + confidence */}
+                  <div style={{ padding: '14px', background: 'rgba(255,255,255,0.05)', borderRadius: 8, borderLeft: `4px solid ${GREEN}` }}>
+                      <p style={{ margin: 0, fontSize: '0.9rem', color: '#fff', lineHeight: 1.5 }}>{result.predictionText}</p>
+                      <div style={{ fontSize: '0.7rem', color: GOLD, fontWeight: 800, letterSpacing: '0.04em', marginTop: 8 }}>CONFIDENCE: {result.confidenceScore}/100</div>
+                  </div>
+
+                  {/* Match Winner venue pill */}
+                  {result.match_winner && (
+                    <div style={{ background: `${winnerColor}10`, border: `1px solid ${winnerColor}50`, borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ fontSize: '1.6rem' }}>{winnerEmoji}</span>
+                      <div>
+                        <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Predicted Match Outcome</div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 900, color: winnerColor }}>
+                          {result.match_winner} Win
+                          {result.winner_team_name && <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: 400, fontSize: '0.82rem', marginLeft: 8 }}>({result.winner_team_name})</span>}
+                        </div>
+                        {result.winner_reasoning && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.4 }}>{result.winner_reasoning}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bet markets grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: '10px' }}>
+                      <div style={{ padding: '12px', background: '#111', border: `1px solid ${NEON}40`, borderRadius: 8 }}>
+                          <div style={{ fontSize: '0.65rem', color: NEON, fontWeight: 800, marginBottom: 6 }}>OVER 1.5 GOALS</div>
+                          <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)' }}>{result.over1_5}</div>
+                      </div>
+                      <div style={{ padding: '12px', background: '#111', border: `1px solid ${ORANGE}40`, borderRadius: 8 }}>
+                          <div style={{ fontSize: '0.65rem', color: ORANGE, fontWeight: 800, marginBottom: 6 }}>OVER 2.5 GOALS</div>
+                          <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)' }}>{result.over2_5}</div>
+                      </div>
+                      <div style={{ padding: '12px', background: '#111', border: `1px solid rgba(255,255,255,0.2)`, borderRadius: 8 }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 800, marginBottom: 6 }}>GG (BOTH TO SCORE)</div>
+                          <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)' }}>{result.GG}</div>
+                      </div>
+                      <div style={{ padding: '12px', background: '#111', border: `1px solid ${PURPLE}40`, borderRadius: 8 }}>
+                          <div style={{ fontSize: '0.65rem', color: PURPLE, fontWeight: 800, marginBottom: 6 }}>CORRECT SCORE</div>
+                          <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)' }}>{result.correctScore}</div>
+                      </div>
+                  </div>
+
+                  {/* How this prediction was made */}
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', borderRadius: 8, lineHeight: 1.6 }}>
+                    ℹ️ <strong>How this works:</strong> The AI fetched {homeTeam}&apos;s <strong>HomeWin%</strong>, {awayTeam}&apos;s <strong>AwayWin%</strong>,
+                    head-to-head venue bias, and the {league} home/away baseline — then predicted using these stats only. <span style={{ color: ORANGE }}>Betting odds were excluded.</span>
+                  </div>
+              </div>
+            );
+          })()}
+
       </div>
-      {children}
-    </div>
   );
 }

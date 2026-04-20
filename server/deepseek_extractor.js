@@ -56,16 +56,16 @@ async function preprocessImageForOCR(imagePath) {
 }
 
 // --- CORE EXTRACTION PROCESS ---
-async function processScreenshot(imagePath, leagueName) {
+async function extractMatchDataFromImage(imagePath, leagueName) {
     if (!process.env.DEEPSEEK_API_KEY) {
         console.error("\n❌ ERROR: DEEPSEEK_API_KEY is missing from your environment.");
         console.log("👉 How to run: DEEPSEEK_API_KEY=\"your_key\" node deepseek_extractor.js \"England - Virtual\"\n");
-        return;
+        return [];
     }
 
     if (!fs.existsSync(imagePath)) {
         console.error(`❌ Image not found at: ${imagePath}`);
-        return;
+        return [];
     }
 
     const hash = getFileHash(imagePath);
@@ -74,11 +74,11 @@ async function processScreenshot(imagePath, leagueName) {
     if (isImageProcessed(hash)) {
         console.log(`[⏭️] Skipping image: ${path.basename(imagePath)} - Hash matches a previously extracted image.`);
         console.log(`[💰] 0 Deepseek Tokens Consumed.`);
-        return; 
+        return []; 
     }
 
-    console.log(`\n[🚀] New Target Identified: ${path.basename(imagePath)}`);
-    console.log(`[🏆] Assigned League Database Value: ${leagueName}\n`);
+    console.log(`\\n[🚀] New Target Identified: ${path.basename(imagePath)}`);
+    console.log(`[🏆] Assigned League Database Value: ${leagueName}\\n`);
     
     // Step 1: Preprocess Image
     console.log(`[1/3] 🖼️  Preprocessing image via Jimp (inverting colors to fix score readability)...`);
@@ -126,11 +126,12 @@ async function processScreenshot(imagePath, leagueName) {
         const response = await deepseek.chat.completions.create({
             model: "deepseek-chat", // Deepseek's flagship text model
             messages: [{ role: "user", content: prompt }],
-            temperature: 0.1 // Using low temperature for strict data formatting
+            temperature: 0.1, // Using low temperature for strict data formatting
+            max_tokens: 8000 // Accommodate very large pages
         });
 
         const rawResult = response.choices[0].message.content.trim();
-        let jsonStr = rawResult.replace(/```json/gi, '').replace(/```/g, '').trim();
+        let jsonStr = rawResult.replace(/\`\`\`json/gi, '').replace(/\`\`\`/g, '').trim();
         
         let extractedData = {};
         try {
@@ -138,7 +139,7 @@ async function processScreenshot(imagePath, leagueName) {
         } catch (jsonErr) {
             console.error("[❌] Deepseek returned invalid JSON format.");
             console.log(rawResult);
-            return;
+            return [];
         }
 
         // Step 4: Save to Final Output File
@@ -152,17 +153,22 @@ async function processScreenshot(imagePath, leagueName) {
         // Step 5: Mark Image as Processed (Protects AI tokens next time)
         markImageProcessed(hash);
         
-        console.log(`\n[✅] SUCCESS! Extracted and organized ${extractedData.length} match records.`);
+        console.log(`\\n[✅] SUCCESS! Extracted and organized ${extractedData.length} match records.`);
         console.log(`[💾] Data safely appended to ./server/${path.basename(OUTPUT_DATA_PATH)}`);
         console.log(`[🔒] Database locked. Image hash recorded in ./server/${path.basename(PROCESSED_DB_PATH)}`);
 
+        return extractedData;
     } catch (error) {
-        console.error("\n[❌] Failed during AI processing:", error.message);
+        console.error("\\n[❌] Failed during AI processing:", error.message);
+        return [];
     }
 }
 
 // Ensure the user inputs the league dynamically
-const defaultImage = path.join(__dirname, 'testdownloadpage', 'screenshot_testdate_1775514268389.png');
-const leagueNameArg = process.argv[2] || "England - Virtual";
+if (require.main === module) {
+    const defaultImage = path.join(__dirname, 'testdownloadpage', 'screenshot_testdate_1775514268389.png');
+    const leagueNameArg = process.argv[2] || "England - Virtual";
+    extractMatchDataFromImage(defaultImage, leagueNameArg);
+}
 
-processScreenshot(defaultImage, leagueNameArg);
+module.exports = { extractMatchDataFromImage };

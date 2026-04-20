@@ -1,0 +1,114 @@
+require('dotenv').config();
+const mongoose = require('mongoose');
+
+let isConnected = false;
+
+async function connectDb() {
+    if (isConnected) return;
+
+    if (!process.env.MONGO_URI) {
+        console.error('[db_init] ❌ MONGO_URI missing in .env');
+        // Let's not throw immediately so the server doesn't crash on start,
+        // but warn clearly.
+    }
+
+    try {
+        const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/live-sports-dashboard';
+        await mongoose.connect(uri);
+        isConnected = true;
+        console.log('[db_init] ✅ MongoDB connection established.');
+    } catch (err) {
+        console.error('[db_init] ❌ Failed to connect to MongoDB:', err.message);
+        throw err;
+    }
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────
+
+const resultSchema = new mongoose.Schema({
+    _id: String, // use constructed ID to act exactly like Firestore to avoid duplicates
+    date: String,
+    gameId: String,
+    league: String,
+    homeTeam: String,
+    awayTeam: String,
+    score: String,
+    sourceTag: String,
+    uploadedAt: { type: Date, default: Date.now },
+}, { strict: false }); // Allow all scraped fields
+
+const historyLogSchema = new mongoose.Schema({
+    _id: String,
+    status: String,
+    uploadedPages: [Number],
+    updatedAt: { type: Date, default: Date.now }
+}, { strict: false });
+
+const leagueIntelligenceSchema = new mongoose.Schema({
+    _id: String,
+    league: String,
+    updatedAt: { type: Date, default: Date.now }
+}, { strict: false });
+
+const dailyTipSchema = new mongoose.Schema({
+    _id: String,
+    date: String,
+    league: String,
+    uploadedAt: { type: Date, default: Date.now }
+}, { strict: false });
+
+const analysisLogSchema = new mongoose.Schema({
+    // allow auto _id if not provided
+    dateLabel: String,
+    league: String,
+    scope: String,
+    createdAt: { type: Date, default: Date.now }
+}, { strict: false });
+
+const behaviorSignalSchema = new mongoose.Schema({
+    _id: String, // e.g. "teamName_date"
+    team: String,
+    dateLabel: String,
+    lastComputed: { type: Date, default: Date.now }
+}, { strict: false }); // for behaviour_pattern_engine.js
+
+const systemStrategySchema = new mongoose.Schema({
+    _id: String,
+    currentStrategy: String,
+    activeRules: [String],
+    timesUsed: Number,
+    successfulHits: Number,
+    failures: Number,
+    updatedAt: Date
+}, { strict: false });
+
+const strategyHistorySchema = new mongoose.Schema({
+    _id: String, // timestamp string
+    date: Date,
+    action: String,
+    added: [String],
+    removed: [String],
+    monitored: [String]
+}, { strict: false });
+
+const Result = mongoose.models.Result || mongoose.model('Result', resultSchema, 'vfootball_results');
+const HistoryLog = mongoose.models.HistoryLog || mongoose.model('HistoryLog', historyLogSchema, 'history_logs');
+const LeagueIntelligence = mongoose.models.LeagueIntelligence || mongoose.model('LeagueIntelligence', leagueIntelligenceSchema, 'ai_league_intelligence');
+const DailyTip = mongoose.models.DailyTip || mongoose.model('DailyTip', dailyTipSchema, 'daily_tips');
+const AnalysisLog = mongoose.models.AnalysisLog || mongoose.model('AnalysisLog', analysisLogSchema, 'ai_analysis_log');
+const BehaviorSignal = mongoose.models.BehaviorSignal || mongoose.model('BehaviorSignal', behaviorSignalSchema, 'behavior_signals');
+const SystemStrategy = mongoose.models.SystemStrategy || mongoose.model('SystemStrategy', systemStrategySchema, 'ai_system');
+const StrategyHistory = mongoose.models.StrategyHistory || mongoose.model('StrategyHistory', strategyHistorySchema, 'ai_strategy_history');
+
+module.exports = {
+    connectDb,
+    mongoose,
+    Result,
+    HistoryLog,
+    LeagueIntelligence,
+    DailyTip,
+    AnalysisLog,
+    BehaviorSignal,
+    SystemStrategy,
+    StrategyHistory
+};

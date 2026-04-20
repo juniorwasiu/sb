@@ -36,15 +36,18 @@
   --transition-std:  0.25s ease;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────── */
-/* Global Reset & Base                                                          */
-/* ─────────────────────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
+  overflow-x: hidden;
+  width: 100%;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background-color: var(--bg-primary);
   background-image:
@@ -682,5 +685,168 @@ body {
 
   .countdown-clock {
     font-size: 1.4rem;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Premium Ultra-Glass Daily Tips Custom Classes                                */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+.ultra-glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.ultra-glass:hover {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 16px 48px 0 rgba(0, 0, 0, 0.4);
+}
+
+.premium-glow-border {
+  position: relative;
+  border-radius: var(--radius-lg);
+  isolation: isolate;
+  border: 1px solid transparent;
+}
+
+.premium-glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(120deg, transparent, var(--accent-purple), var(--accent-neon), transparent);
+  border-radius: inherit;
+  z-index: -1;
+  opacity: 0.15;
+  transition: opacity 0.4s ease;
+}
+
+.premium-glow-border:hover::before {
+  opacity: 0.5;
+}
+
+.gold-shimmer {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 215, 0, 0.4);
+}
+
+.gold-shimmer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -150%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 215, 0, 0.12), transparent);
+  transform: skewX(-20deg);
+  animation: shimmer 4s infinite linear;
+}
+
+@keyframes shimmer {
+  0% { left: -150%; }
+  50% { left: 150%; }
+  100% { left: 150%; }
+}
+
+.text-gradient {
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.animate-fade-up {
+  opacity: 0;
+  transform: translateY(15px);
+  animation: fadeUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(15px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hover-lift {
+  transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.5);
+}
+
+.hud-panel {
+  border-left: 4px solid var(--accent-neon);
+  background: linear-gradient(90deg, rgba(0,229,255,0.06) 0%, transparent 100%);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Responsive Global Layout Utility Classes                                     */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 350px;
+  gap: 32px;
+  align-items: start;
+}
+
+.daily-tips-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 36px;
+  align-items: start;
+}
+
+.match-row-grid {
+  display: grid;
+  grid-template-columns: 70px 1fr 90px 1fr 70px;
+}
+
+.stats-grid-mobile {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.header-flex-mobile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  
+  .daily-tips-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 16px 12px;
+  }
+
+  .stats-grid-mobile {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 650px) {
+  .match-row-grid {
+    grid-template-columns: 60px 1fr 70px 1fr 50px;
+    font-size: 0.9em;
+  }
+  
+  .glass-panel, .ultra-glass {
+    padding: 16px;
   }
 }

@@ -1,0 +1,7 @@
+{
+  "provider": "gemini",
+  "geminiModel": "gemini-2.5-flash",
+  "claudeModel": "claude-sonnet-4-6",
+  "openaiModel": "gpt-4o",
+  "updatedAt": "2026-04-17T10:30:14.432Z"
+}

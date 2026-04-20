@@ -10,7 +10,7 @@ yarn-error.log*
 .env.*.local
 
 # ── Firebase service account key — contains private credentials
-server/serviceAccountKey.json
+server/serviceAccountKey*.json
 
 # ── Built output ───────────────────────────────────────────────
 client/dist/
