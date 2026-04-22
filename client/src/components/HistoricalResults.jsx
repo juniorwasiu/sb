@@ -131,7 +131,7 @@ export default function HistoricalResults() {
     setError(null);
     try {
       const res = await fetch('/api/admin/vfootball/sync-all');
-      const data = await res.json();
+      await res.json();
       if (!res.ok) throw new Error('Failed to run backend data sync');
       console.log(`[HistoricalResults] Triggered sync-all API`);
     } catch (err) {

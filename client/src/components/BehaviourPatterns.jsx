@@ -469,6 +469,7 @@ export default function BehaviourPatterns() {
   // ── Tab switch effects ───────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === 'streak') loadStreakProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     if (activeTab === 'history') loadHistory();
   }, [activeTab, league]);
 

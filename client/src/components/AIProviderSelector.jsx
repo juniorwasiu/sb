@@ -35,7 +35,6 @@ export default function AIProviderSelector({
     style         = {},
 }) {
     const [providers, setProviders]   = useState(STATIC_PROVIDERS);
-    const [loading, setLoading]       = useState(false);
     const [switching, setSwitching]   = useState(false);
     const [switchMsg, setSwitchMsg]   = useState('');
 

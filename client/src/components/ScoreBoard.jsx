@@ -389,8 +389,6 @@ function AIPredictionsPanel({ isPredicting, predictError, livePredictions, aiLog
       {livePredictions?.upcoming_matches && !isPredicting && (
         <div className="matches-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px', maxHeight: '500px', overflowY: 'auto' }}>
           {livePredictions.upcoming_matches.map((match, idx) => {
-            // match_winner is now "Home", "Away", or "Draw" (not a team name)
-            const winnerLabel = match.match_winner || match.winner_team_name || '—';
             const venueConf   = match.venue_confidence || null;
             const winnerTeam  = match.winner_team_name || match.match_winner || '—';
             const winnerColor = match.match_winner === 'Home' ? GREEN
