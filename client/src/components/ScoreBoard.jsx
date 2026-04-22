@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import AIProviderSelector from './AIProviderSelector';
 import html2canvas from 'html2canvas';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -490,6 +491,7 @@ function UpcomingMatchPredictorPanel({ leagueGroups }) {
   const [prediction, setPrediction] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [aiProvider, setAiProvider] = useState('deepseek'); // AI engine selection
 
   // Flatten matches for the dropdown
   const upcomingMatches = React.useMemo(() => {
@@ -517,7 +519,7 @@ function UpcomingMatchPredictorPanel({ leagueGroups }) {
       const res = await fetch('/api/vfootball/predict-live', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ league: match.league, homeTeam: match.home, awayTeam: match.away })
+        body: JSON.stringify({ league: match.league, homeTeam: match.home, awayTeam: match.away, provider: aiProvider })
       });
       const text = await res.text();
       let data;
@@ -584,8 +586,18 @@ function UpcomingMatchPredictorPanel({ leagueGroups }) {
             transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 8
           }}
         >
-          {isLoading ? <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2, margin: 0 }} /> : '🧠 Predict'}
+        {isLoading ? <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2, margin: 0 }} /> : '🧠 Predict'}
         </button>
+      </div>
+
+      {/* Compact AI engine selector — shown right above the prediction result */}
+      <div style={{ marginBottom: 10 }}>
+        <AIProviderSelector
+          selectedProvider={aiProvider}
+          onSelect={setAiProvider}
+          compact
+          disabledProviders={isLoading ? ['deepseek', 'gemini', 'claude'] : []}
+        />
       </div>
 
       {errorMsg && (
@@ -697,6 +709,7 @@ export default function ScoreBoard({
   const [predictError, setPredictError]       = useState(null);
   const [isRefreshing, setIsRefreshing]       = useState(false);
   const [activeLeague, setActiveLeague]       = useState(null); // filter tab
+  const [leagueBaselines, setLeagueBaselines] = useState({});   // league name → baseline stats
 
   // Track previous match count for velocity badge (▲ +N new)
   const prevTotalRef  = useRef(0);
@@ -728,6 +741,28 @@ export default function ScoreBoard({
     };
     es.onerror = () => console.warn('[ScoreBoard] AI status stream disconnected.');
     return () => es.close();
+  }, []);
+
+  // 🧬 Fetch League DNA baselines (BTTS%, O1.5%, O2.5%, Draw%) for DNA strip on each league group
+  useEffect(() => {
+    const fetchBaselines = async () => {
+      try {
+        console.log('[ScoreBoard] 🧬 Fetching League DNA baselines for live odds strip...');
+        const res  = await fetch('/api/vfootball/league-baselines');
+        const data = await res.json();
+        if (data.success && data.baselines) {
+          const map = {};
+          data.baselines.forEach(bl => { map[bl.league] = bl; });
+          setLeagueBaselines(map);
+          console.log(`[ScoreBoard] ✅ League DNA loaded for ${data.baselines.length} leagues.`);
+        } else {
+          console.warn('[ScoreBoard] ⚠️ No baselines returned:', data.error);
+        }
+      } catch (err) {
+        console.error('[ScoreBoard] ❌ Baseline fetch error:', err.message);
+      }
+    };
+    fetchBaselines();
   }, []);
 
   // Auto-scroll AI log to bottom
@@ -1138,6 +1173,40 @@ export default function ScoreBoard({
               {leagueGroup.matches?.length || 0} match{leagueGroup.matches?.length !== 1 ? 'es' : ''}
             </span>
           </div>
+
+          {/* League DNA Baseline Strip — shows key stats computed from last 7 days */}
+          {(() => {
+            const bl = leagueBaselines[leagueGroup.league];
+            if (!bl || !bl.stats) return null;
+            const s   = bl.stats;
+            const g   = (v, hi, mi) => v >= hi ? '#00FF88' : v >= mi ? '#FFD700' : '#FF3355';
+            const tags = [];
+            if (s.over1_5Percent != null) tags.push({ label: `O1.5 ${s.over1_5Percent}%`, color: g(s.over1_5Percent, 75, 70) });
+            if (s.over2_5Percent != null) tags.push({ label: `O2.5 ${s.over2_5Percent}%`, color: g(s.over2_5Percent, 55, 49) });
+            if (s.bttsPercent    != null) tags.push({ label: `BTTS ${s.bttsPercent}%`,  color: g(s.bttsPercent, 55, 50) });
+            if (s.drawPercent    != null) tags.push({ label: `Draw ${s.drawPercent}%`,   color: g(s.drawPercent, 26, 24) });
+            if (s.avgGoals       != null) tags.push({ label: `∅ ${Number(s.avgGoals).toFixed(1)} gl/g`, color: '#00E5FF' });
+            if (bl.topScores?.[0]) tags.push({ label: `🎯 ${bl.topScores[0].score} (${bl.topScores[0].percent}%)`, color: '#FFD700' });
+            return (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
+                marginBottom: 8, padding: '5px 10px',
+                background: 'rgba(0,229,255,0.04)', borderRadius: 6,
+                border: '1px solid rgba(0,229,255,0.1)',
+              }}>
+                <span style={{ fontSize: '0.58rem', color: 'rgba(255,255,255,0.3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginRight: 2 }}>🧬 DNA</span>
+                {tags.map((t, i) => (
+                  <span key={i} style={{
+                    fontSize: '0.62rem', fontWeight: 800, padding: '1px 7px', borderRadius: 20,
+                    background: `${t.color}12`, color: t.color, border: `1px solid ${t.color}30`,
+                    fontFamily: 'monospace',
+                  }}>
+                    {t.label}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Column header */}
           <div style={{

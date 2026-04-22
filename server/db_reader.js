@@ -1,4 +1,4 @@
-const { Result, HistoryLog } = require('./db_init');
+const { Result, HistoryLog, LeagueBaseline } = require('./db_init');
 
 // ── Global In-Memory Cache ────────────────────────────────────────────────────
 const GLOBAL_CACHE = {
@@ -433,6 +433,96 @@ function _emptyAdv() {
     return { homeWinPercent: 0, awayWinPercent: 0, drawPercent: 0, matchesAnalysed: 0 };
 }
 
+// ── League Baseline DNA Computation ──────────────────────────────────────────
+
+async function computeAllLeagueBaselines(daysBack = 7) {
+    console.log(`[DB Reader] 🧬 Computing League Baselines for the past ${daysBack} days...`);
+    const allDocs = await getCachedDocs();
+    
+    const today = new Date();
+    const thresholdDate = new Date(today);
+    thresholdDate.setDate(today.getDate() - daysBack);
+    thresholdDate.setHours(0,0,0,0);
+
+    const relevantDocs = allDocs.filter(doc => {
+        const d = parseDDMMYYYY(doc.date);
+        return d && d >= thresholdDate;
+    });
+
+    const leagueData = {};
+    relevantDocs.forEach(m => {
+        if (!m.score || !/^\d+[:\-]\d+$/.test(m.score.trim())) return;
+        const lg = m.league || 'Unknown';
+        if (!leagueData[lg]) leagueData[lg] = [];
+        leagueData[lg].push(m);
+    });
+
+    const results = [];
+
+    for (const [lg, matches] of Object.entries(leagueData)) {
+        const totalValid = matches.length;
+        if (totalValid < 5) continue; 
+
+        let homeWins = 0, awayWins = 0, draws = 0;
+        let gg = 0, over1_5 = 0, over2_5 = 0, totalGoals = 0;
+        const topScores = {};
+
+        matches.forEach(m => {
+            const parts = m.score.replace('-', ':').split(':').map(s => parseInt(s.trim(), 10));
+            const hg = parts[0], ag = parts[1];
+
+            if (hg > ag) homeWins++;
+            else if (hg < ag) awayWins++;
+            else draws++;
+
+            if (hg > 0 && ag > 0) gg++;
+            if (hg + ag > 1.5) over1_5++;
+            if (hg + ag > 2.5) over2_5++;
+            totalGoals += (hg + ag);
+
+            const scoreStr = `${hg}-${ag}`;
+            topScores[scoreStr] = (topScores[scoreStr] || 0) + 1;
+        });
+
+        const sortedScores = Object.entries(topScores)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([score, count]) => ({ score, count, percent: Math.round((count / totalValid) * 100) }));
+
+        const baselineData = {
+            league: lg,
+            matchCount: totalValid,
+            stats: {
+                homeWinPercent: Math.round((homeWins / totalValid) * 100),
+                awayWinPercent: Math.round((awayWins / totalValid) * 100),
+                drawPercent:    Math.round((draws   / totalValid) * 100),
+                bttsPercent:    Math.round((gg      / totalValid) * 100),
+                over1_5Percent: Math.round((over1_5  / totalValid) * 100),
+                over2_5Percent: Math.round((over2_5  / totalValid) * 100),
+                avgGoals:       Math.round((totalGoals / totalValid) * 100) / 100,
+            },
+            topScores: sortedScores,
+            lastComputed: new Date()
+        };
+
+        await LeagueBaseline.findByIdAndUpdate(lg, { $set: baselineData }, { upsert: true });
+        results.push(baselineData);
+    }
+    console.log(`[DB Reader] ✅ Computed and saved baselines for ${results.length} leagues.`);
+    return results;
+}
+
+async function getLeagueBaseline(league) {
+    if (!league) return null;
+    try {
+        const bl = await LeagueBaseline.findById(league).lean();
+        return bl || null;
+    } catch (err) {
+        console.error(`[DB Reader] ❌ getLeagueBaseline error:`, err);
+        return null;
+    }
+}
+
 module.exports = {
     fetchResultsFromDatabase,
     fetchResultsFromFirebase: fetchResultsFromDatabase,
@@ -446,7 +536,9 @@ module.exports = {
     fetchAllHistoryLogs,
     computeTeamForm,
     computeH2HForm,
-    computeVenueAdvantage, 
+    computeVenueAdvantage,
+    computeAllLeagueBaselines,
+    getLeagueBaseline,
     todayDDMMYYYY,
     parseDDMMYYYY,
     GLOBAL_CACHE, 

@@ -91,6 +91,15 @@ const strategyHistorySchema = new mongoose.Schema({
     monitored: [String]
 }, { strict: false });
 
+const leagueBaselineSchema = new mongoose.Schema({
+    _id: String, // league name
+    league: String,
+    matchCount: Number,
+    stats: Object,
+    topScores: Array,
+    lastComputed: { type: Date, default: Date.now }
+}, { strict: false });
+
 const Result = mongoose.models.Result || mongoose.model('Result', resultSchema, 'vfootball_results');
 const HistoryLog = mongoose.models.HistoryLog || mongoose.model('HistoryLog', historyLogSchema, 'history_logs');
 const LeagueIntelligence = mongoose.models.LeagueIntelligence || mongoose.model('LeagueIntelligence', leagueIntelligenceSchema, 'ai_league_intelligence');
@@ -99,6 +108,7 @@ const AnalysisLog = mongoose.models.AnalysisLog || mongoose.model('AnalysisLog',
 const BehaviorSignal = mongoose.models.BehaviorSignal || mongoose.model('BehaviorSignal', behaviorSignalSchema, 'behavior_signals');
 const SystemStrategy = mongoose.models.SystemStrategy || mongoose.model('SystemStrategy', systemStrategySchema, 'ai_system');
 const StrategyHistory = mongoose.models.StrategyHistory || mongoose.model('StrategyHistory', strategyHistorySchema, 'ai_strategy_history');
+const LeagueBaseline = mongoose.models.LeagueBaseline || mongoose.model('LeagueBaseline', leagueBaselineSchema, 'league_baselines');
 
 module.exports = {
     connectDb,
@@ -110,5 +120,6 @@ module.exports = {
     AnalysisLog,
     BehaviorSignal,
     SystemStrategy,
-    StrategyHistory
+    StrategyHistory,
+    LeagueBaseline
 };

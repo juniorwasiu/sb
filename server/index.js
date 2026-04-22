@@ -15,7 +15,7 @@ const { startContinuousScraper, stopContinuousScraper, reloadContinuousScraper, 
 const { captureLeagueResults } = require('./screenshot_scraper');
 const { nativeCaptureLeagueResults } = require('./native_scraper');
 const { uploadMatchesToDatabase, syncMatchesToDatabase, getDatabaseHistoryLog, setDatabaseHistoryLog } = require('./db_uploader');
-const { fetchResultsFromDatabase, fetchTodayResultsFromDatabase, todayDDMMYYYY, fetchFullDayRawResults, fetchTeamHistoryFromDatabase, fetchAvailableDates, fetchAvailableLeagues, fetchAllHistoryLogs, computeTeamForm, computeH2HForm, computeVenueAdvantage, getCachedDocs } = require('./db_reader');
+const { fetchResultsFromDatabase, fetchTodayResultsFromDatabase, todayDDMMYYYY, fetchFullDayRawResults, fetchTeamHistoryFromDatabase, fetchAvailableDates, fetchAvailableLeagues, fetchAllHistoryLogs, computeTeamForm, computeH2HForm, computeVenueAdvantage, computeAllLeagueBaselines, getLeagueBaseline, getCachedDocs } = require('./db_reader');
 const { toDbLeague, SUPPORTED_LEAGUES } = require('./constants');
 const { saveAnalysis, getRecentContext, getLog, deleteEntry, getEntryById, clearLog, getStrategy, updateStrategy, fetchStrategyHistory, getLeagueIntelligence, updateLeagueIntelligence, getAnalysisByScopeAndDate, saveDailyTip, getDailyTip, getAllDailyTips } = require('./ai_memory');
 const { deleteLeagueData } = require('./db_admin');
@@ -25,9 +25,18 @@ const {
     saveBehaviourSignals,
     fetchBehaviourSignals,
     buildBehaviourPromptInjection,
+    buildLeagueBaselinePromptInjection,
     computeLeagueStreakProfile,
     compareScreenshotResults
 } = require('./behaviour_pattern_engine');
+const {
+    callPredictionAI,
+    parseAIJson,
+    getActivePredictionProvider,
+    setActivePredictionProvider,
+    getPredictionProviderStatus,
+    PREDICTION_PROVIDERS,
+} = require('./prediction_ai');
 
 const EventEmitter = require('events');
 const aiStatusEmitter = new EventEmitter();
@@ -729,6 +738,18 @@ app.get('/api/admin/vfootball/sync-all', async (req, res) => {
                         console.error(`[Auto-Train] ❌ ${lg}: ${trainErr.message}`);
                     }
                 }
+
+                // 🧬 Auto-compute League DNA baselines after all leagues are trained
+                // This ensures baselines are fresh and ready for the next prediction cycle
+                console.log('[Auto-Train] 🧬 Computing League DNA baselines from last 7 days...');
+                try {
+                    const dnaBaselines = await computeAllLeagueBaselines(7);
+                    console.log(`[Auto-Train] ✅ League DNA baselines computed for ${dnaBaselines.length} leagues.`);
+                    broadcastAiStatus('success', `🧬 League DNA updated for ${dnaBaselines.length} leagues.`);
+                } catch (blErr) {
+                    console.error('[Auto-Train] ⚠️ DNA baseline compute failed (non-fatal):', blErr.message);
+                }
+
                 console.log('[Auto-Train] 🏁 Background training complete for all leagues.');
             });
         } else {
@@ -1541,15 +1562,49 @@ app.get('/api/ai/strategy-history', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/ai-provider
+// Returns active prediction AI provider + capability status for all providers
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/ai-provider', (req, res) => {
+    try {
+        const status = getPredictionProviderStatus();
+        console.log(`[/api/ai-provider GET] Active: ${status.active} | ${status.providers.filter(p => p.available).length}/${status.providers.length} ready`);
+        res.json({ success: true, ...status });
+    } catch (err) {
+        console.error('[/api/ai-provider GET] Error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/ai-provider
+// Body: { provider: 'deepseek' | 'gemini' | 'claude' }
+// Switches global AI provider for all future predictions (persists for session)
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/ai-provider', (req, res) => {
+    try {
+        const { provider } = req.body;
+        if (!provider) return res.status(400).json({ success: false, error: '"provider" field required in body' });
+        setActivePredictionProvider(provider);
+        broadcastAiStatus('info', `🤖 AI Provider switched to: ${provider.toUpperCase()} (${PREDICTION_PROVIDERS[provider]?.label || provider})`);
+        const status = getPredictionProviderStatus();
+        console.log(`[/api/ai-provider POST] ✅ Switched to: ${provider}`);
+        res.json({ success: true, active: provider, ...status });
+    } catch (err) {
+        console.error('[/api/ai-provider POST] Error:', err.message);
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/vfootball/predict-live
 // Employs DB Head-to-Head + League Intelligence + Strategy to predict a single fixture
 // ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/vfootball/predict-live', async (req, res) => {
-    const apiKey = process.env.DEEPSEEK_API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(500).json({ success: false, error: 'API key missing in environment' });
-
     try {
-        let { league, homeTeam, awayTeam } = req.body;
+        let { league, homeTeam, awayTeam, provider: reqProvider } = req.body;
+        const provider = reqProvider || getActivePredictionProvider();
+        console.log(`[predict-live] 🤖 AI Provider: ${provider.toUpperCase()} (${PREDICTION_PROVIDERS[provider]?.label || provider})`);
         if (!league || !homeTeam || !awayTeam) return res.status(400).json({ success: false, error: 'league, homeTeam, awayTeam required' });
 
         // Auto-resolve generic live scraper league names using the database
@@ -1572,6 +1627,16 @@ app.post('/api/vfootball/predict-live', async (req, res) => {
             computeH2HForm(league, homeTeam, awayTeam, 10),
             computeVenueAdvantage(league)
         ]);
+
+        // 🧬 Fetch full League DNA Baseline (BTTS%, O1.5%, O2.5%, avgGoals, top scorelines)
+        // Tier-1 macro-behavioral context — overrides generic form defaults in AI prompt
+        const fullBaselineDNA = await getLeagueBaseline(league);
+        const leagueBaselineDNAInjection = fullBaselineDNA
+            ? buildLeagueBaselinePromptInjection(fullBaselineDNA)
+            : '';
+        console.log(`[predict-live] 🧬 League DNA: ${fullBaselineDNA
+            ? `O1.5=${fullBaselineDNA.stats?.over1_5Percent}% BTTS=${fullBaselineDNA.stats?.bttsPercent}% O2.5=${fullBaselineDNA.stats?.over2_5Percent}% Draw=${fullBaselineDNA.stats?.drawPercent}% (${fullBaselineDNA.matchCount} matches)`
+            : 'No cached baseline — run Sync All + Recompute DNA first'}`);
 
         // Build venue-split form text for AI prompt (the key improvement)
         const homeFormTxt = [
@@ -1666,7 +1731,7 @@ ${h2hFormTxt}
 
 == 🏠 LEAGUE VENUE BASELINE ==
 ${leagueBaselineTxt}
-
+${leagueBaselineDNAInjection}
 == 🧠 LEAGUE INTELLIGENCE PROFILE ==
 ${intelStr}
 
@@ -1689,33 +1754,24 @@ Return EXACTLY this JSON:
 
 Return ONLY valid JSON.`;
 
-        const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify({
-                model: 'deepseek-chat',
-                messages: [{ role: 'user', content: prompt }],
-                temperature: 0.7,
-                response_format: { type: "json_object" }
-            })
-        });
-
-        if (!response.ok) throw new Error(await response.text());
-        const data = await response.json();
-        const rawContent = data.choices?.[0]?.message?.content || '';
-
+        broadcastAiStatus('analyzing', `Calling ${provider.toUpperCase()} AI for single-match prediction...`);
+        const aiResult = await callPredictionAI(prompt, provider);
         let prediction;
         try {
-            prediction = JSON.parse(rawContent.replace(/```json|```/g, '').trim());
+            prediction = parseAIJson(aiResult.content);
         } catch (e) {
-            return res.status(500).json({ success: false, error: 'DeepSeek returned invalid JSON.' });
+            console.error(`[predict-live] ❌ ${provider} returned invalid JSON:`, aiResult.content?.slice(0, 500));
+            return res.status(500).json({ success: false, error: `${provider} returned invalid JSON: ${e.message}` });
         }
 
         res.json({
             success: true,
             prediction,
             h2hAnalyzed: h2hMatches.length,
-            behaviourSignals: behaviourSignalData  // surface signals to the frontend
+            behaviourSignals: behaviourSignalData,
+            aiProvider: provider,
+            aiModel: aiResult.model,
+            aiMs: aiResult.ms,
         });
     } catch (err) {
         console.error('[/api/vfootball/predict-live]', err);
@@ -1816,6 +1872,75 @@ app.post('/api/vfootball/behaviour-patterns/analyse', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/vfootball/league-baselines
+// Returns all cached League DNA baselines from MongoDB (used by UI panels)
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/vfootball/league-baselines', async (req, res) => {
+    try {
+        const { LeagueBaseline } = require('./db_init');
+        const { league } = req.query;
+        console.log(`[/api/vfootball/league-baselines] Fetching baselines — league=${league || 'ALL'}`);
+
+        const query = league ? { _id: league } : {};
+        const baselines = await LeagueBaseline.find(query).lean();
+
+        // Sort by match count descending (most data first)
+        baselines.sort((a, b) => (b.matchCount || 0) - (a.matchCount || 0));
+
+        const lastComputed = baselines.length > 0
+            ? baselines.reduce((latest, bl) => {
+                const d = new Date(bl.lastComputed || 0);
+                return d > latest ? d : latest;
+            }, new Date(0))
+            : null;
+
+        console.log(`[/api/vfootball/league-baselines] Returning ${baselines.length} baselines.`);
+        res.json({ success: true, baselines, count: baselines.length, lastComputed });
+    } catch (err) {
+        console.error('[/api/vfootball/league-baselines] Error:', err.message);
+        res.status(500).json({ success: false, error: `Failed to load baselines: ${err.message}` });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vfootball/league-baselines/compute
+// Triggers a full DNA baseline recompute from the last N days of MongoDB data
+// Body: { daysBack?: number } (default: 7)
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/vfootball/league-baselines/compute', async (req, res) => {
+    try {
+        const { daysBack = 7 } = req.body || {};
+        console.log(`[/api/league-baselines/compute] 🧬 Triggering DNA recompute (last ${daysBack} days)...`);
+        broadcastAiStatus('progress', `🧬 Computing League DNA Baselines from last ${daysBack} days...`);
+
+        const baselines = await computeAllLeagueBaselines(Number(daysBack));
+
+        broadcastAiStatus('success', `✅ League DNA computed for ${baselines.length} leagues.`);
+        console.log(`[/api/league-baselines/compute] ✅ Computed ${baselines.length} baselines.`);
+
+        res.json({
+            success: true,
+            computed: baselines.length,
+            leagues: baselines.map(b => b.league),
+            summary: baselines.map(b => ({
+                league: b.league,
+                matchCount: b.matchCount,
+                over1_5: b.stats?.over1_5Percent,
+                over2_5: b.stats?.over2_5Percent,
+                btts: b.stats?.bttsPercent,
+                homeWin: b.stats?.homeWinPercent,
+                draw: b.stats?.drawPercent,
+                topScore: b.topScores?.[0]?.score,
+            }))
+        });
+    } catch (err) {
+        console.error('[/api/league-baselines/compute] Error:', err.message);
+        broadcastAiStatus('error', `DNA compute failed: ${err.message}`);
+        res.status(500).json({ success: false, error: `Baseline compute failed: ${err.message}` });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/vfootball/daily-tips/history
 // Fetches the entire logged history of daily tips (upcoming predictions).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1835,11 +1960,10 @@ app.get('/api/vfootball/daily-tips/history', async (req, res) => {
 // It explicitly looks for patterns after 0:0, 1:1, 2:2.
 // ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/vfootball/daily-tips/analyze', async (req, res) => {
-    const apiKey = process.env.DEEPSEEK_API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(500).json({ success: false, error: 'API key missing in environment' });
-
     try {
-        let { date, league } = req.body;
+        let { date, league, provider: reqProvider } = req.body;
+        const provider = reqProvider || getActivePredictionProvider();
+        console.log(`[daily-tips/analyze] 🤖 AI Provider: ${provider.toUpperCase()} (${PREDICTION_PROVIDERS[provider]?.label || provider})`);
         let bSignalsToReturn = [];
         const forceRerun = req.query.force === 'true' || req.body.force === true;
         if (!date || !league) return res.status(400).json({ success: false, error: 'date and league required' });
@@ -1933,6 +2057,17 @@ app.post('/api/vfootball/daily-tips/analyze', async (req, res) => {
 
                 // Compute league-wide venue baseline ONCE (cached) to avoid redundant reads
                 const leagueBaseline = await computeVenueAdvantage(league);
+
+                // 🧬 Fetch full League DNA Baseline (BTTS%, O1.5%, O2.5%, top scorelines, directives)
+                // This is Tier-1 context — the AI cannot override these statistical priors without explicit reasoning
+                const fullBaselineDNAForTips = await getLeagueBaseline(league);
+                const leagueTipsDNAInjection = fullBaselineDNAForTips
+                    ? buildLeagueBaselinePromptInjection(fullBaselineDNAForTips)
+                    : '';
+                console.log(`[daily-tips] 🧬 League DNA: ${fullBaselineDNAForTips
+                    ? `O1.5=${fullBaselineDNAForTips.stats?.over1_5Percent}% BTTS=${fullBaselineDNAForTips.stats?.bttsPercent}% O2.5=${fullBaselineDNAForTips.stats?.over2_5Percent}% Draw=${fullBaselineDNAForTips.stats?.drawPercent}% (${fullBaselineDNAForTips.matchCount} matches)`
+                    : 'No cached DNA baseline — using venue advantage only'}`);
+
                 if (league !== 'vFootball Live Odds') {
                     console.log(`[DEBUG] [analyze] League baseline: Home=${leagueBaseline.homeWinPercent}% Away=${leagueBaseline.awayWinPercent}% Draw=${leagueBaseline.drawPercent}%`);
                 }
@@ -1992,10 +2127,12 @@ app.post('/api/vfootball/daily-tips/analyze', async (req, res) => {
                 }
 
                 upcomingMatchesTxt = `=== DEEP LEARNING LEAGUE PROFILE ===\n${intelStr}\n====================================\n\n` +
-                    leagueBaselineLine + matchLines.join('\n\n') +
+                    leagueBaselineLine +
+                    (leagueTipsDNAInjection ? `\n${leagueTipsDNAInjection}\n` : '') +
+                    matchLines.join('\n\n') +
                     (dailyBehaviourInjection ? `\n\n${dailyBehaviourInjection}` : '');
-                console.log(`[DEBUG] [analyze] ✅ Live matches injected: ${matchesToAnalyze.length} (ODDS EXCLUDED — using form+H2H+behaviour signals)`);
-                broadcastAiStatus('success', `Injected ${matchesToAnalyze.length} fixtures with full venue-split stats + behaviour pattern signals.`);
+                console.log(`[DEBUG] [analyze] ✅ Live matches injected: ${matchesToAnalyze.length} (ODDS EXCLUDED — form+H2H+League DNA+behaviour signals)`);
+                broadcastAiStatus('success', `Injected ${matchesToAnalyze.length} fixtures with form, H2H, League DNA 🧬, and behaviour signals.`);
             } else {
                 console.log(`[DEBUG] [analyze] ⚠️ globalData present but no matches matched league "${league}". Skipping live fixture injection.`);
             }
@@ -2097,59 +2234,25 @@ FIELD NOTES:
 
 Return ONLY valid JSON. No markdown. No code blocks. No extra text.`;
 
-        broadcastAiStatus('analyzing', 'Prompting DeepSeek AI to synthesize match data and formulate betting patterns...');
-        const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify({
-                model: 'deepseek-chat',
-                messages: [{ role: 'user', content: prompt }],
-                temperature: 0.7,
-                max_tokens: 8000,
-                response_format: { type: "json_object" }
-            })
-        });
-
-        if (!response.ok) throw new Error(await response.text());
-        const data = await response.json();
-        const rawContent = data.choices?.[0]?.message?.content || '';
-
+        broadcastAiStatus('analyzing', `Prompting ${provider.toUpperCase()} AI to synthesize match data and generate predictions...`);
+        const aiResult = await callPredictionAI(prompt, provider, { maxTokens: 8000 });
         let tipData;
         try {
-            // Strategy 1: direct parse after stripping markdown fences
-            const cleaned = rawContent.replace(/```json|```/g, '').trim();
-            try {
-                tipData = JSON.parse(cleaned);
-                console.log('[DEBUG] [daily-tips/analyze] ✅ JSON parsed via Strategy 1 (direct).');
-            } catch {
-                // Strategy 2: extract the first { ... } block via regex
-                const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    try {
-                        tipData = JSON.parse(jsonMatch[0]);
-                        console.log('[DEBUG] [daily-tips/analyze] ✅ JSON parsed via Strategy 2 (regex extraction).');
-                    } catch {
-                        // Strategy 3: find outermost brackets manually
-                        const start = cleaned.indexOf('{');
-                        const end = cleaned.lastIndexOf('}');
-                        if (start !== -1 && end !== -1) {
-                            tipData = JSON.parse(cleaned.slice(start, end + 1));
-                            console.log('[DEBUG] [daily-tips/analyze] ✅ JSON parsed via Strategy 3 (bracket search).');
-                        }
-                    }
-                }
-            }
-            if (!tipData) throw new Error('All strategies failed');
+            tipData = parseAIJson(aiResult.content);
+            console.log(`[DEBUG] [daily-tips/analyze] ✅ JSON parsed from ${provider} (${aiResult.ms}ms, ${aiResult.tokensUsed} tokens).`);
         } catch (e) {
-            console.error('[daily-tips/analyze] ❌ JSON parse failed. Raw AI output below:');
-            console.error('RAW CONTENT >>>', rawContent.slice(0, 1000));
-            return res.status(500).json({ success: false, error: `AI returned invalid JSON: ${e.message}. Check server logs for raw output.` });
+            console.error(`[daily-tips/analyze] ❌ JSON parse failed from ${provider}. Raw output (first 1000 chars):`);
+            console.error('RAW CONTENT >>>', aiResult.content?.slice(0, 1000));
+            return res.status(500).json({ success: false, error: `${provider} returned invalid JSON: ${e.message}. Check server logs for raw output.` });
         }
 
-        // Stamp which analysis mode was used so the frontend can display the correct labels
-        tipData.analysisMode = hasLiveMatches ? 'live' : 'historical';
+        // Stamp analysis metadata for frontend display
+        tipData.analysisMode     = hasLiveMatches ? 'live' : 'historical';
         tipData.behaviourSignals = bSignalsToReturn;
-        console.log(`[DEBUG] [daily-tips/analyze] ✅ Analysis complete. Mode: ${tipData.analysisMode} | Matches: ${matches.length}`);
+        tipData.aiProvider       = provider;
+        tipData.aiModel          = aiResult.model;
+        tipData.aiMs             = aiResult.ms;
+        console.log(`[DEBUG] [daily-tips/analyze] ✅ Complete. Provider: ${provider} | Model: ${aiResult.model} | Mode: ${tipData.analysisMode} | Matches: ${matches.length}`);
 
         // ── Process Brain Updates ──────────────────────────────────────────────
         const brainUpdates = tipData.Self_Evaluation?.Brain_Updates;

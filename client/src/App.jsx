@@ -8,6 +8,7 @@ import DailyTips from './components/DailyTips';
 import AILog from './components/AILog';
 import BehaviourPatterns from './components/BehaviourPatterns';
 import ServerHealthWidget from './components/ServerHealthWidget';
+import LeagueIntelligencePanel from './components/LeagueIntelligencePanel';
 import './index.css';
 
 // ── Live scores SSE hook ──────────────────────────────────────────────────────
@@ -398,6 +399,7 @@ function AdminDashboard() {
         </main>
         <aside style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <LeagueManager />
+          <LeagueIntelligencePanel />
           {activeTab === 'live'    && <HowToGuide activeTab={activeTab} />}
           {activeTab === 'history' && <AILog />}
         </aside>

@@ -310,6 +310,48 @@ function buildBehaviourPromptInjection(behaviourSignals) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// buildLeagueBaselinePromptInjection
+// Converts a League Baseline DNA object into AI context prompting, so the AI
+// evaluates match probabilities relative to the macro-league averages.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildLeagueBaselinePromptInjection(baseline) {
+    if (!baseline || !baseline.stats) {
+        return '';
+    }
+
+    const { matchCount, stats, topScores } = baseline;
+    const lines = [
+        `\n== 🧬 LEAGUE MACRO BEHAVIORAL BASELINE (CRITICAL CONTEXT) ==`,
+        `This match belongs to a league with the following macro-behavioral statistics (based on the last ${matchCount} matches).`,
+        `You MUST weigh these baselines heavily when deciding odds for Overs or BTTS.`,
+        ``,
+        `  - Home Win Rate: ${stats.homeWinPercent}%`,
+        `  - Away Win Rate: ${stats.awayWinPercent}%`,
+        `  - Draw Rate:     ${stats.drawPercent}%`,
+        `  - BTTS (GG):     ${stats.bttsPercent}%`,
+        `  - Over 1.5 Rate: ${stats.over1_5Percent}%`,
+        `  - Over 2.5 Rate: ${stats.over2_5Percent}%`,
+        ``,
+        `  🎯 Most Frequent Scorelines:`
+    ];
+
+    if (topScores && topScores.length > 0) {
+        topScores.forEach((s, idx) => {
+            lines.push(`    #${idx + 1} -> ${s.score} (${s.percent}%)`);
+        });
+    }
+
+    lines.push(
+        ``,
+        `DIRECTIVE: If this league has an Over 1.5 Rate > 75%, you should overwhelmingly favor Over 1.5 unless both specific teams have extreme Under 1.5 defensive records.`,
+        `If the league has a high Draw Rate (> 25%), do not ignore the draw outcome. Use these baselines as your mathematical anchoring point.`,
+        `== END LEAGUE BASELINE ==\n`
+    );
+
+    return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // computeLeagueStreakProfile
 // Computes a league-wide streak fingerprint — which teams currently have
 // active win/loss streaks of 3+. Useful for dashboard display.
@@ -452,6 +494,7 @@ module.exports = {
     saveBehaviourSignals,
     fetchBehaviourSignals,
     buildBehaviourPromptInjection,
+    buildLeagueBaselinePromptInjection,
     computeLeagueStreakProfile,
     compareScreenshotResults,
     computeCurrentStreak,

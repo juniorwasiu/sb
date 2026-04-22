@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import AIProviderSelector from './AIProviderSelector';
 
 const NEON    = '#00E5FF';
 const GREEN   = '#00FF88';
@@ -45,9 +46,11 @@ export default function DailyTips() {
     const [teamForms, setTeamForms] = useState({}); // { 'TeamName': formProfile }
 
     // Sidebar Data states
-    const [strategyData, setStrategyData] = useState(null);
+    const [strategyData, setStrategyData]         = useState(null);
     const [intelligenceData, setIntelligenceData] = useState(null);
     const [predictionHistory, setPredictionHistory] = useState([]);
+    const [leagueDNA, setLeagueDNA]               = useState(null); // League DNA baseline
+    const [aiProvider, setAiProvider]             = useState('deepseek'); // Selected AI provider
 
     // Real-time AI activity log (SSE stream from /api/ai-status-stream)
     const [aiLog, setAiLog] = useState([]);
@@ -96,6 +99,18 @@ export default function DailyTips() {
             const resIntel = await fetch(`/api/vfootball/league-intelligence/${encodeURIComponent(league)}`);
             const dataIntel = await resIntel.json();
             if (dataIntel.success) setIntelligenceData(dataIntel.data);
+
+            // 🧬 Fetch League DNA Baseline for the selected league
+            console.log(`[DailyTips] 🧬 Fetching League DNA baseline for ${league}...`);
+            const resDNA = await fetch(`/api/vfootball/league-baselines?league=${encodeURIComponent(league)}`);
+            const dataDNA = await resDNA.json();
+            if (dataDNA.success && dataDNA.baselines?.length > 0) {
+                setLeagueDNA(dataDNA.baselines[0]);
+                console.log(`[DailyTips] ✅ League DNA: O1.5=${dataDNA.baselines[0].stats?.over1_5Percent}% BTTS=${dataDNA.baselines[0].stats?.bttsPercent}%`);
+            } else {
+                setLeagueDNA(null);
+                console.warn(`[DailyTips] ⚠️ No DNA baseline found for ${league} — run Sync All + Recompute DNA.`);
+            }
         } catch (err) {
             console.error('[Sidebar] Failed to load AI Data', err);
         }
@@ -184,7 +199,7 @@ export default function DailyTips() {
             const res = await fetch('/api/vfootball/daily-tips/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ date: todayApi, league })
+                body: JSON.stringify({ date: todayApi, league, provider: aiProvider })
             });
             const data = await res.json();
             console.log(`[DailyTips] 📨 API response: status=${res.status} success=${data.success} errorType=${data.errorType || 'none'}`);
@@ -223,7 +238,7 @@ export default function DailyTips() {
             const res = await fetch('/api/vfootball/daily-tips/analyze?force=true', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ date: todayApi, league, force: true })
+                body: JSON.stringify({ date: todayApi, league, force: true, provider: aiProvider })
             });
             const data = await res.json();
             console.log(`[DailyTips] 📨 Re-Analyze response: status=${res.status} success=${data.success} errorType=${data.errorType || 'none'}`);
@@ -626,6 +641,17 @@ export default function DailyTips() {
                 {/* ─── RIGHT NAV / SIDEBAR: AI Knowledge & Strategy ─────────────────── */}
                 <aside style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     
+                    {/* 🤖 AI Engine Selector — always pinned to top of sidebar */}
+                    <div className="ultra-glass animate-fade-up" style={{ padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(167,139,250,0.2)', background: 'linear-gradient(180deg, rgba(167,139,250,0.04) 0%, transparent 100%)' }}>
+                        <AIProviderSelector
+                            selectedProvider={aiProvider}
+                            onSelect={id => {
+                                setAiProvider(id);
+                                console.log(`[DailyTips] 🔄 AI provider set to: ${id}`);
+                            }}
+                        />
+                    </div>
+
                     {/* How it works info panel */}
                     <div className="ultra-glass animate-fade-up" style={{ padding: '20px', borderRadius: 'var(--radius-md)', borderLeft: `4px solid ${GOLD}`, background: `linear-gradient(90deg, rgba(255,215,0,0.05) 0%, transparent 100%)` }}>
                         <div style={{ fontSize: '0.75rem', color: GOLD, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>💡 How This Page Works</div>
@@ -707,6 +733,101 @@ export default function DailyTips() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                                 <div className="spinner spinner-small" style={{ borderTopColor: NEON }} />
                                 Loading league profile…
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 🧬 League DNA Baseline card — statistical priors driving AI predictions for this league */}
+                    <div className="ultra-glass hover-lift animate-fade-up" style={{
+                        padding: '24px', borderRadius: 'var(--radius-lg)',
+                        border: `1px solid rgba(0,229,255,0.18)`,
+                        background: `linear-gradient(180deg, rgba(0,229,255,0.04) 0%, transparent 100%)`,
+                        animationDelay: '0.15s',
+                    }}>
+                        {/* Header */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: 16, marginBottom: 18 }}>
+                            <div style={{ width: 38, height: 38, background: `linear-gradient(135deg, #00E5FF, #7c3aed)`, borderRadius: '50%', display: 'grid', placeItems: 'center', boxShadow: `0 4px 16px rgba(0,229,255,0.3)`, fontSize: '1.1rem', flexShrink: 0 }}>🧬</div>
+                            <div>
+                                <h3 style={{ margin: 0, fontSize: '1rem', color: 'white', fontWeight: 800 }}>League DNA Baseline</h3>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>Statistical priors injected into AI predictions</div>
+                            </div>
+                        </div>
+
+                        {leagueDNA?.stats ? (() => {
+                            const s  = leagueDNA.stats;
+                            const gc = (v, hi, mi) => v >= hi ? GREEN : v >= mi ? GOLD : RED;
+                            const stats = [
+                                { label: 'Over 1.5 Goals',     val: s.over1_5Percent, hi: 75, mi: 70 },
+                                { label: 'Over 2.5 Goals',     val: s.over2_5Percent, hi: 55, mi: 49 },
+                                { label: 'BTTS (GG)',          val: s.bttsPercent,    hi: 55, mi: 50 },
+                                { label: 'Home Win Rate',      val: s.homeWinPercent, hi: 43, mi: 40 },
+                                { label: 'Draw Rate',          val: s.drawPercent,    hi: 26, mi: 24 },
+                            ];
+                            const directives = [];
+                            if (s.over1_5Percent >= 75)  directives.push({ icon: '⚡', color: GREEN,  text: `STRONG O1.5 — AI defaults to Over 1.5` });
+                            if (s.drawPercent    >= 26)  directives.push({ icon: '⚠️', color: GOLD,   text: `DRAW MAGNET — Always assess 1X double chance` });
+                            if (s.bttsPercent    >= 55)  directives.push({ icon: '⚽', color: NEON,   text: `STRONG BTTS — GG market is statistically sound` });
+                            if (s.over2_5Percent < 45)   directives.push({ icon: '🛡️', color: ORANGE, text: `U2.5 SAFE — Caution on Over 2.5 bets` });
+                            return (
+                                <div>
+                                    {/* Stat bars */}
+                                    {stats.map((st, i) => (
+                                        <div key={i} style={{ marginBottom: 11 }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                                                <span style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>{st.label}</span>
+                                                <span style={{ fontSize: '0.82rem', fontWeight: 900, color: gc(st.val, st.hi, st.mi), fontFamily: 'monospace' }}>{st.val ?? '?'}%</span>
+                                            </div>
+                                            <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
+                                                <div style={{ height: '100%', width: `${Math.min(st.val ?? 0, 100)}%`, background: `linear-gradient(90deg, ${gc(st.val, st.hi, st.mi)}60, ${gc(st.val, st.hi, st.mi)})`, borderRadius: 2, transition: 'width 0.9s ease' }} />
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {/* Top Scorelines */}
+                                    {leagueDNA.topScores?.length > 0 && (
+                                        <div style={{ marginTop: 16 }}>
+                                            <div style={{ fontSize: '0.62rem', color: GOLD, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7 }}>🎯 Top Scorelines</div>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                                                {leagueDNA.topScores.slice(0, 3).map((sc, i) => (
+                                                    <span key={i} style={{
+                                                        fontSize: '0.7rem', fontWeight: 900, fontFamily: 'monospace',
+                                                        padding: '3px 8px', borderRadius: 6,
+                                                        background: i === 0 ? `${GOLD}15` : 'rgba(255,255,255,0.05)',
+                                                        color: i === 0 ? GOLD : 'rgba(255,255,255,0.7)',
+                                                        border: `1px solid ${i === 0 ? GOLD + '30' : 'rgba(255,255,255,0.08)'}`,
+                                                    }}>
+                                                        {sc.score} <span style={{ opacity: 0.5, fontSize: '0.6rem' }}>({sc.percent}%)</span>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Active directives */}
+                                    {directives.length > 0 && (
+                                        <div style={{ marginTop: 14 }}>
+                                            <div style={{ fontSize: '0.62rem', color: PURPLE, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7 }}>⚙️ Active AI Directives</div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                                                {directives.map((d, i) => (
+                                                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: '0.7rem', color: d.color, padding: '4px 8px', background: `${d.color}08`, border: `1px solid ${d.color}20`, borderRadius: 5 }}>
+                                                        <span style={{ flexShrink: 0 }}>{d.icon}</span>
+                                                        <span>{d.text}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div style={{ marginTop: 12, fontSize: '0.6rem', color: 'rgba(255,255,255,0.2)', display: 'flex', justifyContent: 'space-between' }}>
+                                        <span>{(leagueDNA.matchCount || 0).toLocaleString()} matches analysed</span>
+                                        <span>𝑥̄ {Number(leagueDNA.stats?.avgGoals || 0).toFixed(2)} goals/match</span>
+                                    </div>
+                                </div>
+                            );
+                        })() : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                <span style={{ fontSize: '1.2rem' }}>📊</span>
+                                <span>No DNA baseline for this league yet.<br/><span style={{ fontSize: '0.72rem', opacity: 0.7 }}>Run Admin → Sync All to generate.</span></span>
                             </div>
                         )}
                     </div>
