@@ -307,6 +307,17 @@ export default function LandingPage() {
                   </div>
                 )}
               </div>
+              <a href="/pattern-intel" style={{
+                background: 'rgba(0,255,136,0.12)', border: '1px solid rgba(0,255,136,0.35)',
+                color: GREEN, borderRadius: 10, padding: '10px 18px',
+                textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
+                display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease',
+              }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,255,136,0.22)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,255,136,0.12)'}
+              >
+                🧠 Pattern Intel
+              </a>
               <a href="/daily-tips" style={{
                 background: 'rgba(0,229,255,0.12)', border: '1px solid rgba(0,229,255,0.35)',
                 color: NEON, borderRadius: 10, padding: '10px 18px',

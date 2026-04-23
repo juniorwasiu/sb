@@ -59,7 +59,7 @@ const PREDICTION_PROVIDERS = {
         id:          'gemini',
         label:       'Google Gemini',
         emoji:       '✨',
-        model:       'gemini-2.0-flash',
+        model:       'gemini-2.5-pro',
         description: `Smart · ${GEMINI_KEYS.length}-key rotation · Large context`,
         badge:       `${GEMINI_KEYS.length} KEY${GEMINI_KEYS.length !== 1 ? 'S' : ''}`,
         badgeColor:  '#00E5FF',
@@ -69,7 +69,7 @@ const PREDICTION_PROVIDERS = {
         id:          'claude',
         label:       'Anthropic Claude',
         emoji:       '🧠',
-        model:       'claude-3-5-haiku-20241022',
+        model:       'claude-3-7-sonnet-20250219',
         description: 'Elite reasoning · Complex patterns',
         badge:       'ELITE',
         badgeColor:  '#A78BFA',
@@ -145,8 +145,8 @@ async function _callGemini(prompt, { maxTokens = 8000, temperature = 0.7 } = {})
     });
 
     let result;
-    // Prefer gemini-2.0-flash; fallback to 1.5-flash if not found
-    for (const modelName of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+    // Prefer gemini-2.5-pro; fallback to 1.5-pro or flash variants
+    for (const modelName of ['gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
         try {
             result = await mkModel(modelName).generateContent(prompt);
             const content = result.response.text();
@@ -179,7 +179,7 @@ async function _callClaude(prompt, { maxTokens = 8000, temperature = 0.7 } = {})
             'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-            model:      'claude-3-5-haiku-20241022',
+            model:      'claude-3-7-sonnet-20250219',
             max_tokens: maxTokens,
             temperature,
             messages:   [{ role: 'user', content: prompt }],

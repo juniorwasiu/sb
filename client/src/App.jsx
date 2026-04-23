@@ -9,6 +9,7 @@ import AILog from './components/AILog';
 import BehaviourPatterns from './components/BehaviourPatterns';
 import ServerHealthWidget from './components/ServerHealthWidget';
 import LeagueIntelligencePanel from './components/LeagueIntelligencePanel';
+import PatternIntelligence from './components/PatternIntelligence';
 import './index.css';
 
 // ── Live scores SSE hook ──────────────────────────────────────────────────────
@@ -416,6 +417,7 @@ export default function App() {
       <Route path="/daily-tips" element={<DailyTips />} />
       <Route path="/admin"     element={<AdminDashboard />} />
       <Route path="/behaviour" element={<BehaviourPatterns />} />
+      <Route path="/pattern-intel" element={<PatternIntelligence />} />
       <Route path="*"          element={<Navigate to="/" replace />} />
     </Routes>
   );

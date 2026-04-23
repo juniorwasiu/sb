@@ -2881,6 +2881,289 @@ app.delete('/api/admin/league/:leagueName', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/pattern-intel
+// Computes all 80%+ patterns from the database, finds the most recent matches
+// that triggered each pattern, and predicts what will happen next.
+//
+// Query params:
+//   league (optional) — filter to a specific league
+//   minPct (optional) — minimum hit % threshold (default: 80)
+//   minSamples (optional) — minimum sample size (default: 8)
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/pattern-intel', async (req, res) => {
+    try {
+        const leagueFilter = req.query.league || null;
+        const minPct = parseFloat(req.query.minPct) || 80;
+        const minSamples = parseInt(req.query.minSamples) || 8;
+
+        console.log(`[PatternIntel] 🧠 Computing pattern intel — league=${leagueFilter || 'ALL'} minPct=${minPct}% minSamples=${minSamples}`);
+
+        const allDocs = await getCachedDocs();
+        console.log(`[PatternIntel] Loaded ${allDocs.length} total match records from cache`);
+
+        // ── Step 1: Group all docs into per-team chronological histories ──────
+        const teamMatchMap = {}; // { [league]: { [team]: [...matchRecords sorted by date] } }
+
+        let minDate = null, maxDate = null;
+
+        for (const m of allDocs) {
+            if (!m.score || !/^\d+[:\-]\d+$/.test(m.score.trim())) continue;
+            const lg = m.league || 'Unknown';
+            if (leagueFilter && lg !== leagueFilter) continue;
+
+            const parts = m.date ? m.date.split('/') : null;
+            const time = m.time ? m.time.split(':') : ['0','0'];
+            const parsedDate = parts && parts.length === 3
+                ? new Date(parts[2], parts[1]-1, parts[0], parseInt(time[0])||0, parseInt(time[1])||0)
+                : new Date(0);
+
+            if (parsedDate.getTime() !== 0) {
+                if (!minDate || parsedDate < minDate) minDate = parsedDate;
+                if (!maxDate || parsedDate > maxDate) maxDate = parsedDate;
+            }
+
+            if (!teamMatchMap[lg]) teamMatchMap[lg] = {};
+
+            const addEntry = (team, isHome) => {
+                if (!team) return;
+                if (!teamMatchMap[lg][team]) teamMatchMap[lg][team] = [];
+                teamMatchMap[lg][team].push({ ...m, isHome, parsedDate });
+            };
+            addEntry(m.homeTeam, true);
+            addEntry(m.awayTeam, false);
+        }
+
+        // Sort each team's matches chronologically
+        for (const lg of Object.keys(teamMatchMap)) {
+            for (const team of Object.keys(teamMatchMap[lg])) {
+                teamMatchMap[lg][team].sort((a, b) => a.parsedDate - b.parsedDate);
+            }
+        }
+
+        // ── Step 2: Compute pattern statistics ────────────────────────────────
+        // patternStore[lg][score][role][team] = { total, nextWin, nextLoss, nextDraw, nextOver15, nextOver25, nextGG, nextHomeOver05, nextAwayOver05, triggers: [] }
+        const patternStore = {};
+
+        for (const lg of Object.keys(teamMatchMap)) {
+            patternStore[lg] = {};
+            for (const team of Object.keys(teamMatchMap[lg])) {
+                const matches = teamMatchMap[lg][team];
+                for (let i = 0; i < matches.length - 1; i++) {
+                    const cur = matches[i];
+                    const nxt = matches[i+1];
+                    const score = cur.score.replace('-', ':').trim();
+                    const role = cur.isHome ? 'Home' : 'Away';
+
+                    if (!patternStore[lg][score]) patternStore[lg][score] = {};
+                    if (!patternStore[lg][score][role]) patternStore[lg][score][role] = {};
+                    if (!patternStore[lg][score][role][team]) {
+                        patternStore[lg][score][role][team] = {
+                            total: 0, nextWin: 0, nextLoss: 0, nextDraw: 0,
+                            nextOver15: 0, nextOver25: 0, nextGG: 0,
+                            nextHomeOver05: 0, nextAwayOver05: 0,
+                            triggers: []
+                        };
+                    }
+
+                    const st = patternStore[lg][score][role][team];
+                    st.total++;
+
+                    const np = nxt.score.replace('-', ':').split(':').map(Number);
+                    const ngf = nxt.isHome ? np[0] : np[1];
+                    const nga = nxt.isHome ? np[1] : np[0];
+                    const ntg = ngf + nga;
+
+                    if (ngf > nga) st.nextWin++;
+                    else if (ngf < nga) st.nextLoss++;
+                    else st.nextDraw++;
+                    if (ntg > 1.5) st.nextOver15++;
+                    if (ntg > 2.5) st.nextOver25++;
+                    if (ngf > 0 && nga > 0) st.nextGG++;
+                    if (np[0] > 0) st.nextHomeOver05++;
+                    if (np[1] > 0) st.nextAwayOver05++;
+
+                    // Store the trigger (current match) and the next match together
+                    st.triggers.push({
+                        team,
+                        triggerDate: cur.date,
+                        triggerTime: cur.time,
+                        triggerScore: cur.score,
+                        triggerHomeTeam: cur.homeTeam,
+                        triggerAwayTeam: cur.awayTeam,
+                        triggerRole: role,
+                        nextDate: nxt.date,
+                        nextTime: nxt.time,
+                        nextScore: nxt.score,
+                        nextHomeTeam: nxt.homeTeam,
+                        nextAwayTeam: nxt.awayTeam,
+                        nextIsHome: nxt.isHome,
+                        parsedDate: cur.parsedDate
+                    });
+                }
+            }
+        }
+
+        // ── Step 3: Filter patterns that hit ≥ minPct% ──────────────────────
+        const elitePatterns = [];
+
+        for (const lg of Object.keys(patternStore).sort()) {
+            for (const score of Object.keys(patternStore[lg]).sort()) {
+                for (const role of ['Home', 'Away']) {
+                    if (!patternStore[lg][score][role]) continue;
+                    for (const team of Object.keys(patternStore[lg][score][role])) {
+                        const st = patternStore[lg][score][role][team];
+                        if (!st || st.total < minSamples) continue;
+
+                        const pct = (k) => Math.round((st[k] / st.total) * 100);
+                        const eliteOutcomes = [];
+
+                        const checkAdd = (key, label, emoji) => {
+                            const p = pct(key);
+                            if (p >= minPct) {
+                                eliteOutcomes.push({
+                                    key, label, emoji, pct: p,
+                                    hit: st[key], failed: st.total - st[key]
+                                });
+                            }
+                        };
+
+                        checkAdd('nextWin',       'Win',             '🏆');
+                        checkAdd('nextLoss',      'Loss',            '❌');
+                        checkAdd('nextDraw',      'Draw',            '🤝');
+                        checkAdd('nextOver15',    'Over 1.5',        '⚽');
+                        checkAdd('nextOver25',    'Over 2.5',        '🔥');
+                        checkAdd('nextGG',        'GG (BTTS)',       '🥅');
+                        checkAdd('nextHomeOver05','Home Scores',     '🏠');
+                        checkAdd('nextAwayOver05','Away Scores',     '✈️');
+
+                        if (eliteOutcomes.length === 0) continue;
+
+                        // Sort triggers by date descending — most recent first
+                        st.triggers.sort((a, b) => b.parsedDate - a.parsedDate);
+
+                        // Most recent trigger (the match we want to act on)
+                        const mostRecent = st.triggers[0] || null;
+
+                        elitePatterns.push({
+                            league: lg,
+                            score,
+                            role,
+                            team,
+                            sampleSize: st.total,
+                            eliteOutcomes,
+                            mostRecentTrigger: mostRecent,
+                            recentTriggers: st.triggers.slice(0, 5) // show 5 for context
+                        });
+                    }
+                }
+            }
+        }
+
+        // ── Step 4: Find LIVE ACTIVE Predictions for Today ─────────────────────
+        // We only show a pattern if a team's ABSOLUTE LATEST MATCH (played today)
+        // matches an elite pattern. This means their "next match" hasn't happened yet,
+        // making this a true live prediction for their upcoming fixture!
+        
+        const now = new Date();
+        const dd = String(now.getDate()).padStart(2, '0');
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = now.getFullYear();
+        const todayStr = `${dd}/${mm}/${yyyy}`; // DD/MM/YYYY
+
+        const activeLivePatterns = [];
+
+        for (const lg of Object.keys(teamMatchMap)) {
+            for (const team of Object.keys(teamMatchMap[lg])) {
+                const matches = teamMatchMap[lg][team];
+                if (matches.length === 0) continue;
+
+                // The absolute latest match this team played
+                const latestMatch = matches[matches.length - 1];
+
+                // Only care if their latest match was played TODAY
+                if (latestMatch.date !== todayStr) continue;
+
+                const score = latestMatch.score.replace('-', ':').trim();
+                const role = latestMatch.isHome ? 'Home' : 'Away';
+
+                // Do they have an elite historical pattern for this score/role?
+                const st = patternStore[lg]?.[score]?.[role]?.[team];
+                if (!st || st.total < minSamples) continue;
+
+                const pct = (k) => Math.round((st[k] / st.total) * 100);
+                const eliteOutcomes = [];
+
+                const checkAdd = (key, label, emoji) => {
+                    const p = pct(key);
+                    if (p >= minPct) {
+                        eliteOutcomes.push({
+                            key, label, emoji, pct: p,
+                            hit: st[key], failed: st.total - st[key]
+                        });
+                    }
+                };
+
+                checkAdd('nextWin',       'Win',             '🏆');
+                checkAdd('nextLoss',      'Loss',            '❌');
+                checkAdd('nextDraw',      'Draw',            '🤝');
+                checkAdd('nextOver15',    'Over 1.5',        '⚽');
+                checkAdd('nextOver25',    'Over 2.5',        '🔥');
+                checkAdd('nextGG',        'GG (BTTS)',       '🥅');
+                checkAdd('nextHomeOver05','Home Scores',     '🏠');
+                checkAdd('nextAwayOver05','Away Scores',     '✈️');
+
+                // If they have elite outcomes, this is an ACTIVE LIVE PREDICTION!
+                if (eliteOutcomes.length > 0) {
+                    const mostRecent = {
+                        team,
+                        triggerDate: latestMatch.date,
+                        triggerTime: latestMatch.time,
+                        triggerScore: latestMatch.score,
+                        triggerHomeTeam: latestMatch.homeTeam,
+                        triggerAwayTeam: latestMatch.awayTeam,
+                        triggerRole: role,
+                        // No next match info because it hasn't happened yet!
+                    };
+
+                    // Re-sort historical triggers descending to show recent context
+                    st.triggers.sort((a, b) => b.parsedDate - a.parsedDate);
+
+                    activeLivePatterns.push({
+                        league: lg,
+                        score,
+                        role,
+                        team,
+                        sampleSize: st.total,
+                        eliteOutcomes,
+                        mostRecentTrigger: mostRecent,
+                        recentTriggers: st.triggers.slice(0, 5) // show 5 historical examples
+                    });
+                }
+            }
+        }
+
+        console.log(`[PatternIntel] ✅ Found ${elitePatterns.length} total elite patterns — ${activeLivePatterns.length} LIVE predictions right now (${todayStr})`);
+
+        res.json({
+            success: true,
+            today: todayStr,
+            totalPatterns: activeLivePatterns.length,
+            totalAllTime: elitePatterns.length,
+            dataRange: {
+                from: minDate ? minDate.toDateString() : 'Unknown',
+                to: maxDate ? maxDate.toDateString() : 'Unknown'
+            },
+            patterns: activeLivePatterns,
+            config: { minPct, minSamples }
+        });
+
+    } catch (err) {
+        console.error('[PatternIntel] ❌ Error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // React Router catch-all — must be LAST route.
 // Any non-API request (e.g. /dashboard, /history) returns index.html so
 // React Router can handle the path on the client side.

@@ -22,8 +22,8 @@ const GOLD   = '#FFD700';
 // Static fallback if the API hasn't loaded yet
 const STATIC_PROVIDERS = [
     { id: 'deepseek', label: 'DeepSeek',        emoji: '🚀', model: 'deepseek-chat',            description: 'Fast · JSON-native · Low cost', badge: 'DEFAULT', badgeColor: GREEN,  available: true  },
-    { id: 'gemini',   label: 'Google Gemini',    emoji: '✨', model: 'gemini-2.0-flash',         description: 'Smart · Multi-key rotation',    badge: '3 KEYS',  badgeColor: NEON,   available: true  },
-    { id: 'claude',   label: 'Anthropic Claude', emoji: '🧠', model: 'claude-3-5-haiku-20241022', description: 'Elite reasoning',               badge: 'ELITE',   badgeColor: PURPLE, available: true  },
+    { id: 'gemini',   label: 'Google Gemini',    emoji: '✨', model: 'gemini-2.5-pro',           description: 'Smart · Multi-key rotation',    badge: '3 KEYS',  badgeColor: NEON,   available: true  },
+    { id: 'claude',   label: 'Anthropic Claude', emoji: '🧠', model: 'claude-3-7-sonnet-20250219', description: 'Elite reasoning',               badge: 'ELITE',   badgeColor: PURPLE, available: true  },
 ];
 
 export default function AIProviderSelector({
