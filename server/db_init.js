@@ -110,6 +110,33 @@ const SystemStrategy = mongoose.models.SystemStrategy || mongoose.model('SystemS
 const StrategyHistory = mongoose.models.StrategyHistory || mongoose.model('StrategyHistory', strategyHistorySchema, 'ai_strategy_history');
 const LeagueBaseline = mongoose.models.LeagueBaseline || mongoose.model('LeagueBaseline', leagueBaselineSchema, 'league_baselines');
 
+// ── Pattern Snapshot Schema ────────────────────────────────────────────────────
+// Each document is one "daily snapshot" of all triggered patterns for a given date.
+// The engine saves this when patterns are computed, and later the next day's
+// result-upload resolves the outcome so we can track accuracy over time.
+const patternSnapshotSchema = new mongoose.Schema({
+    _id: String,              // e.g. "23/04/2026_EnglandVirtual_Arsenal_1:1_Home"
+    snapshotDate: String,     // DD/MM/YYYY — the date the TRIGGER match was played
+    resolvedDate: String,     // DD/MM/YYYY — the date the NEXT match was played (set post-fact)
+    league: String,
+    team: String,
+    score: String,            // trigger score e.g. "1:1"
+    role: String,             // "Home" | "Away"
+    sampleSize: Number,
+    eliteOutcomes: Array,     // [{key, label, emoji, pct, hit, failed}]
+    mostRecentTrigger: Object,
+    recentTriggers: Array,
+    // Resolution fields (filled in after the next match result is known)
+    resolved: { type: Boolean, default: false },
+    resolvedScore: String,    // actual score of next match
+    resolvedOutcomes: Object, // { win, loss, draw, over15, over25, gg, homeScores, awayScores }
+    // Per-outcome accuracy: true=hit, false=miss, null=pending
+    outcomeResults: { type: Object, default: {} },
+    savedAt: { type: Date, default: Date.now },
+}, { strict: false });
+
+const PatternSnapshot = mongoose.models.PatternSnapshot || mongoose.model('PatternSnapshot', patternSnapshotSchema, 'pattern_snapshots');
+
 module.exports = {
     connectDb,
     mongoose,
@@ -121,5 +148,6 @@ module.exports = {
     BehaviorSignal,
     SystemStrategy,
     StrategyHistory,
-    LeagueBaseline
+    LeagueBaseline,
+    PatternSnapshot
 };

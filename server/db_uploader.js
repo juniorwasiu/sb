@@ -1,4 +1,6 @@
 const { Result, HistoryLog } = require('./db_init');
+const EventEmitter = require('events');
+const dbEvents = new EventEmitter();
 
 // ── GLOBAL_CACHE reference — imported lazily ──────────
 function invalidateReaderCache() {
@@ -91,6 +93,7 @@ async function uploadMatchesToDatabase(matches, onProgress = () => {}) {
             await Result.bulkWrite(bulkOps, { ordered: false });
             onProgress(`📤 Committed ${uploaded} records to MongoDB.`);
             console.log(`[DB Uploader] ✅ Committed ${uploaded} records.`);
+            dbEvents.emit('db-updated');
         } catch (err) {
             console.error(`[DB Uploader] ❌ Bulk write failed:`, err);
             // In case of bulk write errors, some might have succeeded.
@@ -182,6 +185,7 @@ async function syncMatchesToDatabase(matches, onProgress = () => {}) {
             const result = await Result.bulkWrite(bulkOps, { ordered: false });
             console.log(`[DB Sync] ✅ BulkWrite done — upsertedCount=${result.upsertedCount}, modifiedCount=${result.modifiedCount}`);
             onProgress(`📄 ${inserted} new | ✏️ ${updated} updated | ⏸️ ${unchanged} unchanged | ❌ ${skipped} skipped`);
+            dbEvents.emit('db-updated');
         } catch (err) {
             console.error(`[DB Sync] ❌ BulkWrite error:`, err.message);
             onProgress(`❌ Sync write error: ${err.message}`);
@@ -230,5 +234,6 @@ module.exports = {
     setFirebaseHistoryLog: setDatabaseHistoryLog,
     normalizeScore,
     isValidDDMMYYYY,
-    invalidateReaderCache
+    invalidateReaderCache,
+    dbEvents
 };

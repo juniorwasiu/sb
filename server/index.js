@@ -14,12 +14,12 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { startContinuousScraper, stopContinuousScraper, reloadContinuousScraper, getHistoricalResults, getHistoryStoreInfo } = require('./scraper');
 const { captureLeagueResults } = require('./screenshot_scraper');
 const { nativeCaptureLeagueResults } = require('./native_scraper');
-const { uploadMatchesToDatabase, syncMatchesToDatabase, getDatabaseHistoryLog, setDatabaseHistoryLog } = require('./db_uploader');
+const { uploadMatchesToDatabase, syncMatchesToDatabase, getDatabaseHistoryLog, setDatabaseHistoryLog, dbEvents } = require('./db_uploader');
 const { fetchResultsFromDatabase, fetchTodayResultsFromDatabase, todayDDMMYYYY, fetchFullDayRawResults, fetchTeamHistoryFromDatabase, fetchAvailableDates, fetchAvailableLeagues, fetchAllHistoryLogs, computeTeamForm, computeH2HForm, computeVenueAdvantage, computeAllLeagueBaselines, getLeagueBaseline, getCachedDocs } = require('./db_reader');
 const { toDbLeague, SUPPORTED_LEAGUES } = require('./constants');
 const { saveAnalysis, getRecentContext, getLog, deleteEntry, getEntryById, clearLog, getStrategy, updateStrategy, fetchStrategyHistory, getLeagueIntelligence, updateLeagueIntelligence, getAnalysisByScopeAndDate, saveDailyTip, getDailyTip, getAllDailyTips } = require('./ai_memory');
 const { deleteLeagueData } = require('./db_admin');
-const { connectDb } = require('./db_init');
+const { connectDb, PatternSnapshot } = require('./db_init');
 const {
     detectBehaviourPatterns,
     saveBehaviourSignals,
@@ -2582,6 +2582,33 @@ app.post('/api/reset-visual-hashes', (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/db-stream
+// Real-time SSE stream that notifies clients when the database has been updated
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/db-stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const onUpdate = () => {
+        res.write(`data: ${JSON.stringify({ type: 'db-updated', ts: Date.now() })}\n\n`);
+    };
+
+    dbEvents.on('db-updated', onUpdate);
+
+    // Keep connection alive
+    const pingInterval = setInterval(() => {
+        res.write(': ping\n\n');
+    }, 30000);
+
+    req.on('close', () => {
+        clearInterval(pingInterval);
+        dbEvents.off('db-updated', onUpdate);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/sync-local-to-database
 // Pushes ALL records from extracted_league_data.json to Database.
 // This is the recovery path for data that was extracted but never uploaded
@@ -2894,7 +2921,7 @@ app.get('/api/pattern-intel', async (req, res) => {
     try {
         const leagueFilter = req.query.league || null;
         const minPct = parseFloat(req.query.minPct) || 80;
-        const minSamples = parseInt(req.query.minSamples) || 8;
+        const minSamples = parseInt(req.query.minSamples) || 3;
 
         console.log(`[PatternIntel] 🧠 Computing pattern intel — league=${leagueFilter || 'ALL'} minPct=${minPct}% minSamples=${minSamples}`);
 
@@ -3126,7 +3153,9 @@ app.get('/api/pattern-intel', async (req, res) => {
                     };
 
                     // Re-sort historical triggers descending to show recent context
+                    // Only include triggers that have a resolved next match (exclude today's live one)
                     st.triggers.sort((a, b) => b.parsedDate - a.parsedDate);
+                    const resolvedTriggers = st.triggers.filter(tr => tr.nextScore);
 
                     activeLivePatterns.push({
                         league: lg,
@@ -3136,13 +3165,36 @@ app.get('/api/pattern-intel', async (req, res) => {
                         sampleSize: st.total,
                         eliteOutcomes,
                         mostRecentTrigger: mostRecent,
-                        recentTriggers: st.triggers.slice(0, 5) // show 5 historical examples
+                        recentTriggers: resolvedTriggers.slice(0, 5) // show 5 historical examples with results
                     });
                 }
             }
         }
 
         console.log(`[PatternIntel] ✅ Found ${elitePatterns.length} total elite patterns — ${activeLivePatterns.length} LIVE predictions right now (${todayStr})`);
+
+        // Sort live patterns by their trigger time — most recently triggered first
+        activeLivePatterns.sort((a, b) => {
+            const tA = a.mostRecentTrigger?.triggerTime || '00:00';
+            const tB = b.mostRecentTrigger?.triggerTime || '00:00';
+            return tB.localeCompare(tA); // latest time first
+        });
+        console.log(`[PatternIntel] 🕐 Patterns sorted by trigger time. First: ${activeLivePatterns[0]?.team} @ ${activeLivePatterns[0]?.mostRecentTrigger?.triggerTime}`);
+
+        // ── Auto-save snapshot to MongoDB for historical browsing ──────────────
+        if (activeLivePatterns.length > 0) {
+            PatternSnapshot.bulkWrite(activeLivePatterns.map(p => {
+                const safe = (s) => String(s).replace(/[^a-zA-Z0-9]/g, '');
+                const id = `${todayStr}_${safe(p.league)}_${safe(p.team)}_${safe(p.score)}_${p.role}`;
+                return {
+                    updateOne: {
+                        filter: { _id: id },
+                        update: { $set: { snapshotDate: todayStr, ...p, savedAt: new Date() }, $setOnInsert: { resolved: false, outcomeResults: {} } },
+                        upsert: true,
+                    }
+                };
+            }), { ordered: false }).catch(e => console.warn('[PatternSnapshot] ⚠️ Auto-save failed (non-fatal):', e.message));
+        }
 
         res.json({
             success: true,
@@ -3159,6 +3211,319 @@ app.get('/api/pattern-intel', async (req, res) => {
 
     } catch (err) {
         console.error('[PatternIntel] ❌ Error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/ai-predict-pattern
+// Uses the active AI to write a natural language prediction for the next fixture
+// based on the statistical pattern provided.
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/ai-predict-pattern', express.json(), async (req, res) => {
+    try {
+        const { pattern } = req.body;
+        if (!pattern || !pattern.team || !pattern.score) {
+            return res.status(400).json({ success: false, error: 'Pattern data is required' });
+        }
+
+        const { callPredictionAI, getActivePredictionProvider } = require('./prediction_ai');
+        const { computeTeamForm, getLeagueBaseline } = require('./db_reader');
+        const { getLeagueIntelligence } = require('./ai_memory');
+        
+        const activeProvider = getActivePredictionProvider();
+
+        const [teamForm, leagueBaseline, leagueIntel] = await Promise.all([
+            computeTeamForm(pattern.league, pattern.team),
+            getLeagueBaseline(pattern.league),
+            getLeagueIntelligence(pattern.league)
+        ]);
+
+        const prompt = `
+You are an elite, world-class sports betting algorithmic analyst. 
+Your goal is to synthesize multiple data points to guarantee an extraordinary, highly profitable betting prediction.
+
+1. PATTERN TRIGGER (PRIMARY SIGNAL)
+Team: ${pattern.team}
+League: ${pattern.league}
+Event: ${pattern.team} just played a match ending in ${pattern.score} as the ${pattern.role} team.
+When this exact scenario happens, historical data for their NEXT match shows:
+${pattern.eliteOutcomes.map(o => `- ${o.label}: ${o.pct}% probability (Hits: ${o.hit}, Fails: ${o.failed})`).join('\n')}
+(Sample Size: ${pattern.sampleSize} historical matches)
+
+2. CURRENT TEAM FORM (LAST 10 MATCHES)
+Streak: ${teamForm.streak}
+Win Rate: ${Math.round((teamForm.wins/(teamForm.matchesAnalysed||1))*100)}% (W${teamForm.wins} D${teamForm.draws} L${teamForm.losses})
+Avg Goals Scored: ${teamForm.goalsScored} / Avg Conceded: ${teamForm.goalsConceded}
+Over 2.5 Hit Rate: ${teamForm.over2_5_percent}% / BTTS Hit Rate: ${teamForm.btts_percent}%
+
+3. LEAGUE DNA & TACTICAL INTELLIGENCE
+League Baseline Avg Goals: ${leagueBaseline?.stats?.avgGoals || 'N/A'}
+League Over 2.5 Rate: ${leagueBaseline?.stats?.over2_5Percent || 'N/A'}%
+AI Tactical Intel: ${leagueIntel?.tacticalSummary || 'No tactical intel available.'}
+
+INSTRUCTIONS:
+Synthesize the Pattern Trigger with the Team Form and League DNA to provide a true expert edge. 
+Do NOT just blindly repeat the stats. Cross-reference the pattern with their current actual form and league tendencies to validate or challenge the primary signal.
+Write a very brief, punchy, expert-level betting recommendation (2-3 sentences max).
+Focus on the most mathematically sound and logical outcome.
+Return ONLY the recommendation text, no formatting, no JSON, no preamble.
+`;
+
+        console.log(`[PatternIntel] 🤖 Asking ${activeProvider} to predict pattern for ${pattern.team}...`);
+        
+        const result = await callPredictionAI(prompt, activeProvider, {
+            temperature: 0.7,
+            maxTokens: 150
+        });
+
+        res.json({ success: true, prediction: result.content.trim(), provider: activeProvider });
+
+    } catch (err) {
+        console.error('[PatternIntel] ❌ AI Prediction Error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/pattern-intel/save-snapshot
+// Called automatically when /api/pattern-intel runs — persists today's live
+// patterns into MongoDB so they can be browsed historically.
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/pattern-intel/save-snapshot', express.json(), async (req, res) => {
+    try {
+        const { patterns, snapshotDate } = req.body;
+        if (!patterns || !snapshotDate) {
+            return res.status(400).json({ success: false, error: 'patterns and snapshotDate required' });
+        }
+        console.log(`[PatternSnapshot] 💾 Saving ${patterns.length} pattern snapshots for ${snapshotDate}...`);
+
+        const ops = patterns.map(p => {
+            const safe = (s) => s.replace(/[^a-zA-Z0-9]/g, '');
+            const id = `${snapshotDate}_${safe(p.league)}_${safe(p.team)}_${safe(p.score)}_${p.role}`;
+            return {
+                updateOne: {
+                    filter: { _id: id },
+                    update: {
+                        $set: {
+                            snapshotDate,
+                            league: p.league,
+                            team: p.team,
+                            score: p.score,
+                            role: p.role,
+                            sampleSize: p.sampleSize,
+                            eliteOutcomes: p.eliteOutcomes,
+                            mostRecentTrigger: p.mostRecentTrigger,
+                            recentTriggers: p.recentTriggers || [],
+                            savedAt: new Date(),
+                        },
+                        $setOnInsert: { resolved: false, outcomeResults: {} }
+                    },
+                    upsert: true,
+                }
+            };
+        });
+
+        if (ops.length > 0) await PatternSnapshot.bulkWrite(ops, { ordered: false });
+        console.log(`[PatternSnapshot] ✅ Saved/updated ${ops.length} snapshots for ${snapshotDate}`);
+        res.json({ success: true, saved: ops.length });
+    } catch (err) {
+        console.error('[PatternSnapshot] ❌ Save error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/pattern-intel/dates
+// Returns all dates that have saved pattern snapshots, newest first.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/pattern-intel/dates', async (req, res) => {
+    try {
+        const dates = await PatternSnapshot.distinct('snapshotDate');
+        // Sort DD/MM/YYYY descending
+        dates.sort((a, b) => {
+            const parse = d => { const [dd,mm,yyyy] = d.split('/'); return new Date(`${yyyy}-${mm}-${dd}`); };
+            return parse(b) - parse(a);
+        });
+        console.log(`[PatternSnapshot] 📅 Found ${dates.length} snapshot dates`);
+        res.json({ success: true, dates });
+    } catch (err) {
+        console.error('[PatternSnapshot] ❌ dates error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/pattern-intel/history?date=DD/MM/YYYY
+// Returns all saved pattern snapshots for a given date.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/pattern-intel/history', async (req, res) => {
+    try {
+        const { date } = req.query;
+        if (!date) return res.status(400).json({ success: false, error: 'date query param required' });
+        console.log(`[PatternSnapshot] 📖 Fetching history for ${date}...`);
+        const docs = await PatternSnapshot.find({ snapshotDate: date }).lean();
+        console.log(`[PatternSnapshot] ✅ Found ${docs.length} snapshots for ${date}`);
+        res.json({ success: true, date, patterns: docs });
+    } catch (err) {
+        console.error('[PatternSnapshot] ❌ history error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/pattern-intel/performance
+// Computes the full performance overview across ALL resolved + unresolved
+// pattern snapshots. Shows per-outcome hit rates, streaks, and best patterns.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/pattern-intel/performance', async (req, res) => {
+    try {
+        console.log('[PatternSnapshot] 📊 Computing performance overview...');
+        const allDocs = await PatternSnapshot.find({}).lean();
+
+        // ── Auto-resolve: check if team's next match exists in vfootball_results ──
+        const allResults = await getCachedDocs();
+        const todayStr = todayDDMMYYYY();
+        let autoResolved = 0;
+
+        for (const snap of allDocs) {
+            if (snap.resolved) continue;
+            // Find the next match for this team AFTER snapshotDate
+            const parseDate = (d) => { if (!d) return new Date(0); const [dd,mm,yyyy] = d.split('/'); return new Date(`${yyyy}-${mm}-${dd}`); };
+            const triggerDate = parseDate(snap.snapshotDate);
+
+            const teamMatches = allResults.filter(m =>
+                m.league === snap.league &&
+                (m.homeTeam === snap.team || m.awayTeam === snap.team) &&
+                m.score && /^\d+[:\-]\d+$/.test(m.score.trim())
+            );
+
+            const laterMatches = teamMatches.filter(m => parseDate(m.date) > triggerDate)
+                .sort((a, b) => parseDate(a.date) - parseDate(b.date));
+
+            if (laterMatches.length === 0) continue; // still pending
+
+            const nextMatch = laterMatches[0];
+            const parts = nextMatch.score.replace('-', ':').split(':').map(Number);
+            const isHome = nextMatch.homeTeam === snap.team;
+            const gf = isHome ? parts[0] : parts[1];
+            const ga = isHome ? parts[1] : parts[0];
+            const tg = gf + ga;
+
+            const resolvedOutcomes = {
+                win: gf > ga,
+                loss: gf < ga,
+                draw: gf === ga,
+                over15: tg > 1.5,
+                over25: tg > 2.5,
+                gg: gf > 0 && ga > 0,
+                homeScores: parts[0] > 0,
+                awayScores: parts[1] > 0,
+            };
+
+            const keyMap = { Win: 'win', Loss: 'loss', Draw: 'draw', 'Over 1.5': 'over15', 'Over 2.5': 'over25', 'GG (BTTS)': 'gg', 'Home Scores': 'homeScores', 'Away Scores': 'awayScores' };
+            const outcomeResults = {};
+            (snap.eliteOutcomes || []).forEach(o => {
+                const k = keyMap[o.label];
+                if (k !== undefined) outcomeResults[o.label] = resolvedOutcomes[k];
+            });
+
+            await PatternSnapshot.findByIdAndUpdate(snap._id, {
+                $set: {
+                    resolved: true,
+                    resolvedDate: nextMatch.date,
+                    resolvedScore: nextMatch.score,
+                    resolvedOutcomes,
+                    outcomeResults,
+                }
+            });
+            Object.assign(snap, { resolved: true, resolvedDate: nextMatch.date, resolvedScore: nextMatch.score, resolvedOutcomes, outcomeResults });
+            autoResolved++;
+        }
+
+        if (autoResolved > 0) console.log(`[PatternSnapshot] ✅ Auto-resolved ${autoResolved} pending snapshots`);
+
+        // ── Compute global statistics ──────────────────────────────────────────
+        const resolved = allDocs.filter(d => d.resolved);
+        const pending  = allDocs.filter(d => !d.resolved);
+
+        // Per-outcome aggregate stats
+        const outcomeStats = {};
+        const outcomeKeys = ['Win', 'Loss', 'Draw', 'Over 1.5', 'Over 2.5', 'GG (BTTS)', 'Home Scores', 'Away Scores'];
+        outcomeKeys.forEach(k => { outcomeStats[k] = { predictions: 0, hits: 0, misses: 0 }; });
+
+        for (const snap of resolved) {
+            const results = snap.outcomeResults || {};
+            for (const [label, hit] of Object.entries(results)) {
+                if (!outcomeStats[label]) outcomeStats[label] = { predictions: 0, hits: 0, misses: 0 };
+                outcomeStats[label].predictions++;
+                if (hit === true)  outcomeStats[label].hits++;
+                if (hit === false) outcomeStats[label].misses++;
+            }
+        }
+
+        const outcomeSummary = Object.entries(outcomeStats)
+            .filter(([, s]) => s.predictions > 0)
+            .map(([label, s]) => ({
+                label,
+                predictions: s.predictions,
+                hits: s.hits,
+                misses: s.misses,
+                hitRate: s.predictions > 0 ? Math.round((s.hits / s.predictions) * 100) : 0,
+            }))
+            .sort((a, b) => b.hitRate - a.hitRate);
+
+        // Per-date summary
+        const byDate = {};
+        for (const snap of resolved) {
+            const d = snap.snapshotDate;
+            if (!byDate[d]) byDate[d] = { date: d, total: 0, hits: 0, misses: 0 };
+            byDate[d].total++;
+            const r = snap.outcomeResults || {};
+            const allHit  = Object.values(r).every(v => v === true);
+            const anyMiss = Object.values(r).some(v => v === false);
+            if (allHit)  byDate[d].hits++;
+            if (anyMiss) byDate[d].misses++;
+        }
+        const dateSummary = Object.values(byDate).sort((a, b) => {
+            const parse = d => { const [dd,mm,yy] = d.split('/'); return new Date(`${yy}-${mm}-${dd}`); };
+            return parse(b.date) - parse(a.date);
+        });
+
+        // Best performing patterns (score+role combinations)
+        const patternPerf = {};
+        for (const snap of resolved) {
+            const key = `${snap.score}_${snap.role}_${snap.league}`;
+            if (!patternPerf[key]) patternPerf[key] = { score: snap.score, role: snap.role, league: snap.league, total: 0, hits: 0 };
+            patternPerf[key].total++;
+            const r = snap.outcomeResults || {};
+            if (Object.values(r).every(v => v === true)) patternPerf[key].hits++;
+        }
+        const topPatterns = Object.values(patternPerf)
+            .filter(p => p.total >= 2)
+            .map(p => ({ ...p, hitRate: Math.round((p.hits / p.total) * 100) }))
+            .sort((a, b) => b.hitRate - a.hitRate)
+            .slice(0, 10);
+
+        const totalPredictions = resolved.reduce((s, snap) => s + Object.keys(snap.outcomeResults || {}).length, 0);
+        const totalHits = resolved.reduce((s, snap) => s + Object.values(snap.outcomeResults || {}).filter(v => v === true).length, 0);
+
+        res.json({
+            success: true,
+            overview: {
+                totalSnapshots: allDocs.length,
+                resolvedSnapshots: resolved.length,
+                pendingSnapshots: pending.length,
+                totalPredictions,
+                totalHits,
+                overallHitRate: totalPredictions > 0 ? Math.round((totalHits / totalPredictions) * 100) : 0,
+            },
+            outcomeSummary,
+            dateSummary,
+            topPatterns,
+        });
+    } catch (err) {
+        console.error('[PatternSnapshot] ❌ performance error:', err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 });

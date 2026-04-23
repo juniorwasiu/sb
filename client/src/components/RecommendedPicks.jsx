@@ -3,17 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 // ─────────────────────────────────────────────────────────────────────────────
 // RecommendedPicks.jsx
 //
-// Surfaces the TOP match picks from the AI's "Upcoming Match Predictions".
-//
-// Algorithm (AI Match Parsing + Math Probability):
-//  1. Fetches all recent daily AI predictions (upcoming_matches)
-//  2. Fetches today's historical match results to calculate mathematical probabilities
-//  3. For every single match the AI predicted:
-//       - We see what the AI said ("Yes" to Over 2.5, "Yes" to GG, "Home" to Win)
-//       - We map each choice to its historical probability %
-//       - We pull the single BEST (highest probability) AI recommendation for that match
-//  4. Ranks all AI picks across all leagues by confidence.
-//  5. Filters but ENSURES at least 4 top picks are returned.
+// Surfaces the TOP match picks from Pattern Intelligence Engine.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NEON   = '#00E5FF';
@@ -22,139 +12,6 @@ const GOLD   = '#FFD700';
 const PURPLE = '#A78BFA';
 const RED    = '#FF3355';
 const ORANGE = '#FF6B35';
-
-// ── Colour helpers ────────────────────────────────────────────────────────────
-const SELECTION_CONFIGS = {
-  HOME_WIN:   { label: 'Home Win',       icon: '🏠', color: GREEN  },
-  AWAY_WIN:   { label: 'Away Win',       icon: '✈️',  color: NEON   },
-  DRAW:       { label: 'Draw',           icon: '🤝',  color: GOLD   },
-  OVER_1_5:   { label: 'Over 1.5 Goals', icon: '⚽', color: '#4ADE80' },
-  OVER_2_5:   { label: 'Over 2.5 Goals', icon: '🔥', color: ORANGE },
-  GG:         { label: 'Both Teams Score', icon: '🎯', color: PURPLE },
-};
-
-// ── Parse score like "2:1" → { home:2, away:1 } ──────────────────────────────
-function parseScore(score) {
-  if (!score || typeof score !== 'string') return null;
-  const [h, a] = score.split(':').map(Number);
-  if (isNaN(h) || isNaN(a)) return null;
-  return { home: h, away: a, total: h + a };
-}
-
-// ── Compute probability-based picks from AI predictions ──────────────────────
-function computeAIPicks(historicalMatches, aiTips) {
-  console.log('[RecommendedPicks] 📊 Step 3: Computing picks from AI tips...');
-
-  // Group historical matches by league to calculate probabilities
-  const byLeague = {};
-  for (const m of historicalMatches) {
-    const key = m.league || 'Unknown';
-    if (!byLeague[key]) byLeague[key] = [];
-    const s = parseScore(m.score);
-    if (s) byLeague[key].push({ ...m, parsed: s });
-  }
-
-  const picks = [];
-
-  // We only want the *latest* prediction batch per league to avoid stale past matches
-  const latestTips = {};
-  for (const tip of aiTips) {
-    if (!latestTips[tip.league]) {
-      latestTips[tip.league] = tip;
-    }
-  }
-
-  // Iterate over AI predictions
-  for (const tip of Object.values(latestTips)) {
-    const league = tip.league || 'Unknown League';
-    const hist = byLeague[league] || [];
-    const total = hist.length;
-
-    // Calculate baseline historical probabilities for the league today
-    let homeWinPct = 0, awayWinPct = 0, drawPct = 0, over2_5Pct = 0, over1_5Pct = 0, ggPct = 0, avgGoals = 'N/A';
-
-    if (total > 0) {
-      const homeWins  = hist.filter(m => m.parsed.home > m.parsed.away).length;
-      const awayWins  = hist.filter(m => m.parsed.away > m.parsed.home).length;
-      const draws     = hist.filter(m => m.parsed.home === m.parsed.away).length;
-      const over2_5   = hist.filter(m => m.parsed.total > 2).length;
-      const over1_5   = hist.filter(m => m.parsed.total > 1).length;
-      const gg        = hist.filter(m => m.parsed.home > 0 && m.parsed.away > 0).length;
-
-      homeWinPct = Math.round((homeWins  / total) * 100);
-      awayWinPct = Math.round((awayWins  / total) * 100);
-      drawPct    = Math.round((draws     / total) * 100);
-      over2_5Pct = Math.round((over2_5   / total) * 100);
-      over1_5Pct = Math.round((over1_5   / total) * 100);
-      ggPct      = Math.round((gg        / total) * 100);
-      avgGoals   = (hist.reduce((acc, m) => acc + m.parsed.total, 0) / total).toFixed(1);
-    }
-
-    const matches = tip.tipData?.upcoming_matches || [];
-
-    // Map each predicted match to its safest/best selection
-    for (const match of matches) {
-      if (!match.fixture) continue;
-      
-      const parts = match.fixture.split(' vs ');
-      const upcomingMatch = {
-        home: parts[0]?.trim() || match.team_home || 'Home',
-        away: parts[1]?.trim() || match.team_away || 'Away',
-        time: match.time || 'Next'
-      };
-
-      const options = [];
-      const winner = (match.match_winner || '').toUpperCase();
-
-      // Correlate AI Winner prediction
-      if (winner && upcomingMatch.home && winner.includes(upcomingMatch.home.toUpperCase())) {
-        options.push({ type: 'HOME_WIN', pct: homeWinPct || 50 /* baseline if no hist */ });
-      } else if (winner && upcomingMatch.away && winner.includes(upcomingMatch.away.toUpperCase())) {
-        options.push({ type: 'AWAY_WIN', pct: awayWinPct || 40 });
-      } else if (winner && winner.includes('DRAW')) {
-        options.push({ type: 'DRAW', pct: drawPct || 30 });
-      }
-
-      // Correlate AI Goals/GG predictions
-      if ((match.over_1_5 || '').toLowerCase().includes('yes')) options.push({ type: 'OVER_1_5', pct: over1_5Pct || 70 });
-      if ((match.over_2_5 || '').toLowerCase().includes('yes')) options.push({ type: 'OVER_2_5', pct: over2_5Pct || 50 });
-      if ((match.gg || '').toLowerCase().includes('yes'))       options.push({ type: 'GG', pct: ggPct || 50 });
-
-      // Find the HIGHEST probability option out of what the AI predicted
-      if (options.length > 0) {
-        const bestOption = options.sort((a, b) => b.pct - a.pct)[0];
-
-        picks.push({
-          type: bestOption.type,
-          pct: bestOption.pct,
-          samples: total,
-          league: league,
-          upcomingMatch,
-          avgGoals,
-          reasoning: match.prediction_reasoning || "AI pattern detection."
-        });
-      }
-    }
-  }
-
-  // Rank globally across all leagues
-  picks.sort((a, b) => b.pct - a.pct);
-
-  // Return logic: Target >= 50% picks, but GUARANTEE at least 4 are returned 
-  // (or max amount if total < 4)
-  const confidentPicks = picks.filter(p => p.pct >= 50);
-
-  if (picks.length <= 4) {
-      return picks;
-  }
-  if (confidentPicks.length >= 4) {
-      // Return highly confident AI picks
-      return confidentPicks.slice(0, 10);
-  } else {
-      // Force return top 4 best picks regardless
-      return picks.slice(0, 4);
-  }
-}
 
 // ── Animated Confidence Bar ────────────────────────────────────────────────────
 function ConfidenceBar({ pct, color, animated }) {
@@ -188,17 +45,23 @@ function ConfidenceBar({ pct, color, animated }) {
 
 // ── Pick Card ─────────────────────────────────────────────────────────────────
 function PickCard({ pick, rank, animate }) {
-  const cfg = SELECTION_CONFIGS[pick.type] || SELECTION_CONFIGS['HOME_WIN'];
-  const isHot = pick.pct >= 75;
-  const isWarm = pick.pct >= 60;
-  const borderColor = isHot ? cfg.color : isWarm ? `${cfg.color}80` : 'rgba(255,255,255,0.1)';
+  const isHot = pick.pct >= 85;
+  const isWarm = pick.pct >= 75;
+  
+  let color = GREEN;
+  if (pick.label.includes('Over 2.5')) color = ORANGE;
+  else if (pick.label.includes('GG')) color = PURPLE;
+  else if (pick.label.includes('Draw')) color = GOLD;
+  else if (pick.label.includes('Away')) color = NEON;
+
+  const borderColor = isHot ? color : isWarm ? `${color}80` : 'rgba(255,255,255,0.1)';
   const leagueShort = (pick.league || '').replace(' - Virtual', '').replace(' Virtual', '');
 
   return (
     <div
       id={`pick-card-${rank}`}
       style={{
-        background: `linear-gradient(135deg, ${cfg.color}06 0%, rgba(0,0,0,0.45) 100%)`,
+        background: `linear-gradient(135deg, ${color}06 0%, rgba(0,0,0,0.45) 100%)`,
         border: `1px solid ${borderColor}`,
         borderRadius: 16,
         padding: '20px',
@@ -210,7 +73,7 @@ function PickCard({ pick, rank, animate }) {
       }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'translateY(-3px)';
-        e.currentTarget.style.boxShadow = `0 12px 32px ${cfg.color}20`;
+        e.currentTarget.style.boxShadow = `0 12px 32px ${color}20`;
       }}
       onMouseLeave={e => {
         e.currentTarget.style.transform = 'translateY(0)';
@@ -228,7 +91,7 @@ function PickCard({ pick, rank, animate }) {
       {isHot && (
         <div style={{
           position: 'absolute', top: 12, left: 12,
-          background: `linear-gradient(135deg, ${cfg.color}, ${cfg.color}99)`,
+          background: `linear-gradient(135deg, ${color}, ${color}99)`,
           color: '#000', fontSize: '0.58rem', fontWeight: 900,
           padding: '2px 8px', borderRadius: 20, letterSpacing: '0.06em',
         }}>🔥 HOT PICK</div>
@@ -239,14 +102,14 @@ function PickCard({ pick, rank, animate }) {
         marginTop: isHot ? 22 : 0,
         display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
       }}>
-        <span style={{ fontSize: '1.4rem' }}>{cfg.icon}</span>
+        <span style={{ fontSize: '1.4rem' }}>{pick.emoji}</span>
         <div>
           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{leagueShort}</div>
-          <div style={{ fontSize: '1rem', fontWeight: 800, color: cfg.color }}>{cfg.label}</div>
+          <div style={{ fontSize: '1rem', fontWeight: 800, color: color }}>{pick.label}</div>
         </div>
       </div>
 
-      {/* --- Upcoming fixture AI info --- */}
+      {/* --- Upcoming fixture info --- */}
       {pick.upcomingMatch && (
         <div style={{
           background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
@@ -266,7 +129,7 @@ function PickCard({ pick, rank, animate }) {
         </div>
       )}
 
-      {/* AI Reasoning */}
+      {/* Reasoning */}
       {pick.reasoning && (
         <div style={{
           fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', lineHeight: 1.5,
@@ -279,12 +142,12 @@ function PickCard({ pick, rank, animate }) {
       {/* Probability meter */}
       <div style={{ marginBottom: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Probability</span>
-          <span style={{ fontSize: '1.3rem', fontWeight: 900, color: cfg.color, fontFamily: 'monospace' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Historical Prob</span>
+          <span style={{ fontSize: '1.3rem', fontWeight: 900, color: color, fontFamily: 'monospace' }}>
             {pick.pct}%
           </span>
         </div>
-        <ConfidenceBar pct={pick.pct} color={cfg.color} animated={animate} />
+        <ConfidenceBar pct={pick.pct} color={color} animated={animate} />
       </div>
 
       {/* Stats row */}
@@ -294,11 +157,7 @@ function PickCard({ pick, rank, animate }) {
       }}>
         <div style={{ flex: 1 }}>
           <span>📊 </span>
-          <span style={{ color: 'rgba(255,255,255,0.6)' }}>{pick.samples} matches</span>
-        </div>
-        <div style={{ flex: 1 }}>
-          <span>⚽ </span>
-          <span style={{ color: 'rgba(255,255,255,0.6)' }}>Avg {pick.avgGoals} goals</span>
+          <span style={{ color: 'rgba(255,255,255,0.6)' }}>{pick.samples} tracked matches</span>
         </div>
       </div>
     </div>
@@ -315,65 +174,62 @@ export default function RecommendedPicks() {
   const [animate, setAnimate]   = useState(false);
   const intervalRef = useRef(null);
 
-  // ── Core fetch + compute logic ───────────────────────────────────────────────
   const loadPicks = useCallback(async () => {
     setLoading(true);
     setError(null);
-    console.log('[RecommendedPicks] 🚀 Step 1: Fetching AI Prediction Data...');
+    console.log('[RecommendedPicks] 🚀 Fetching Live Pattern Predictions...');
 
     try {
-      // Parallel fetch: historical data for % calculation + today's AI predictions
-      const [histRes, tipsRes] = await Promise.allSettled([
-        fetch('/api/public/results?page=1&pageSize=10').then(r => r.json()),
-        fetch('/api/vfootball/daily-tips/history').then(r => r.json()),
-      ]);
+      const res = await fetch('/api/pattern-intel?minPct=80&minSamples=3');
+      const json = await res.json();
 
-      let historicalMatches = [];
-      if (histRes.status === 'fulfilled' && histRes.value.success) {
-        historicalMatches = (histRes.value.dates || []).flatMap(d =>
-          Object.values(d.leagues).flat()
-        );
-      }
+      if (!json.success) throw new Error(json.error || 'Failed to load pattern predictions.');
+      
+      const patternPicks = (json.patterns || []).map(p => {
+        const topOutcome = p.eliteOutcomes && p.eliteOutcomes[0] ? p.eliteOutcomes[0] : null;
+        if (!topOutcome) return null;
 
-      let aiTips = [];
-      if (tipsRes.status === 'fulfilled' && tipsRes.value.success) {
-        aiTips = tipsRes.value.history || [];
-      } else {
-        throw new Error('Failed to load AI Match Predictions.');
-      }
+        return {
+          type: topOutcome.key, 
+          label: topOutcome.label,
+          emoji: topOutcome.emoji,
+          pct: topOutcome.pct,
+          samples: p.sampleSize,
+          league: p.league,
+          upcomingMatch: {
+            home: p.role === 'Home' ? p.team : 'Opponent',
+            away: p.role === 'Away' ? p.team : 'Opponent',
+            time: 'Next Match'
+          },
+          reasoning: `Score Pattern [${p.score}] triggered by ${p.team} (${p.role})`
+        };
+      }).filter(Boolean);
 
-      if (aiTips.length === 0) {
-        setPicks([]);
-        setLoading(false);
-        return;
-      }
+      patternPicks.sort((a, b) => b.pct - a.pct);
 
-      const computed = computeAIPicks(historicalMatches, aiTips);
-      setPicks(computed);
+      setPicks(patternPicks.slice(0, 8)); // Top 8
       setAnimate(true);
       setLastRefresh(new Date());
       setTimeout(() => setAnimate(false), 2000);
 
     } catch (err) {
       console.error('[RecommendedPicks] ❌ Error:', err.message);
-      setError(err.message || 'Failed to compute recommended picks. Check server connection.');
+      setError(err.message || 'Failed to fetch pattern predictions. Check server connection.');
     }
 
     setLoading(false);
   }, []);
 
-  // ── Auto-refresh every 90 seconds ──────────────────────────────────────────
   useEffect(() => {
     loadPicks();
     intervalRef.current = setInterval(() => {
-      console.log('[RecommendedPicks] 🔄 Auto-refreshing AI picks...');
+      console.log('[RecommendedPicks] 🔄 Auto-refreshing pattern picks...');
       loadPicks();
-    }, 90000);
+    }, 60000);
     return () => clearInterval(intervalRef.current);
   }, [loadPicks]);
 
-  // ── Derived stats ──────────────────────────────────────────────────────────
-  const hotPicks = picks.filter(p => p.pct >= 70);
+  const hotPicks = picks.filter(p => p.pct >= 85);
   const avgPct   = picks.length ? Math.round(picks.reduce((acc, p) => acc + p.pct, 0) / picks.length) : 0;
 
   return (
@@ -403,10 +259,10 @@ export default function RecommendedPicks() {
               <span style={{ fontSize: '1.8rem' }}>🏆</span>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: 'white', lineHeight: 1.1 }}>
-                  Recommended AI Picks 
+                  Recommended Pattern Picks 
                 </h2>
                 <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                  Best selections extracted from AI Upcoming Match predictions · Ranked by probability
+                  Live, high-probability betting patterns extracted directly from the Intelligence Engine.
                 </p>
               </div>
             </div>
@@ -415,10 +271,10 @@ export default function RecommendedPicks() {
             {picks.length > 0 && (
               <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
                 <div style={{ background: `${GOLD}12`, border: `1px solid ${GOLD}35`, borderRadius: 20, padding: '4px 12px', fontSize: '0.72rem', color: GOLD, fontWeight: 700 }}>
-                  🔥 {hotPicks.length} Hot Picks (≥70%)
+                  🔥 {hotPicks.length} Elite Picks (≥85%)
                 </div>
                 <div style={{ background: `${GREEN}12`, border: `1px solid ${GREEN}35`, borderRadius: 20, padding: '4px 12px', fontSize: '0.72rem', color: GREEN, fontWeight: 700 }}>
-                  📊 Avg {avgPct}% Confidence
+                  📊 Avg {avgPct}% Probability
                 </div>
                 {lastRefresh && (
                   <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 20, padding: '4px 12px', fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600 }}>
@@ -476,10 +332,10 @@ export default function RecommendedPicks() {
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
             {[
-              { n: '1', title: 'AI Match Loading', body: 'The engine pulls all "Upcoming Matches" predicted by DeepSeek AI/Gemini for your tracked leagues.' },
-              { n: '2', title: 'Historical Tracking', body: 'We fetch raw completed results from the Native Database DB to build the current mathematical probability profile for each league.' },
-              { n: '3', title: 'Finding the "Best Pick"', body: 'For every single AI-predicted match, we test the AI’s suggested winner/goals against mathematical probability to find the safest single choice.' },
-              { n: '4', title: 'Guarantee 4+ Picks', body: 'The engine displays the BEST >50% probability AI picks across all leagues, constantly maintaining a minimum display of 4 top choices.' },
+              { n: '1', title: 'Live Match Monitoring', body: "The engine continuously monitors today's live matches for all tracked leagues." },
+              { n: '2', title: 'Pattern Recognition', body: 'When a team finishes a match, we compare their specific scoreline and home/away role to millions of past database records.' },
+              { n: '3', title: 'Probability Extraction', body: 'If that exact pattern historically results in a specific outcome (e.g. Over 2.5 Goals) over 80% of the time in their next match, it triggers a signal.' },
+              { n: '4', title: 'Live AI Picks', body: "The most statistically reliable patterns are surfaced here automatically as actionable tips for the teams' upcoming matches." },
             ].map(s => (
               <div key={s.n} style={{ display: 'flex', gap: 10 }}>
                 <div style={{
@@ -508,7 +364,7 @@ export default function RecommendedPicks() {
           <span style={{ fontSize: '1.4rem', flexShrink: 0 }}>⚠️</span>
           <div>
             <div style={{ color: RED, fontWeight: 800, fontSize: '0.85rem', marginBottom: 4 }}>
-              Could Not Load AI Picks
+              Could Not Load Picks
             </div>
             <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.6 }}>
               {error}
@@ -521,7 +377,7 @@ export default function RecommendedPicks() {
                 cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem',
               }}
             >
-              ↺ Try Again
+              ↻ Try Again
             </button>
           </div>
         </div>
@@ -551,12 +407,12 @@ export default function RecommendedPicks() {
           background: 'rgba(255,255,255,0.02)', borderRadius: 16,
           border: '1px solid rgba(255,255,255,0.06)',
         }}>
-          <div style={{ fontSize: '3rem', marginBottom: 12 }}>🤖📭</div>
+          <div style={{ fontSize: '3rem', marginBottom: 12 }}>🔍</div>
           <h3 style={{ color: 'var(--text-secondary)', fontWeight: 600, margin: '0 0 8px' }}>
-            No AI Match Predictions Ready
+            Scanning for Elite Patterns
           </h3>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
-            Run the AI prediction engine from the "Daily Tips & Brain Intelligence" section below first.
+            No high-probability score patterns have triggered yet today. This area will auto-populate as matches finish.
           </p>
         </div>
       )}
@@ -584,7 +440,7 @@ export default function RecommendedPicks() {
           }}>
             <span>ℹ️</span>
             <span>
-              Best picks are generated by mathematically verifying the AI's upcoming match predictions against native Database historical data.
+              These picks are automatically triggered by teams hitting historically profitable score patterns. Accuracy auto-resolves daily on the Pattern Intel page.
             </span>
           </div>
         </>

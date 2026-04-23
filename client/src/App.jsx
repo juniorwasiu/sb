@@ -347,7 +347,7 @@ function AdminDashboard() {
       <header>
         {/* Admin breadcrumb */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-          <Link to="/" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textDecoration: 'none' }}>← Public Dashboard</Link>
+          <Link to="/results" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textDecoration: 'none' }}>← Public Dashboard</Link>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
           <Link to="/daily-tips" style={{ color: 'var(--accent-purple)', fontSize: '0.8rem', textDecoration: 'none' }}>🧠 Daily Tips</Link>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
@@ -413,11 +413,11 @@ function AdminDashboard() {
 export default function App() {
   return (
     <Routes>
-      <Route path="/"          element={<LandingPage />} />
+      <Route path="/"          element={<PatternIntelligence />} />
       <Route path="/daily-tips" element={<DailyTips />} />
       <Route path="/admin"     element={<AdminDashboard />} />
       <Route path="/behaviour" element={<BehaviourPatterns />} />
-      <Route path="/pattern-intel" element={<PatternIntelligence />} />
+      <Route path="/results" element={<LandingPage />} />
       <Route path="*"          element={<Navigate to="/" replace />} />
     </Routes>
   );

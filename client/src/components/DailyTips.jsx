@@ -300,7 +300,7 @@ export default function DailyTips() {
                 <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '20px' }}>
                     <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '10px' }}>
-                            <Link to="/" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.03em', transition: 'color 0.2s' }}
+                            <Link to="/results" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.03em', transition: 'color 0.2s' }}
                                 onMouseOver={e => e.currentTarget.style.color = 'white'}
                                 onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}
                             >← Dashboard</Link>

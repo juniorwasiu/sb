@@ -59,7 +59,7 @@ const PREDICTION_PROVIDERS = {
         id:          'gemini',
         label:       'Google Gemini',
         emoji:       '✨',
-        model:       'gemini-2.5-pro',
+        model:       'gemini-3.1-pro-preview',
         description: `Smart · ${GEMINI_KEYS.length}-key rotation · Large context`,
         badge:       `${GEMINI_KEYS.length} KEY${GEMINI_KEYS.length !== 1 ? 'S' : ''}`,
         badgeColor:  '#00E5FF',
@@ -115,8 +115,7 @@ async function _callDeepSeek(prompt, { maxTokens = 8000, temperature = 0.7 } = {
             model:           'deepseek-chat',
             messages:        [{ role: 'user', content: prompt }],
             temperature,
-            max_tokens:      maxTokens,
-            response_format: { type: 'json_object' },
+            max_tokens:      maxTokens
         }),
     });
     if (!res.ok) {

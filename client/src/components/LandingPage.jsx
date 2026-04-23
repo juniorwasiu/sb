@@ -307,7 +307,7 @@ export default function LandingPage() {
                   </div>
                 )}
               </div>
-              <a href="/pattern-intel" style={{
+              <a href="/" style={{
                 background: 'rgba(0,255,136,0.12)', border: '1px solid rgba(0,255,136,0.35)',
                 color: GREEN, borderRadius: 10, padding: '10px 18px',
                 textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,

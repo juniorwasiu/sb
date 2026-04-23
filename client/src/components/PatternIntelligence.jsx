@@ -1,134 +1,172 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import AIProviderSelector from './AIProviderSelector';
+import PatternPerformance from './PatternPerformance';
 
-const NEON = '#00E5FF'; const GREEN = '#00FF88'; const GOLD = '#FFD700';
-const PURPLE = '#A78BFA'; const RED = '#FF3355'; const ORANGE = '#FF6B35';
+const NEON='#00E5FF', GREEN='#00FF88', GOLD='#FFD700', PURPLE='#A78BFA', RED='#FF3355', ORANGE='#FF6B35';
+const LEAGUES={'England - Virtual':{icon:'🏴󠁧󠁢󠁥󠁮󠁧󠁿',color:NEON},'Germany - Virtual':{icon:'🇩🇪',color:GOLD},'Italy - Virtual':{icon:'🇮🇹',color:GREEN},'Spain - Virtual':{icon:'🇪🇸',color:RED},'France - Virtual':{icon:'🇫🇷',color:ORANGE}};
+const lc=(lg)=>LEAGUES[lg]?.color||PURPLE;
+const li=(lg)=>LEAGUES[lg]?.icon||'🌐';
 
-const LEAGUES = {
-  'England - Virtual': { icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: NEON },
-  'Germany - Virtual': { icon: '🇩🇪', color: GOLD },
-  'Italy - Virtual':   { icon: '🇮🇹', color: GREEN },
-  'Spain - Virtual':   { icon: '🇪🇸', color: RED },
-  'France - Virtual':  { icon: '🇫🇷', color: ORANGE },
-};
-const lc = (lg) => LEAGUES[lg]?.color || PURPLE;
-const li = (lg) => LEAGUES[lg]?.icon || '🌐';
-
-function NavBar() {
-  const links = [
-    { href: '/', label: '📊 Results', color: NEON },
-    { href: '/daily-tips', label: '🔮 Daily Tips', color: PURPLE },
-    { href: '/pattern-intel', label: '🧠 Pattern Intel', color: GREEN },
-    { href: '/behaviour', label: '🧬 Behaviour', color: GOLD },
-    { href: '/admin', label: '⚙️ Admin', color: 'rgba(255,255,255,0.4)' },
-  ];
-  const current = window.location.pathname;
-  return (
-    <nav style={{ background: 'rgba(0,0,0,0.4)', borderBottom: '1px solid rgba(255,255,255,0.07)', padding: '0 24px', display: 'flex', alignItems: 'center', gap: 4, overflowX: 'auto' }}>
-      <div style={{ fontWeight: 900, fontSize: '1rem', color: NEON, padding: '14px 16px 14px 0', marginRight: 8, whiteSpace: 'nowrap', flexShrink: 0 }}>
-        vFootball <span style={{ color: PURPLE }}>Terminal</span>
-      </div>
-      {links.map(l => (
-        <a key={l.href} href={l.href} style={{
-          color: current === l.href ? l.color : 'rgba(255,255,255,0.5)',
-          fontWeight: current === l.href ? 800 : 500, fontSize: '0.82rem',
-          padding: '14px 14px', textDecoration: 'none', whiteSpace: 'nowrap',
-          borderBottom: current === l.href ? `2px solid ${l.color}` : '2px solid transparent',
-          transition: 'all 0.2s', flexShrink: 0,
-        }}>{l.label}</a>
-      ))}
+function NavBar(){
+  const links=[{href:'/',label:'🧠 Pattern Intel',c:GREEN},{href:'/results',label:'📊 Results',c:NEON},{href:'/daily-tips',label:'🔮 Daily Tips',c:PURPLE},{href:'/behaviour',label:'🧬 Behaviour',c:GOLD},{href:'/admin',label:'⚙️ Admin',c:'rgba(255,255,255,0.4)'}];
+  const cur=window.location.pathname;
+  return(
+    <nav style={{background:'rgba(0,0,0,0.4)',borderBottom:'1px solid rgba(255,255,255,0.07)',padding:'0 24px',display:'flex',alignItems:'center',gap:4,overflowX:'auto'}}>
+      <div style={{fontWeight:900,fontSize:'1rem',color:NEON,padding:'14px 16px 14px 0',marginRight:8,whiteSpace:'nowrap',flexShrink:0}}>vFootball <span style={{color:PURPLE}}>Terminal</span></div>
+      {links.map(l=><a key={l.href} href={l.href} style={{color:cur===l.href?l.c:'rgba(255,255,255,0.5)',fontWeight:cur===l.href?800:500,fontSize:'0.82rem',padding:'14px',textDecoration:'none',whiteSpace:'nowrap',borderBottom:cur===l.href?`2px solid ${l.c}`:'2px solid transparent',transition:'all 0.2s',flexShrink:0}}>{l.label}</a>)}
     </nav>
   );
 }
 
-function OutcomePill({ o }) {
-  const colorMap = { 'Win': GREEN, 'Loss': RED, 'Draw': GOLD, 'Over 1.5': NEON, 'Over 2.5': ORANGE, 'GG (BTTS)': PURPLE, 'Home Over 0.5': '#00BFFF', 'Away Over 0.5': '#FF69B4' };
-  const c = colorMap[o.label] || NEON;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, background: `${c}12`, border: `1px solid ${c}40` }}>
-      <span style={{ fontSize: '1rem' }}>{o.emoji}</span>
+function OutcomePill({o}){
+  const cm={Win:GREEN,Loss:RED,Draw:GOLD,'Over 1.5':NEON,'Over 2.5':ORANGE,'GG (BTTS)':PURPLE,'Home Scores':'#00BFFF','Away Scores':'#FF69B4'};
+  const c=cm[o.label]||NEON;
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:6,padding:'6px 12px',borderRadius:8,background:`${c}12`,border:`1px solid ${c}40`}}>
+      <span style={{fontSize:'1rem'}}>{o.emoji}</span>
       <div>
-        <div style={{ fontSize: '0.78rem', fontWeight: 800, color: c }}>{o.label}</div>
-        <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.5)' }}>{o.pct}% · {o.hit}✓ {o.failed}✗</div>
+        <div style={{fontSize:'0.78rem',fontWeight:800,color:c}}>{o.label}</div>
+        <div style={{fontSize:'0.65rem',color:'rgba(255,255,255,0.5)'}}>{o.pct}% · {o.hit}✓ {o.failed}✗</div>
       </div>
     </div>
   );
 }
 
-function PatternCard({ pattern, idx }) {
-  const [expanded, setExpanded] = useState(false);
-  const t = pattern.mostRecentTrigger;
-  const c = lc(pattern.league);
-  const topOutcome = pattern.eliteOutcomes[0];
+function PatternCard({pattern,isHistory,isLive}){
+  // Default to expanded when in Live tab so everything is immediately visible
+  const [expanded,setExpanded]=useState(isLive ? true : false);
+  const [aiPrediction,setAiPrediction]=useState(null);
+  const [loadingAi,setLoadingAi]=useState(false);
+  const t=pattern.mostRecentTrigger;
+  const c=lc(pattern.league);
+  const top=pattern.eliteOutcomes?.[0];
+  const resolved=pattern.resolved;
 
-  return (
-    <div style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${c}25`, borderRadius: 12, overflow: 'hidden', marginBottom: 12 }}>
-      {/* Card Header */}
-      <div onClick={() => setExpanded(e => !e)} style={{ padding: '16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, background: `linear-gradient(90deg, ${c}08, transparent)` }}>
-        <div style={{ fontSize: '1.8rem', fontWeight: 900, fontFamily: 'monospace', color: c, minWidth: 60, textAlign: 'center', background: `${c}15`, borderRadius: 8, padding: '4px 8px' }}>{pattern.score}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '0.7rem', color: c, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{li(pattern.league)} {pattern.league.replace(' - Virtual', '')} · <strong style={{color: 'white'}}>{pattern.team}</strong> was {pattern.role}</div>
-          <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>{pattern.sampleSize} samples · {pattern.eliteOutcomes.length} elite outcome{pattern.eliteOutcomes.length > 1 ? 's' : ''}</div>
-        </div>
-        {topOutcome && (
-          <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ fontSize: '1.4rem', fontWeight: 900, color: GREEN }}>{topOutcome.pct}%</div>
-            <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)' }}>{topOutcome.emoji} {topOutcome.label}</div>
+  const handleAiPredict=async(e)=>{
+    e.stopPropagation();
+    if(aiPrediction||loadingAi)return;
+    setLoadingAi(true);
+    console.log(`[PatternCard] 🤖 Requesting AI tip for ${pattern.team}...`);
+    try{
+      const res=await fetch('/api/ai-predict-pattern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern})});
+      const json=await res.json();
+      if(json.success){setAiPrediction({text:json.prediction,provider:json.provider});console.log('[PatternCard] ✅ AI tip received');}
+      else throw new Error(json.error||'AI failed');
+    }catch(err){console.error('[PatternCard] ❌',err.message);alert('AI Error: '+err.message);}
+    finally{setLoadingAi(false);}
+  };
+
+  return(
+    <div style={{background:'rgba(255,255,255,0.02)',border:`1px solid ${c}25`,borderRadius:12,overflow:'hidden',marginBottom:10}}>
+      <div onClick={()=>setExpanded(e=>!e)} style={{padding:'14px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:12,background:`linear-gradient(90deg,${c}08,transparent)`}}>
+        <div style={{fontSize:'1.6rem',fontWeight:900,fontFamily:'monospace',color:c,minWidth:56,textAlign:'center',background:`${c}15`,borderRadius:8,padding:'3px 7px'}}>{pattern.score}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:'0.7rem',color:c,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.07em'}}>{li(pattern.league)} {pattern.league.replace(' - Virtual','')} · <strong style={{color:'white'}}>{pattern.team} WAS {pattern.role.toUpperCase()}</strong></div>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:2,flexWrap:'wrap'}}>
+            <span style={{fontSize:'0.75rem',color:'rgba(255,255,255,0.55)'}}>{pattern.sampleSize} samples · {pattern.eliteOutcomes?.length} elite outcome{pattern.eliteOutcomes?.length>1?'s':''}</span>
+            {t&&<span style={{fontSize:'0.68rem',color:c,background:`${c}18`,border:`1px solid ${c}35`,borderRadius:20,padding:'1px 8px',fontWeight:700,fontFamily:'monospace'}}>🕐 {t.triggerTime}</span>}
           </div>
-        )}
-        <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '1.1rem', transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>⌄</span>
+        </div>
+        {top&&<div style={{textAlign:'right',flexShrink:0}}>
+          <div style={{fontSize:'1.3rem',fontWeight:900,color:GREEN}}>{top.pct}%</div>
+          <div style={{fontSize:'0.6rem',color:'rgba(255,255,255,0.4)'}}>{top.emoji} {top.label}</div>
+        </div>}
+        {resolved&&<div style={{fontSize:'0.65rem',padding:'3px 8px',background:'rgba(0,255,136,0.1)',border:'1px solid rgba(0,255,136,0.3)',borderRadius:20,color:GREEN,flexShrink:0}}>✓ Resolved</div>}
+        <span style={{color:'rgba(255,255,255,0.3)',transform:expanded?'rotate(180deg)':'none',transition:'transform 0.2s'}}>⏄</span>
       </div>
 
-      {expanded && (
-        <div style={{ padding: '0 16px 16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-          {/* Elite Outcomes */}
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>🎯 Elite Outcomes (Next Match)</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {pattern.eliteOutcomes.map(o => <OutcomePill key={o.key} o={o} />)}
+      {/* ── Expanded Content ── */}
+      {expanded&&(
+        <div style={{padding:'0 16px 16px',borderTop:'1px solid rgba(255,255,255,0.05)'}}>
+          
+          {/* Elite Outcomes Grid */}
+          <div style={{marginTop:16}}>
+            <div style={{fontSize:'0.62rem',color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8}}>🎯 Elite Outcomes (Next Match)</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+              {pattern.eliteOutcomes?.map(o=><OutcomePill key={o.key} o={o}/>)}
             </div>
           </div>
 
           {/* Most Recent Trigger */}
-          {t && (
-            <div style={{ marginTop: 14, padding: 12, background: 'rgba(0,0,0,0.3)', borderRadius: 10, border: `1px solid ${c}20` }}>
-              <div style={{ fontSize: '0.65rem', color: c, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontWeight: 700 }}>📍 Most Recent Trigger — {t.triggerDate} {t.triggerTime}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: '0.85rem' }}>
-                <span style={{ color: 'rgba(255,255,255,0.7)' }}>{t.triggerHomeTeam}</span>
-                <span style={{ fontWeight: 900, color: c, fontFamily: 'monospace', padding: '2px 8px', background: `${c}15`, borderRadius: 6 }}>{t.triggerScore}</span>
-                <span style={{ color: 'rgba(255,255,255,0.7)' }}>{t.triggerAwayTeam}</span>
-                <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', marginLeft: 4 }}>({t.team} was {t.triggerRole})</span>
+          {t&&<div style={{marginTop:16,padding:12,background:'rgba(0,0,0,0.3)',borderRadius:10,border:`1px solid ${c}20`}}>
+            <div style={{fontSize:'0.62rem',color:c,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6,fontWeight:700}}>📍 Most Recent Trigger — {t.triggerDate} {t.triggerTime}</div>
+            <div style={{fontSize:'0.83rem',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span style={{color:'rgba(255,255,255,0.7)'}}>{t.triggerHomeTeam}</span>
+              <span style={{fontWeight:900,color:c,fontFamily:'monospace',padding:'2px 8px',background:`${c}15`,borderRadius:6}}>{t.triggerScore}</span>
+              <span style={{color:'rgba(255,255,255,0.7)'}}>{t.triggerAwayTeam}</span>
+              <span style={{fontSize:'0.7rem',color:'rgba(255,255,255,0.4)',marginLeft:8}}>({pattern.team} was {pattern.role})</span>
+            </div>
+          </div>}
+
+          {/* Detailed Prediction Breakdown Box */}
+          <div style={{marginTop:16,padding:14,background:`${c}05`,borderRadius:10,border:`1px solid ${c}25`}}>
+            <div style={{fontSize:'0.68rem',color:GREEN,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8,fontWeight:800}}>🔮 Predicted Signal for {pattern.team}'s Next Match</div>
+            <div style={{fontSize:'0.8rem',color:'rgba(255,255,255,0.7)',marginBottom:12,lineHeight:1.4}}>
+              Based on <strong style={{color:'white'}}>{pattern.sampleSize}</strong> historical cases where <strong style={{color:c}}>{pattern.team}</strong> played a match ending <strong style={{color:'white'}}>{pattern.score}</strong> as the {pattern.role} team:
+            </div>
+            
+            <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+              {pattern.eliteOutcomes?.map(o=>(
+                <div key={`pred-${o.key}`} style={{display:'inline-flex',alignItems:'center',gap:8,padding:'6px 12px',background:`${GREEN}15`,border:`1px solid ${GREEN}40`,borderRadius:20,width:'fit-content'}}>
+                  <span style={{fontSize:'0.85rem'}}>{o.emoji}</span>
+                  <span style={{fontSize:'0.78rem',color:GREEN,fontWeight:700}}>{o.label} — {o.pct}% likely</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Historical Trigger Rows — only show ones that have a resolved next match */}
+            {(() => {
+              // Filter out triggers that have no nextScore (e.g. the live today trigger)
+              const resolvedTriggers = (pattern.recentTriggers || [])
+                .filter(rt => rt.nextScore && rt.triggerDate !== pattern.mostRecentTrigger?.triggerDate)
+                .slice(0, 3);
+              if (resolvedTriggers.length === 0) return null;
+              return (
+                <div>
+                  <div style={{fontSize:'0.65rem',color:'rgba(255,255,255,0.4)',marginBottom:8}}>Recent matches that triggered this pattern:</div>
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    {resolvedTriggers.map((rt, i) => (
+                      <div key={i} style={{display:'flex',alignItems:'center',gap:10,fontSize:'0.75rem',color:'rgba(255,255,255,0.6)',background:'rgba(0,0,0,0.2)',padding:'6px 10px',borderRadius:6,flexWrap:'wrap'}}>
+                        <span style={{minWidth:72,color:'rgba(255,255,255,0.4)'}}>{rt.triggerDate}</span>
+                        <div style={{display:'flex',gap:5,alignItems:'center',flex:1}}>
+                          <span style={{color:rt.triggerHomeTeam===pattern.team?'white':'rgba(255,255,255,0.5)',fontWeight:rt.triggerHomeTeam===pattern.team?700:400}}>{rt.triggerHomeTeam}</span>
+                          <span style={{color:c,fontWeight:900,fontFamily:'monospace',padding:'1px 6px',background:`${c}15`,borderRadius:4}}>{rt.triggerScore}</span>
+                          <span style={{color:rt.triggerAwayTeam===pattern.team?'white':'rgba(255,255,255,0.5)',fontWeight:rt.triggerAwayTeam===pattern.team?700:400}}>{rt.triggerAwayTeam}</span>
+                          <span style={{fontSize:'0.6rem',color:'rgba(255,255,255,0.3)'}}>({rt.triggerRole})</span>
+                        </div>
+                        <span style={{color:GOLD,fontFamily:'monospace',fontWeight:700}}>→ next: {rt.nextScore}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Resolved Check (For History tab) */}
+          {resolved&&pattern.resolvedScore&&(
+            <div style={{marginTop:16,padding:12,background:'rgba(0,255,136,0.05)',borderRadius:10,border:'1px solid rgba(0,255,136,0.2)'}}>
+              <div style={{fontSize:'0.62rem',color:GREEN,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6,fontWeight:700}}>✅ Resolved Next Match — {pattern.resolvedDate}</div>
+              <div style={{fontSize:'0.83rem',fontFamily:'monospace',color:GREEN,fontWeight:800}}>{pattern.resolvedScore}</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>
+                {Object.entries(pattern.outcomeResults||{}).map(([label,hit])=>(
+                  <span key={label} style={{fontSize:'0.68rem',padding:'2px 8px',borderRadius:20,background:hit?'rgba(0,255,136,0.1)':'rgba(255,51,85,0.1)',border:`1px solid ${hit?GREEN:RED}40`,color:hit?GREEN:RED}}>{hit?'✓':'✗'} {label}</span>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Prediction for Next Match */}
-          {t && (
-            <div style={{ marginTop: 10, padding: 12, background: `linear-gradient(135deg, ${GREEN}08, rgba(0,0,0,0.3))`, borderRadius: 10, border: `1px solid ${GREEN}30` }}>
-              <div style={{ fontSize: '0.65rem', color: GREEN, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontWeight: 700 }}>🔮 Predicted Signal for {t.team}'s Next Match</div>
-              <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>
-                Based on {pattern.sampleSize} historical cases where <strong style={{ color: c }}>{pattern.team}</strong> played a match ending <strong style={{ color: c }}>{pattern.score}</strong> as the {pattern.role} team:
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {pattern.eliteOutcomes.map(o => (
-                  <div key={o.key} style={{ padding: '5px 12px', borderRadius: 20, background: `${GREEN}15`, border: `1px solid ${GREEN}40`, fontSize: '0.78rem', fontWeight: 700, color: GREEN }}>
-                    {o.emoji} {o.label} — {o.pct}% likely
-                  </div>
-                ))}
-              </div>
-              {/* Recent trigger history */}
-              {pattern.recentTriggers.length > 1 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.3)', marginBottom: 6 }}>Recent matches that triggered this pattern:</div>
-                  {pattern.recentTriggers.slice(0, 4).map((tr, i) => (
-                    <div key={i} style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.5)', display: 'flex', gap: 8, marginBottom: 3, alignItems: 'center' }}>
-                      <span style={{ color: 'rgba(255,255,255,0.3)', minWidth: 70 }}>{tr.triggerDate}</span>
-                      <span>{tr.triggerHomeTeam} <strong style={{ color: c }}>{tr.triggerScore}</strong> {tr.triggerAwayTeam}</span>
-                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.65rem' }}>({tr.team})</span>
-                      {tr.nextScore && <span style={{ color: GOLD, marginLeft: 'auto' }}>→ next: {tr.nextScore}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
+          {/* AI Tip Button */}
+          {!isHistory&&!aiPrediction&&(
+            <button onClick={handleAiPredict} disabled={loadingAi} style={{marginTop:16,padding:'8px 16px',background:`${NEON}15`,border:`1px solid ${NEON}40`,borderRadius:6,color:NEON,fontWeight:700,fontSize:'0.75rem',cursor:loadingAi?'not-allowed':'pointer',opacity:loadingAi?0.6:1}}>
+              {loadingAi?'⏳ Analysing...':'✨ Generate AI Betting Tip'}
+            </button>
+          )}
+          {/* AI Tip Result */}
+          {aiPrediction&&(
+            <div style={{marginTop:16,padding:14,background:'rgba(255,255,255,0.04)',borderRadius:8,border:'1px solid rgba(255,255,255,0.1)'}}>
+              <div style={{fontSize:'0.62rem',color:GOLD,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6,fontWeight:700}}>🤖 AI Tip (via {aiPrediction.provider})</div>
+              <div style={{fontSize:'0.82rem',color:'rgba(255,255,255,0.88)',lineHeight:1.6}}>{aiPrediction.text}</div>
             </div>
           )}
         </div>
@@ -137,192 +175,182 @@ function PatternCard({ pattern, idx }) {
   );
 }
 
-export default function PatternIntelligence() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [leagueFilter, setLeagueFilter] = useState('');
-  const [minPct, setMinPct] = useState(80);
-  const [search, setSearch] = useState('');
-  const [outcomeFilter, setOutcomeFilter] = useState('');
-  const [sortBy, setSortBy] = useState('pct'); // 'pct' | 'samples'
+function PatternList({patterns,loading,error,onReload,isHistory,flatMode}){
+  if(loading)return(<div style={{textAlign:'center',padding:'60px 0'}}><div style={{width:40,height:40,border:`3px solid ${GREEN}15`,borderTopColor:GREEN,borderRadius:'50%',animation:'spin 1s linear infinite',margin:'0 auto 12px'}}/><p style={{color:'rgba(255,255,255,0.4)',fontSize:'0.85rem'}}>Scanning for patterns...</p></div>);
+  if(error)return(<div style={{padding:24,textAlign:'center',background:'rgba(255,51,85,0.05)',border:`1px solid ${RED}30`,borderRadius:12}}><div style={{fontSize:'2rem',marginBottom:8}}>⚠️</div><div style={{color:RED,fontWeight:700,marginBottom:6}}>Failed to load</div><div style={{color:'rgba(255,255,255,0.4)',fontSize:'0.8rem',marginBottom:12}}>{error}</div><button onClick={onReload} style={{background:RED,color:'white',border:'none',borderRadius:8,padding:'8px 20px',cursor:'pointer',fontWeight:700}}>↺ Retry</button></div>);
+  if(!patterns||patterns.length===0)return(<div style={{textAlign:'center',padding:'50px 0'}}><div style={{fontSize:'3rem',marginBottom:12}}>📭</div><div style={{fontSize:'0.95rem',fontWeight:700,color:'rgba(255,255,255,0.4)',marginBottom:6}}>No active predictions</div><div style={{fontSize:'0.8rem',color:'rgba(255,255,255,0.25)'}}>No matches today triggered a high-probability pattern yet, or adjust the Min % threshold.</div></div>);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try {
-      const params = new URLSearchParams({ minPct, minSamples: 3 });
-      if (leagueFilter) params.set('league', leagueFilter);
-      console.log('[PatternIntel] 🔍 Fetching pattern data...', params.toString());
-      const res = await fetch(`/api/pattern-intel?${params}`);
-      const json = await res.json();
-      if (!json.success) throw new Error(json.error || 'Failed to load patterns');
-      console.log(`[PatternIntel] ✅ Loaded ${json.totalPatterns} patterns. Range: ${json.dataRange?.from} → ${json.dataRange?.to}`);
-      setData(json);
-    } catch (err) {
-      console.error('[PatternIntel] ❌ Error:', err.message);
-      setError(err.message);
-    }
-    setLoading(false);
-  }, [leagueFilter, minPct]);
+  // FLAT MODE: used for Live tab — preserves the time-sorted order from the server
+  if(flatMode){
+    return(
+      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+        {patterns.map((p,i)=><PatternCard key={`${p.score}-${p.role}-${p.team}-${i}`} pattern={p} isHistory={false} isLive={true}/>)}
+      </div>
+    );
+  }
 
-  useEffect(() => { load(); }, [load]);
+  // GROUPED MODE: used for History tab
+  const byLeague={};
+  patterns.forEach(p=>{const k=p.league||'Unknown';if(!byLeague[k])byLeague[k]=[];byLeague[k].push(p);});
+  return(<>{Object.keys(byLeague).sort().map(lg=>(
+    <div key={lg} style={{marginBottom:28}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+        <div style={{width:3,height:22,background:lc(lg),borderRadius:3}}/>
+        <span style={{fontSize:'0.95rem',fontWeight:800,color:lc(lg)}}>{li(lg)} {lg}</span>
+        <span style={{fontSize:'0.68rem',color:'rgba(255,255,255,0.3)',background:`${lc(lg)}15`,padding:'2px 8px',borderRadius:20,border:`1px solid ${lc(lg)}25`}}>{byLeague[lg].length} patterns</span>
+        <div style={{flex:1,height:1,background:'rgba(255,255,255,0.04)'}}/>
+      </div>
+      {byLeague[lg].map((p,i)=><PatternCard key={`${p.score}-${p.role}-${p.team}-${i}`} pattern={p} isHistory={isHistory} isLive={!isHistory}/>)}
+    </div>
+  ))}</>);
+}
 
-  const filteredPatterns = (data?.patterns || []).filter(p => {
-    if (search) {
-      const q = search.toLowerCase();
-      if (!p.score.includes(q) && !p.league.toLowerCase().includes(q) && !p.mostRecentTrigger?.team?.toLowerCase().includes(q)) return false;
-    }
-    if (outcomeFilter) {
-      if (!p.eliteOutcomes.some(o => o.label === outcomeFilter)) return false;
-    }
-    return true;
-  }).sort((a, b) => {
-    if (sortBy === 'pct') return b.eliteOutcomes[0]?.pct - a.eliteOutcomes[0]?.pct;
-    return b.sampleSize - a.sampleSize;
-  });
+export default function PatternIntelligence(){
+  const [tab,setTab]=useState('live');
+  const [liveData,setLiveData]=useState(null);
+  const [liveLoading,setLiveLoading]=useState(true);
+  const [liveError,setLiveError]=useState(null);
+  const [minPct,setMinPct]=useState(80);
+  const [leagueFilter,setLeagueFilter]=useState('');
+  const [histDates,setHistDates]=useState([]);
+  const [histDate,setHistDate]=useState('');
+  const [histPatterns,setHistPatterns]=useState([]);
+  const [histLoading,setHistLoading]=useState(false);
+  const [histError,setHistError]=useState(null);
 
-  const leagues = data ? [...new Set(data.patterns.map(p => p.league))].sort() : [];
-  const allOutcomes = ['Win', 'Loss', 'Draw', 'Over 1.5', 'Over 2.5', 'GG (BTTS)', 'Home Scores', 'Away Scores'];
+  const loadLive=useCallback(async()=>{
+    setLiveLoading(true);setLiveError(null);
+    const params=new URLSearchParams({minPct,minSamples:3});
+    if(leagueFilter)params.set('league',leagueFilter);
+    console.log('[PatternIntel] 🔍 Fetching live patterns...',params.toString());
+    try{
+      const res=await fetch(`/api/pattern-intel?${params}`);
+      const json=await res.json();
+      if(!json.success)throw new Error(json.error||'Failed');
+      console.log(`[PatternIntel] ✅ ${json.totalPatterns} live patterns, ${json.totalAllTime} all-time`);
+      setLiveData(json);
+    }catch(e){console.error('[PatternIntel] ❌',e.message);setLiveError(e.message);}
+    setLiveLoading(false);
+  },[minPct,leagueFilter]);
 
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-primary, #0A0F1E)', fontFamily: 'Inter, sans-serif', color: 'white' }}>
-      <NavBar />
+  useEffect(()=>{
+    loadLive();
+    const es=new EventSource('/api/db-stream');
+    es.onmessage=(evt)=>{try{const p=JSON.parse(evt.data);if(p.type==='db-updated'){console.log('[PatternIntel] 📡 DB updated — reloading...');loadLive();}}catch(_){}};
+    return()=>es.close();
+  },[loadLive]);
 
-      {/* Header */}
-      <header style={{ background: `linear-gradient(180deg, rgba(0,255,136,0.06) 0%, transparent 100%)`, borderBottom: '1px solid rgba(0,255,136,0.1)', padding: '32px 24px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-            <div style={{ width: 10, height: 10, borderRadius: '50%', background: GREEN, boxShadow: `0 0 12px ${GREEN}`, animation: 'pulse 1.5s infinite' }} />
-            <span style={{ fontSize: '0.72rem', color: GREEN, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Pattern Intelligence Engine</span>
-          </div>
-          <h1 style={{ margin: '0 0 6px', fontSize: '2.2rem', fontWeight: 900, letterSpacing: '-0.02em' }}>
-            🧠 Score <span style={{ color: GREEN, textShadow: `0 0 20px ${GREEN}55` }}>Pattern Intel</span>
-          </h1>
-          <p style={{ margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: '0.9rem' }}>
-            Live daily prediction board — patterns triggered by <strong style={{ color: GOLD }}>today's matches</strong> that reach 80-100% probability
-          </p>
-          {data && (
-            <div style={{ marginTop: 12, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ background: `${GOLD}15`, border: `1px solid ${GOLD}30`, borderRadius: 8, padding: '8px 14px', textAlign: 'center' }}>
-                <div style={{ fontSize: '1.1rem', fontWeight: 900, color: GOLD }}>{data.today}</div>
-                <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Today's Date</div>
-              </div>
-              {[
-                { label: "Today's Signals", value: data.totalPatterns, color: GREEN },
-                { label: 'All-Time Patterns', value: data.totalAllTime, color: NEON },
-                { label: 'Filtered', value: filteredPatterns.length, color: PURPLE },
-              ].map(s => (
-                <div key={s.label} style={{ background: `${s.color}10`, border: `1px solid ${s.color}25`, borderRadius: 8, padding: '8px 14px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 900, color: s.color }}>{s.value}</div>
-                  <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.label}</div>
-                </div>
-              ))}
+  useEffect(()=>{
+    fetch('/api/pattern-intel/dates').then(r=>r.json()).then(j=>{
+      if(j.success){setHistDates(j.dates);if(j.dates.length>0&&!histDate)setHistDate(j.dates[0]);}
+    }).catch(e=>console.warn('[PatternIntel] dates fetch error:',e.message));
+  },[]);
+
+  useEffect(()=>{
+    if(tab!=='history'||!histDate)return;
+    setHistLoading(true);setHistError(null);
+    console.log(`[PatternIntel] 📅 Loading history for ${histDate}...`);
+    fetch(`/api/pattern-intel/history?date=${encodeURIComponent(histDate)}`).then(r=>r.json()).then(j=>{
+      if(j.success){setHistPatterns(j.patterns);console.log(`[PatternIntel] ✅ ${j.patterns.length} snapshots for ${histDate}`);}
+      else throw new Error(j.error);
+    }).catch(e=>{console.error('[PatternIntel] ❌ history:',e.message);setHistError(e.message);})
+    .finally(()=>setHistLoading(false));
+  },[tab,histDate]);
+
+  const leagues=liveData?[...new Set(liveData.patterns.map(p=>p.league))].sort():[];
+  const TABS=[{id:'live',label:'🟢 Live Today'},{id:'history',label:'📅 History'},{id:'performance',label:'📊 Performance'}];
+
+  return(
+    <div style={{minHeight:'100vh',background:'var(--bg-primary,#0A0F1E)',fontFamily:'Inter,sans-serif',color:'white'}}>
+      <NavBar/>
+      <header style={{background:`linear-gradient(180deg,rgba(0,255,136,0.06) 0%,transparent 100%)`,borderBottom:'1px solid rgba(0,255,136,0.1)',padding:'28px 24px 20px'}}>
+        <div style={{maxWidth:1100,margin:'0 auto',display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:16}}>
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
+              <div style={{width:9,height:9,borderRadius:'50%',background:GREEN,boxShadow:`0 0 10px ${GREEN}`,animation:'pulse 1.5s infinite'}}/>
+              <span style={{fontSize:'0.7rem',color:GREEN,fontWeight:700,letterSpacing:'0.12em',textTransform:'uppercase'}}>Pattern Intelligence Engine</span>
             </div>
-          )}
+            <h1 style={{margin:'0 0 4px',fontSize:'2rem',fontWeight:900,letterSpacing:'-0.02em'}}>🧠 Score <span style={{color:GREEN,textShadow:`0 0 20px ${GREEN}55`}}>Pattern Intel</span></h1>
+            <p style={{margin:0,color:'rgba(255,255,255,0.45)',fontSize:'0.85rem'}}>Live predictions · Historical archive · Performance analytics</p>
+          </div>
+          <div style={{width:270}}><AIProviderSelector/></div>
+        </div>
+
+        {/* Tabs */}
+        <div style={{maxWidth:1100,margin:'16px auto 0',display:'flex',gap:4}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{padding:'9px 20px',borderRadius:8,border:`1px solid ${tab===t.id?GREEN:'rgba(255,255,255,0.08)'}`,background:tab===t.id?`${GREEN}15`:'transparent',color:tab===t.id?GREEN:'rgba(255,255,255,0.5)',fontWeight:tab===t.id?800:500,fontSize:'0.83rem',cursor:'pointer',transition:'all 0.2s'}}>
+              {t.label}
+            </button>
+          ))}
+          {liveData&&<div style={{marginLeft:'auto',display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+            {[{l:'Today',v:liveData.today,c:GOLD},{l:"Live Signals",v:liveData.totalPatterns,c:GREEN},{l:"All-Time",v:liveData.totalAllTime,c:NEON}].map(s=>(
+              <div key={s.l} style={{background:`${s.c}10`,border:`1px solid ${s.c}25`,borderRadius:8,padding:'5px 12px',textAlign:'center'}}>
+                <div style={{fontSize:'1rem',fontWeight:900,color:s.c}}>{s.v}</div>
+                <div style={{fontSize:'0.58rem',color:'rgba(255,255,255,0.35)',textTransform:'uppercase'}}>{s.l}</div>
+              </div>
+            ))}
+          </div>}
         </div>
       </header>
 
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '24px' }}>
+      <main style={{maxWidth:1100,margin:'0 auto',padding:'24px'}}>
 
-        {/* How It Works */}
-        <div style={{ marginBottom: 20, padding: '14px 18px', background: 'rgba(0,229,255,0.04)', border: '1px solid rgba(0,229,255,0.15)', borderRadius: 10 }}>
-          <div style={{ fontSize: '0.75rem', color: NEON, fontWeight: 700, marginBottom: 6 }}>ℹ️ How This Works — Team Specific Mode</div>
-          <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
-            This page only shows patterns where the <strong style={{ color: GOLD }}>trigger match happened today</strong>. When a team plays a match today ending in a specific scoreline, the engine looks at <strong>that exact team's history</strong> and calculates what happens to them in their <strong style={{ color: GREEN }}>next upcoming match</strong> 80-100% of the time. Refreshes with live data on every reload.
+        {/* LIVE TAB */}
+        {tab==='live'&&(<>
+          <div style={{padding:'12px 16px',background:'rgba(0,229,255,0.04)',border:'1px solid rgba(0,229,255,0.15)',borderRadius:10,marginBottom:18}}>
+            <div style={{fontSize:'0.72rem',color:NEON,fontWeight:700,marginBottom:4}}>ℹ️ How This Works</div>
+            <div style={{fontSize:'0.76rem',color:'rgba(255,255,255,0.5)',lineHeight:1.6}}>Only shows patterns where a team played a match <strong style={{color:GOLD}}>today</strong>. When their score matches a historical pattern with ≥{minPct}% probability, it appears here as an actionable live prediction for their <strong style={{color:GREEN}}>next upcoming fixture</strong>. Auto-refreshes when new results arrive.</div>
           </div>
-        </div>
-
-        {/* Controls */}
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20, padding: '16px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10 }}>
-          <input
-            id="pattern-search"
-            placeholder="🔍 Search score, league, team..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{ flex: 1, minWidth: 180, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 8, padding: '9px 14px', fontSize: '0.82rem', outline: 'none' }}
-          />
-          <select id="league-filter" value={leagueFilter} onChange={e => { setLeagueFilter(e.target.value); }}
-            style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 8, padding: '9px 12px', fontSize: '0.82rem', outline: 'none' }}>
-            <option value="">🌍 All Leagues</option>
-            {leagues.map(lg => <option key={lg} value={lg}>{li(lg)} {lg.replace(' - Virtual', '')}</option>)}
-          </select>
-          <select id="outcome-filter" value={outcomeFilter} onChange={e => setOutcomeFilter(e.target.value)}
-            style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 8, padding: '9px 12px', fontSize: '0.82rem', outline: 'none' }}>
-            <option value="">🎯 All Outcomes</option>
-            {allOutcomes.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
-          <select id="sort-filter" value={sortBy} onChange={e => setSortBy(e.target.value)}
-            style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 8, padding: '9px 12px', fontSize: '0.82rem', outline: 'none' }}>
-            <option value="pct">Sort: Highest %</option>
-            <option value="samples">Sort: Most Samples</option>
-          </select>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
-            <span style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap' }}>Min %:</span>
-            <input id="min-pct" type="number" value={minPct} min={70} max={100}
-              onChange={e => setMinPct(Number(e.target.value))}
-              style={{ width: 60, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: 8, padding: '9px 10px', fontSize: '0.82rem', outline: 'none', textAlign: 'center' }} />
-          </div>
-          <button id="reload-patterns" onClick={load}
-            style={{ background: `${GREEN}15`, border: `1px solid ${GREEN}40`, color: GREEN, borderRadius: 8, padding: '9px 16px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700 }}>
-            ↺ Reload
-          </button>
-        </div>
-
-        {/* States */}
-        {loading && (
-          <div style={{ textAlign: 'center', padding: '80px 24px' }}>
-            <div style={{ width: 44, height: 44, border: `3px solid rgba(0,255,136,0.15)`, borderTopColor: GREEN, borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }} />
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem' }}>Scanning database for patterns...</p>
-          </div>
-        )}
-        {error && !loading && (
-          <div style={{ padding: 24, textAlign: 'center', background: 'rgba(255,51,85,0.05)', border: '1px solid rgba(255,51,85,0.2)', borderRadius: 12 }}>
-            <div style={{ fontSize: '2rem', marginBottom: 10 }}>⚠️</div>
-            <div style={{ color: RED, fontWeight: 700, marginBottom: 8 }}>Failed to Load Patterns</div>
-            <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem', marginBottom: 16 }}>{error}</div>
-            <button onClick={load} style={{ background: RED, color: 'white', border: 'none', borderRadius: 8, padding: '10px 24px', cursor: 'pointer', fontWeight: 700 }}>↺ Retry</button>
-          </div>
-        )}
-
-        {/* Patterns by League */}
-        {!loading && !error && data && (() => {
-          const byLeague = {};
-          filteredPatterns.forEach(p => { if (!byLeague[p.league]) byLeague[p.league] = []; byLeague[p.league].push(p); });
-          return Object.keys(byLeague).length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px 24px' }}>
-              <div style={{ fontSize: '3.5rem', marginBottom: 16 }}>📭</div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>No Active Predictions for Today</div>
-              <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.3)', maxWidth: 440, margin: '0 auto', lineHeight: 1.6 }}>
-                No matches played today have triggered a high-probability pattern yet. Check back as today's matches roll in, or lower the <strong style={{ color: GOLD }}>Min %</strong> threshold.
-              </div>
-              {data.totalAllTime > 0 && (
-                <div style={{ marginTop: 20, padding: '10px 16px', background: `${NEON}08`, border: `1px solid ${NEON}20`, borderRadius: 8, display: 'inline-block', fontSize: '0.78rem', color: NEON }}>
-                  All-time patterns in database: <strong>{data.totalAllTime}</strong>
-                </div>
-              )}
+          <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:18,padding:'14px',background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:10}}>
+            <select id="league-filter" value={leagueFilter} onChange={e=>setLeagueFilter(e.target.value)} style={{background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:8,padding:'8px 12px',fontSize:'0.8rem',outline:'none'}}>
+              <option value="">🌍 All Leagues</option>
+              {leagues.map(lg=><option key={lg} value={lg}>{li(lg)} {lg.replace(' - Virtual','')}</option>)}
+            </select>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:'0.75rem',color:'rgba(255,255,255,0.5)'}}>Min %:</span>
+              <input id="min-pct" type="number" value={minPct} min={70} max={100} onChange={e=>setMinPct(Number(e.target.value))} style={{width:60,background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:8,padding:'8px 10px',fontSize:'0.8rem',outline:'none',textAlign:'center'}}/>
             </div>
-          ) : Object.keys(byLeague).sort().map(lg => (
-            <div key={lg} style={{ marginBottom: 32 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <div style={{ width: 3, height: 24, background: lc(lg), borderRadius: 3 }} />
-                <span style={{ fontSize: '1rem', fontWeight: 800, color: lc(lg) }}>{li(lg)} {lg}</span>
-                <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', background: `${lc(lg)}15`, padding: '2px 8px', borderRadius: 20, border: `1px solid ${lc(lg)}25` }}>{byLeague[lg].length} patterns</span>
-                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.04)' }} />
+            <button id="reload-patterns" onClick={loadLive} style={{background:`${GREEN}15`,border:`1px solid ${GREEN}40`,color:GREEN,borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:'0.8rem',fontWeight:700}}>↺ Reload</button>
+          </div>
+          <PatternList patterns={liveData?.patterns} loading={liveLoading} error={liveError} onReload={loadLive} isHistory={false}/>
+        </>)}
+
+        {/* HISTORY TAB */}
+        {tab==='history'&&(<>
+          <div style={{padding:'12px 16px',background:'rgba(255,215,0,0.04)',border:'1px solid rgba(255,215,0,0.15)',borderRadius:10,marginBottom:18}}>
+            <div style={{fontSize:'0.72rem',color:GOLD,fontWeight:700,marginBottom:4}}>📅 Historical Archive</div>
+            <div style={{fontSize:'0.76rem',color:'rgba(255,255,255,0.5)',lineHeight:1.6}}>Browse every past date's triggered patterns. Resolved entries show the actual outcome of the next match so you can verify accuracy over time.</div>
+          </div>
+          {histDates.length===0
+            ?<div style={{textAlign:'center',padding:'40px 0',color:'rgba(255,255,255,0.3)',fontSize:'0.85rem'}}>No historical snapshots yet. They are saved automatically as patterns trigger each day.</div>
+            :<>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
+                {histDates.map(d=>(
+                  <button key={d} onClick={()=>setHistDate(d)} style={{padding:'7px 16px',borderRadius:8,border:`1px solid ${d===histDate?GOLD:'rgba(255,255,255,0.1)'}`,background:d===histDate?`${GOLD}15`:'rgba(255,255,255,0.02)',color:d===histDate?GOLD:'rgba(255,255,255,0.5)',fontWeight:d===histDate?800:400,fontSize:'0.78rem',cursor:'pointer',transition:'all 0.2s'}}>
+                    {d}
+                  </button>
+                ))}
               </div>
-              {byLeague[lg].map((p, i) => <PatternCard key={`${p.score}-${p.role}-${i}`} pattern={p} idx={i} />)}
-            </div>
-          ));
-        })()}
+              <PatternList patterns={histPatterns} loading={histLoading} error={histError} onReload={()=>setHistDate(histDate)} isHistory={true}/>
+            </>
+          }
+        </>)}
+
+        {/* PERFORMANCE TAB */}
+        {tab==='performance'&&(<>
+          <div style={{padding:'12px 16px',background:'rgba(167,139,250,0.04)',border:'1px solid rgba(167,139,250,0.15)',borderRadius:10,marginBottom:18}}>
+            <div style={{fontSize:'0.72rem',color:PURPLE,fontWeight:700,marginBottom:4}}>📊 Pattern Performance Overview</div>
+            <div style={{fontSize:'0.76rem',color:'rgba(255,255,255,0.5)',lineHeight:1.6}}>Full accuracy breakdown across all resolved predictions. Outcomes are auto-resolved as new match results enter the database — no manual input needed.</div>
+          </div>
+          <PatternPerformance/>
+        </>)}
+
       </main>
-
-      <footer style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '20px 24px', textAlign: 'center', marginTop: 40 }}>
-        <p style={{ margin: 0, fontSize: '0.78rem', color: 'rgba(255,255,255,0.3)' }}>
-          Pattern Intelligence Engine · vFootball Terminal ·{' '}
-          <a href="/" style={{ color: PURPLE, textDecoration: 'none' }}>Back to Results</a>
-        </p>
+      <footer style={{borderTop:'1px solid rgba(255,255,255,0.06)',padding:'18px 24px',textAlign:'center',marginTop:32}}>
+        <p style={{margin:0,fontSize:'0.75rem',color:'rgba(255,255,255,0.25)'}}>Pattern Intelligence Engine · vFootball Terminal · <a href="/results" style={{color:PURPLE,textDecoration:'none'}}>Back to Results</a></p>
       </footer>
-
-      <style>{`@keyframes spin { 100% { transform: rotate(360deg); } } @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }`}</style>
+      <style>{`@keyframes spin{100%{transform:rotate(360deg)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
     </div>
   );
 }
