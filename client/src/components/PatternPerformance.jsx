@@ -15,7 +15,7 @@ function StatBox({label,value,color,sub}){
   );
 }
 
-function HitBar({rate,label,color}){
+function HitBar({rate,label}){
   const c=rate>=80?G:rate>=60?GOLD:rate>=40?O:R;
   return(
     <div style={{marginBottom:6}}>

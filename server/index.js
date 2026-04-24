@@ -3286,6 +3286,130 @@ Return ONLY the recommendation text, no formatting, no JSON, no preamble.
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/pattern-intel/upcoming-ai-analysis
+// Analyzes the best active patterns against real-time upcoming fixtures using AI.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
+    try {
+        console.log('[Upcoming AI] 🤖 Generating consolidated AI analysis for best upcoming fixtures...');
+        const minPct = 80;
+        
+        // 1. Fetch current active patterns
+        const port = process.env.PORT || 3001;
+        const patternRes = await fetch(`http://localhost:${port}/api/pattern-intel?minPct=${minPct}`);
+        const patternJson = await patternRes.json();
+        
+        if (!patternJson.success) throw new Error(patternJson.error || 'Failed to fetch pattern intel');
+        
+        let patterns = patternJson.patterns || [];
+        
+        // 2. Filter top patterns (must have elite outcomes > 80%)
+        patterns = patterns.filter(p => p.eliteOutcomes && p.eliteOutcomes.some(o => o.pct >= minPct));
+        
+        // Sort by highest probability outcome
+        patterns.sort((a, b) => {
+            const maxA = Math.max(...a.eliteOutcomes.map(o => o.pct));
+            const maxB = Math.max(...b.eliteOutcomes.map(o => o.pct));
+            return maxB - maxA;
+        });
+        
+        // 3. Cross-reference with globalData to find ACTUAL upcoming opponents
+        // globalData: [{ league, matches: [{ time, code, home, away, score }] }]
+        const upcomingMatches = [];
+        const topPatterns = patterns.slice(0, 15); // Don't check too many
+        
+        if (globalData && Array.isArray(globalData)) {
+            for (const pattern of topPatterns) {
+                // Find if this team is playing right now
+                for (const group of globalData) {
+                    if (group.league !== pattern.league && group.league !== pattern.league.replace(' - Virtual', '')) continue;
+                    
+                    const fixture = group.matches.find(m => m.home === pattern.team || m.away === pattern.team);
+                    if (fixture) {
+                        const isHome = fixture.home === pattern.team;
+                        upcomingMatches.push({
+                            pattern,
+                            fixture: {
+                                time: fixture.time,
+                                code: fixture.code,
+                                home: fixture.home,
+                                away: fixture.away,
+                                odds: fixture.score, // usually the odds string
+                                teamRole: isHome ? 'Home' : 'Away',
+                                opponent: isHome ? fixture.away : fixture.home
+                            }
+                        });
+                        break; // found the match, go to next pattern
+                    }
+                }
+            }
+        }
+        
+        // Take top 5 best upcoming matches
+        const finalMatches = upcomingMatches.slice(0, 5);
+        
+        if (finalMatches.length === 0) {
+            return res.json({ 
+                success: true, 
+                message: 'No elite patterns are currently playing in the immediate upcoming fixtures. Wait for the next round (in ~5 minutes).',
+                analyses: [] 
+            });
+        }
+        
+        // 4. Send to AI
+        const { callPredictionAI, getActivePredictionProvider, parseAIJson } = require('./prediction_ai');
+        const activeProvider = getActivePredictionProvider();
+        
+        const matchDataStr = finalMatches.map((m, i) => `
+MATCH ${i+1}:
+Team with Pattern: ${m.pattern.team} (${m.pattern.league})
+Upcoming Fixture: ${m.fixture.home} vs ${m.fixture.away} (Time: ${m.fixture.time})
+Odds string: ${m.fixture.odds}
+Pattern Trigger: Just played ending in ${m.pattern.score} as ${m.pattern.role}.
+Historical Next Match Outcomes (Sample: ${m.pattern.sampleSize}):
+${m.pattern.eliteOutcomes.map(o => `- ${o.label}: ${o.pct}% probability`).join('\n')}
+`).join('\n');
+
+        const prompt = \`
+You are an elite sports betting algorithmic analyst. 
+I am providing you with the top \${finalMatches.length} mathematically backed predictions for fixtures starting in the NEXT 5 MINUTES.
+Your task is to analyze these upcoming fixtures based on the historical pattern data.
+
+DATA:
+\${matchDataStr}
+
+INSTRUCTIONS:
+Return a JSON array of analysis objects. DO NOT return markdown blocks around the JSON, just the raw JSON array.
+Each object in the array must have the following keys:
+- "match": string (e.g. "Chelsea vs Arsenal")
+- "team": string (The team the pattern is about)
+- "pattern": string (Brief summary of the pattern trigger)
+- "signal": string (The highest probability outcome, e.g. "Win (85%)")
+- "analysis": string (A punchy 2-3 sentence expert explanation synthesizing the pattern against the specific opponent. Be extremely confident and professional.)
+- "confidence": number (A score out of 100 based on the probability)
+- "color": string (A hex color code representing the outcome type: e.g. Win=#00FF88, Goals=#00E5FF)
+\`;
+
+        const result = await callPredictionAI(prompt, activeProvider, {
+            temperature: 0.4,
+            maxTokens: 2000
+        });
+        
+        const analyses = parseAIJson(result.content);
+        
+        res.json({
+            success: true,
+            provider: activeProvider,
+            analyses: Array.isArray(analyses) ? analyses : [analyses]
+        });
+
+    } catch (err) {
+        console.error('[Upcoming AI] ❌ Error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/pattern-intel/save-snapshot
 // Called automatically when /api/pattern-intel runs — persists today's live
 // patterns into MongoDB so they can be browsed historically.

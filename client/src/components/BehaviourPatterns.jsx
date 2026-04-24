@@ -469,8 +469,8 @@ export default function BehaviourPatterns() {
   // ── Tab switch effects ───────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === 'streak') loadStreakProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     if (activeTab === 'history') loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, league]);
 
   const totalSignalCount = signals.reduce((s, f) => s + (f.signals?.length || 0), 0);
