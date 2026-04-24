@@ -426,7 +426,9 @@ function UpcomingAiAnalysis() {
             <div key={idx} style={{background:'rgba(10,15,30,0.8)',border:`1px solid ${item.color||PURPLE}40`,borderRadius:16,overflow:'hidden',boxShadow:`0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)`}}>
               <div style={{padding:'16px 20px',background:`linear-gradient(90deg, ${item.color||PURPLE}15, transparent)`,borderBottom:`1px solid rgba(255,255,255,0.05)`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <div>
-                  <div style={{fontSize:'0.7rem',color:item.color||PURPLE,fontWeight:800,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>{item.team} MATCH</div>
+                  <div style={{fontSize:'0.7rem',color:item.color||PURPLE,fontWeight:800,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>
+                    {item.team} MATCH {item.time && <span style={{marginLeft:8, color:'white', background:'rgba(255,255,255,0.15)', padding:'2px 6px', borderRadius:4, textTransform:'none'}}>🕒 {item.time}</span>}
+                  </div>
                   <div style={{fontSize:'1.1rem',fontWeight:900,color:'white'}}>{item.match}</div>
                 </div>
                 <div style={{background:`${item.color||PURPLE}20`,color:item.color||PURPLE,padding:'6px 12px',borderRadius:20,fontWeight:900,fontSize:'0.85rem',border:`1px solid ${item.color||PURPLE}50`}}>

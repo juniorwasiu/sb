@@ -3383,6 +3383,7 @@ INSTRUCTIONS:
 Return a JSON array of analysis objects. DO NOT return markdown blocks around the JSON, just the raw JSON array.
 Each object in the array must have the following keys:
 - "match": string (e.g. "Chelsea vs Arsenal")
+- "time": string (The match starting time from the data provided)
 - "team": string (The team the pattern is about)
 - "pattern": string (Brief summary of the pattern trigger)
 - "signal": string (The highest probability outcome, e.g. "Win (85%)")
