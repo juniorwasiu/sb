@@ -15,7 +15,7 @@ const path = require('path');
 // same return shape:  { matches: [...], totalPages: N }
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MODEL = 'claude-sonnet-4-6'; // Claude Sonnet 4.6 — best accuracy for tabular vision data
+const MODEL = 'claude-3-5-sonnet-20241022'; // Claude 3.5 Sonnet — best accuracy for tabular vision data
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CORE EXTRACTION — screenshot → Claude Vision → Firebase
