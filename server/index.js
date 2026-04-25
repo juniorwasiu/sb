@@ -3398,13 +3398,21 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             }
 
             const isHome = foundFixture.home?.includes(pattern.team) || pattern.team.includes(foundFixture.home);
-            const displayTime = foundFixture.time ? `${foundFixture.time} (LIVE)` : 'LIVE';
+            
+            let displayTime = 'LIVE';
+            if (foundFixture.status === 'IN-PLAY') {
+                displayTime = foundFixture.time ? `${foundFixture.time} (IN-PLAY)` : 'IN-PLAY';
+            } else if (foundFixture.status === 'UPCOMING') {
+                displayTime = foundFixture.time ? `${foundFixture.time} (Next)` : 'Next Match';
+            } else {
+                displayTime = foundFixture.time ? `${foundFixture.time} (LIVE)` : 'LIVE';
+            }
 
             upcomingMatches.push({
                 pattern,
                 fixture: {
                     time: displayTime,
-                    code: foundFixture.code,
+                    code: foundFixture.code || '',
                     home: foundFixture.home,
                     away: foundFixture.away,
                     odds: foundFixture.score,

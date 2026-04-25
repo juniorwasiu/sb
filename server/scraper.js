@@ -555,40 +555,86 @@ async function scrapeLiveListOnDemand() {
         await page.goto('https://www.sportybet.com/ng/m/sport/vFootball/live_list', { waitUntil: 'domcontentloaded', timeout: 15000 });
         
         // Wait for JS framework to render the matches
-        await new Promise(r => setTimeout(r, 2500));
+        await page.waitForSelector('.m-league, .m-live-upcoming', { timeout: 8000 }).catch(() => console.log('[Live Scraper OnDemand] Timed out waiting for matches to render'));
+        await new Promise(r => setTimeout(r, 1000)); // Brief pause to ensure all React child components finished hydrating
         
-        const content = await page.evaluate(() => document.body.innerText);
-        const lines = content.split('\n');
-        const grouped = {};
-        
-        let currentLeague = 'vFootball Live';
-        
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i]?.trim() ?? '';
+        const results = await page.evaluate(() => {
+            const groups = [];
             
-            // Try to detect league headers
-            if (line.includes('England - Virtual')) currentLeague = 'England - Virtual';
-            if (line.includes('Spain - Virtual')) currentLeague = 'Spain - Virtual';
-            if (line.includes('Italy - Virtual')) currentLeague = 'Italy - Virtual';
-            if (line.includes('Germany - Virtual')) currentLeague = 'Germany - Virtual';
-            if (line.includes('France - Virtual')) currentLeague = 'France - Virtual';
-
-            if (line.startsWith('ID ')) {
-                const code = line.replace('ID ', '').trim();
-                const time = lines[i - 1]?.trim() || '--:--';
-                const league = lines[i + 1]?.trim() || currentLeague;
-                const home = lines[i + 2]?.trim() || 'TBD';
-                const away = lines[i + 3]?.trim() || 'TBD';
-                const odd1 = lines[i + 4]?.trim() || '-';
-                const oddX = lines[i + 5]?.trim() || '-';
-                const odd2 = lines[i + 6]?.trim() || '-';
+            // 1. Parse main live leagues (In-Play matches)
+            const leagueNodes = document.querySelectorAll('.m-league');
+            leagueNodes.forEach(leagueNode => {
+                const titleNode = leagueNode.querySelector('.m-league-title .text');
+                if (!titleNode) return;
+                const leagueName = titleNode.innerText.trim();
                 
-                if (!grouped[league]) grouped[league] = [];
-                grouped[league].push({ time, code, home, away, score: `1(${odd1}) X(${oddX}) 2(${odd2})` });
+                const matches = [];
+                const matchBlocks = leagueNode.querySelectorAll('div[data-key]');
+                
+                matchBlocks.forEach(block => {
+                    const timeNode = block.querySelector('.m-event-time');
+                    const timeStr = timeNode ? timeNode.innerText.trim() : '';
+                    const teams = block.querySelectorAll('.m-info-cell .team');
+                    const scores = block.querySelectorAll('.set-score');
+                    const oddsNodes = block.querySelectorAll('.m-odds-value');
+                    
+                    if (teams.length >= 2) {
+                        matches.push({
+                            status: 'IN-PLAY',
+                            time: timeStr,
+                            home: teams[0].innerText.trim(),
+                            away: teams[1].innerText.trim(),
+                            homeScore: scores.length >= 1 ? scores[0].innerText.trim() : '',
+                            awayScore: scores.length >= 2 ? scores[1].innerText.trim() : '',
+                            score: Array.from(oddsNodes).map(n => n.innerText.trim()).join(' ') // Keep odds as 'score' field to maintain backward compatibility
+                        });
+                    }
+                });
+                
+                if (matches.length > 0) {
+                    groups.push({ league: leagueName, matches });
+                }
+            });
+            
+            // 2. Parse Upcoming Live section
+            const upcomingLiveSection = document.querySelector('.m-live-upcoming');
+            if (upcomingLiveSection) {
+                const rows = upcomingLiveSection.querySelectorAll('.m-sports-row');
+                const upcomingMatches = [];
+                
+                rows.forEach(row => {
+                    const preTimeNode = row.querySelector('.m-time');
+                    const gameIdNode = row.querySelector('.m-game-id');
+                    const lgNode = row.querySelector('.m-league-name');
+                    const teams = row.querySelectorAll('.m-info-cell .team');
+                    const oddsNodes = row.querySelectorAll('.m-odds-value');
+                    
+                    if (teams.length >= 2) {
+                        upcomingMatches.push({
+                            status: 'UPCOMING',
+                            league: lgNode ? lgNode.innerText.trim() : 'Unknown',
+                            time: preTimeNode ? preTimeNode.innerText.trim() : '',
+                            code: gameIdNode ? gameIdNode.innerText.trim().replace('ID ', '') : '',
+                            home: teams[0].innerText.trim(),
+                            away: teams[1].innerText.trim(),
+                            score: Array.from(oddsNodes).map(n => n.innerText.trim()).join(' ')
+                        });
+                    }
+                });
+                
+                const map = {};
+                upcomingMatches.forEach(m => {
+                    if (!map[m.league]) map[m.league] = [];
+                    map[m.league].push(m);
+                });
+                
+                Object.keys(map).forEach(lg => {
+                    groups.push({ league: lg + ' (Upcoming)', matches: map[lg] });
+                });
             }
-        }
-        
-        const results = Object.keys(grouped).map(league => ({ league, matches: grouped[league] }));
+            
+            return groups;
+        });
         console.log(`[Live Scraper OnDemand] Successfully scraped ${results.reduce((acc, curr) => acc + curr.matches.length, 0)} live matches across ${results.length} leagues.`);
         return results;
         
