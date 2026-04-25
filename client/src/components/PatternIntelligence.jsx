@@ -500,6 +500,12 @@ function UpcomingAiAnalysis({ minPct = 70 }) {
                   </div>
                   <div style={{fontSize:'0.8rem',fontWeight:800,color:item.color||PURPLE}}>{item.confidence}% Confidence</div>
                 </div>
+                {item.sampleSize && (
+                  <div style={{marginTop:10,display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:'rgba(255,255,255,0.04)',borderRadius:8,border:'1px solid rgba(255,255,255,0.08)'}}>
+                    <span style={{fontSize:'0.75rem',color:'rgba(255,255,255,0.35)'}}>📊 Pattern based on</span>
+                    <span style={{fontSize:'0.8rem',fontWeight:800,color:NEON}}>{item.sampleSize} historical matches</span>
+                  </div>
+                )}
               </div>
             </div>
           ))}

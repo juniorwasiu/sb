@@ -3498,12 +3498,26 @@ Each object in the array must have the following keys:
             maxTokens: 2000
         });
         
-        const analyses = parseAIJson(result.content);
+        const rawAnalyses = parseAIJson(result.content);
+        const analysesArr = Array.isArray(rawAnalyses) ? rawAnalyses : [rawAnalyses];
+        
+        // Merge pattern metadata (sampleSize, league) back into each AI analysis item
+        const analyses = analysesArr.map(item => {
+            const source = enhancedMatches.find(m =>
+                m.pattern.team === item.team || (item.match && item.match.includes(m.pattern.team))
+            );
+            return {
+                ...item,
+                sampleSize: source?.pattern?.sampleSize || null,
+                league: item.league || source?.pattern?.league || null,
+                time: item.time || source?.fixture?.time || null,
+            };
+        });
         
         res.json({
             success: true,
             provider: activeProvider,
-            analyses: Array.isArray(analyses) ? analyses : [analyses]
+            analyses
         });
 
     } catch (err) {
