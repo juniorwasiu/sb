@@ -355,7 +355,7 @@ function PatternList({patterns,loading,error,onReload,isHistory,flatMode}){
   );
 }
 
-function UpcomingAiAnalysis() {
+function UpcomingAiAnalysis({ minPct = 70 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -623,7 +623,7 @@ export default function PatternIntelligence(){
 
         {/* UPCOMING AI TAB */}
         {tab==='upcoming-ai'&&(
-          <UpcomingAiAnalysis />
+          <UpcomingAiAnalysis minPct={minPct} />
         )}
 
         {/* HISTORY TAB */}
