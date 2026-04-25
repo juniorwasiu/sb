@@ -3315,50 +3315,64 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
         
         // 3. Cross-reference with live list to find ACTUAL currently playing opponents
         // live matches are the true immediate "next" matches for teams that just triggered a pattern.
-        let currentLiveGames = await scrapeLiveListOnDemand();
-        let isFromLiveList = true;
-        
-        // If live games are empty or unavailable, fallback to upcoming globalData
-        if (!currentLiveGames || currentLiveGames.length === 0) {
-            console.log('[Upcoming AI] Live list is empty, falling back to upcoming betslip data...');
-            currentLiveGames = globalData;
-            isFromLiveList = false;
-        } else {
-            console.log(`[Upcoming AI] Found live games on live_list! Prioritising these as the true next match.`);
-        }
+        const liveListGames = await scrapeLiveListOnDemand();
+        const upcomingGames = globalData || [];
 
         const upcomingMatches = [];
         const topPatterns = patterns.slice(0, 15); // Don't check too many
         
-        if (currentLiveGames && Array.isArray(currentLiveGames)) {
-            for (const pattern of topPatterns) {
-                // Find if this team is playing right now
-                for (const group of currentLiveGames) {
+        for (const pattern of topPatterns) {
+            let foundFixture = null;
+            let isFromLiveList = false;
+
+            // First check liveListGames
+            if (liveListGames && Array.isArray(liveListGames) && liveListGames.length > 0) {
+                for (const group of liveListGames) {
                     const pCountry = pattern.league.split(' ')[0];
                     if (group.league !== pattern.league && group.league !== 'vFootball Live Odds' && group.league !== 'vFootball Live' && (!group.league || !group.league.includes(pCountry))) continue;
                     
                     const fixture = group.matches.find(m => m.home?.includes(pattern.team) || m.away?.includes(pattern.team) || pattern.team.includes(m.home) || pattern.team.includes(m.away));
                     if (fixture) {
-                        const isHome = fixture.home?.includes(pattern.team) || pattern.team.includes(fixture.home);
-                        const displayTime = isFromLiveList 
-                            ? (fixture.time ? `${fixture.time} (LIVE)` : 'LIVE') 
-                            : (fixture.time || 'Upcoming');
-                            
-                        upcomingMatches.push({
-                            pattern,
-                            fixture: {
-                                time: displayTime,
-                                code: fixture.code,
-                                home: fixture.home,
-                                away: fixture.away,
-                                odds: fixture.score, // usually the odds string
-                                teamRole: isHome ? 'Home' : 'Away',
-                                opponent: isHome ? fixture.away : fixture.home
-                            }
-                        });
-                        break; // found the match, go to next pattern
+                        foundFixture = fixture;
+                        isFromLiveList = true;
+                        break;
                     }
                 }
+            }
+
+            // If not found in liveListGames, fallback to upcomingGames (globalData)
+            if (!foundFixture && upcomingGames && Array.isArray(upcomingGames)) {
+                for (const group of upcomingGames) {
+                    const pCountry = pattern.league.split(' ')[0];
+                    if (group.league !== pattern.league && group.league !== 'vFootball Live Odds' && group.league !== 'vFootball Live' && (!group.league || !group.league.includes(pCountry))) continue;
+                    
+                    const fixture = group.matches.find(m => m.home?.includes(pattern.team) || m.away?.includes(pattern.team) || pattern.team.includes(m.home) || pattern.team.includes(m.away));
+                    if (fixture) {
+                        foundFixture = fixture;
+                        isFromLiveList = false;
+                        break;
+                    }
+                }
+            }
+
+            if (foundFixture) {
+                const isHome = foundFixture.home?.includes(pattern.team) || pattern.team.includes(foundFixture.home);
+                const displayTime = isFromLiveList 
+                    ? (foundFixture.time ? `${foundFixture.time} (LIVE)` : 'LIVE') 
+                    : (foundFixture.time || 'Upcoming');
+                    
+                upcomingMatches.push({
+                    pattern,
+                    fixture: {
+                        time: displayTime,
+                        code: foundFixture.code,
+                        home: foundFixture.home,
+                        away: foundFixture.away,
+                        odds: foundFixture.score, // usually the odds string
+                        teamRole: isHome ? 'Home' : 'Away',
+                        opponent: isHome ? foundFixture.away : foundFixture.home
+                    }
+                });
             }
         }
         
@@ -3401,6 +3415,7 @@ Each object in the array must have the following keys:
 - "match": string (e.g. "Chelsea vs Arsenal")
 - "time": string (The match starting time from the data provided)
 - "team": string (The team the pattern is about)
+- "league": string (The league name provided in the data, e.g. "England - Virtual")
 - "pattern": string (Brief summary of the pattern trigger)
 - "signal": string (The highest probability outcome, e.g. "Win (85%)")
 - "analysis": string (A punchy 2-3 sentence expert explanation synthesizing the pattern against the specific opponent. Be extremely confident and professional.)
