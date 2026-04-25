@@ -3323,11 +3323,11 @@ Return ONLY the recommendation text, no formatting, no JSON, no preamble.
 app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
     try {
         console.log('[Upcoming AI] 🤖 Generating consolidated AI analysis for best upcoming fixtures...');
-        const minPct = 80;
+        const minPct = 70;
         
         // 1. Fetch current active patterns
         const port = process.env.PORT || 3001;
-        const patternRes = await fetch(`http://localhost:${port}/api/pattern-intel?minPct=${minPct}`);
+        const patternRes = await fetch(`http://localhost:${port}/api/pattern-intel?minPct=${minPct}&minSamples=20`);
         const patternJson = await patternRes.json();
         
         if (!patternJson.success) throw new Error(patternJson.error || 'Failed to fetch pattern intel');
@@ -3436,9 +3436,21 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
         
         // 4. Send to AI
         const { callPredictionAI, getActivePredictionProvider, parseAIJson } = require('./prediction_ai');
+        const { computeTeamForm, getLeagueBaseline } = require('./db_reader');
+        const { getLeagueIntelligence } = require('./ai_memory');
         const activeProvider = getActivePredictionProvider();
         
-        const matchDataStr = finalMatches.map((m, i) => `
+        // Fetch team form and league DNA for each match concurrently
+        const enhancedMatches = await Promise.all(finalMatches.map(async (m) => {
+            const [teamForm, leagueBaseline, leagueIntel] = await Promise.all([
+                computeTeamForm(m.pattern.league, m.pattern.team),
+                getLeagueBaseline(m.pattern.league),
+                getLeagueIntelligence(m.pattern.league)
+            ]);
+            return { ...m, teamForm, leagueBaseline, leagueIntel };
+        }));
+        
+        const matchDataStr = enhancedMatches.map((m, i) => `
 MATCH ${i+1}:
 Team with Pattern: ${m.pattern.team} (${m.pattern.league})
 Upcoming Fixture: ${m.fixture.home} vs ${m.fixture.away} (Time: ${m.fixture.time})
@@ -3446,6 +3458,17 @@ Odds string: ${m.fixture.odds}
 Pattern Trigger: Just played ending in ${m.pattern.score} as ${m.pattern.role}.
 Historical Next Match Outcomes (Sample: ${m.pattern.sampleSize}):
 ${m.pattern.eliteOutcomes.map(o => `- ${o.label}: ${o.pct}% probability`).join('\n')}
+
+CURRENT TEAM FORM (LAST 10 MATCHES):
+Streak: ${m.teamForm?.streak || 'N/A'}
+Win Rate: ${m.teamForm?.matchesAnalysed ? Math.round((m.teamForm.wins/m.teamForm.matchesAnalysed)*100) : 0}% (W${m.teamForm?.wins || 0} D${m.teamForm?.draws || 0} L${m.teamForm?.losses || 0})
+Avg Goals Scored: ${m.teamForm?.goalsScored || 0} / Avg Conceded: ${m.teamForm?.goalsConceded || 0}
+Over 2.5 Hit Rate: ${m.teamForm?.over2_5_percent || 0}% / BTTS Hit Rate: ${m.teamForm?.btts_percent || 0}%
+
+LEAGUE DNA & TACTICAL INTELLIGENCE:
+League Baseline Avg Goals: ${m.leagueBaseline?.stats?.avgGoals || 'N/A'}
+League Over 2.5 Rate: ${m.leagueBaseline?.stats?.over2_5Percent || 'N/A'}%
+AI Tactical Intel: ${m.leagueIntel?.tacticalSummary || 'No tactical intel available.'}
 `).join('\n');
 
         const prompt = `

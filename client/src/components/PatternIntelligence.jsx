@@ -406,7 +406,7 @@ function UpcomingAiAnalysis() {
         <div>
           <div style={{fontSize:'0.8rem',color:PURPLE,fontWeight:800,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:6}}>🤖 Live Upcoming Fixture AI</div>
           <div style={{fontSize:'0.85rem',color:'rgba(255,255,255,0.6)',lineHeight:1.5,maxWidth:600}}>
-            Cross-references the most elite historical patterns (&gt;80% accuracy) with the <strong>immediate upcoming betslip fixtures</strong>. Generates a consolidated expert analysis for the games starting in the next 5 minutes.
+            Cross-references the most elite historical patterns (&gt;{minPct}% accuracy) with the <strong>immediate upcoming betslip fixtures</strong>. Generates a consolidated expert analysis for the games starting in the next 5 minutes.
           </div>
         </div>
         <div style={{display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
@@ -514,7 +514,7 @@ export default function PatternIntelligence(){
   const [liveData,setLiveData]=useState(null);
   const [liveLoading,setLiveLoading]=useState(true);
   const [liveError,setLiveError]=useState(null);
-  const [minPct,setMinPct]=useState(80);
+  const [minPct,setMinPct]=useState(70);
   const [leagueFilter,setLeagueFilter]=useState('');
   const [histDates,setHistDates]=useState([]);
   const [histDate,setHistDate]=useState('');
@@ -524,7 +524,7 @@ export default function PatternIntelligence(){
 
   const loadLive=useCallback(async()=>{
     setLiveLoading(true);setLiveError(null);
-    const params=new URLSearchParams({minPct,minSamples:3});
+    const params=new URLSearchParams({minPct,minSamples:20});
     if(leagueFilter)params.set('league',leagueFilter);
     console.log('[PatternIntel] 🔍 Fetching live patterns...',params.toString());
     try{
@@ -614,7 +614,7 @@ export default function PatternIntelligence(){
             </select>
             <div style={{display:'flex',alignItems:'center',gap:8}}>
               <span style={{fontSize:'0.75rem',color:'rgba(255,255,255,0.5)'}}>Min %:</span>
-              <input id="min-pct" type="number" value={minPct} min={70} max={100} onChange={e=>setMinPct(Number(e.target.value))} style={{width:60,background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:8,padding:'8px 10px',fontSize:'0.8rem',outline:'none',textAlign:'center'}}/>
+              <input id="min-pct" type="number" value={minPct} min={60} max={100} onChange={e=>setMinPct(Number(e.target.value))} style={{width:60,background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:8,padding:'8px 10px',fontSize:'0.8rem',outline:'none',textAlign:'center'}}/>
             </div>
             <button id="reload-patterns" onClick={loadLive} style={{background:`${GREEN}15`,border:`1px solid ${GREEN}40`,color:GREEN,borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:'0.8rem',fontWeight:700}}>↺ Reload</button>
           </div>
