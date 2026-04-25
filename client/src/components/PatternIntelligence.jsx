@@ -359,6 +359,21 @@ function UpcomingAiAnalysis() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isReloadingScraper, setIsReloadingScraper] = useState(false);
+
+  const handleReloadScraper = useCallback(async () => {
+    if (isReloadingScraper) return;
+    setIsReloadingScraper(true);
+    console.log('[PatternIntel] 🔄 Manual Scraper Reload triggered by user.');
+    try {
+      const res = await fetch('/api/scraper/reload', { method: 'POST' });
+      const json = await res.json();
+      console.log('[PatternIntel] ✅ Scraper Reload response:', json.success ? 'OK' : json.error);
+    } catch (err) {
+      console.error('[PatternIntel] ❌ Scraper Reload error:', err.message);
+    }
+    setTimeout(() => setIsReloadingScraper(false), 3000);
+  }, [isReloadingScraper]);
 
   const fetchAnalysis = async (isPolling = false) => {
     if (!isPolling) setLoading(true);
@@ -394,9 +409,26 @@ function UpcomingAiAnalysis() {
             Cross-references the most elite historical patterns (&gt;80% accuracy) with the <strong>immediate upcoming betslip fixtures</strong>. Generates a consolidated expert analysis for the games starting in the next 5 minutes.
           </div>
         </div>
-        <button onClick={() => fetchAnalysis(false)} disabled={loading} style={{padding:'12px 24px',background:loading?`rgba(255,255,255,0.1)`:`linear-gradient(135deg, ${PURPLE}30, ${NEON}30)`,border:`1px solid ${PURPLE}50`,borderRadius:8,color:'white',fontWeight:800,fontSize:'0.9rem',cursor:loading?'not-allowed':'pointer',boxShadow:`0 0 20px ${PURPLE}20`,transition:'all 0.3s'}}>
-          {loading ? '⏳ Generating AI Analysis...' : '✨ Force Refresh'}
-        </button>
+        <div style={{display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
+          <button onClick={handleReloadScraper} disabled={isReloadingScraper} style={{
+              background: 'rgba(255,51,85,0.08)',
+              border: `1px solid ${isReloadingScraper ? RED : 'rgba(255,51,85,0.3)'}`,
+              color: isReloadingScraper ? GOLD : RED,
+              borderRadius: 8, padding: '12px 16px',
+              fontSize: '0.85rem', cursor: isReloadingScraper ? 'not-allowed' : 'pointer', fontWeight: 700,
+              transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 6,
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,51,85,0.2)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,51,85,0.08)'}
+          >
+            <span style={{ display: 'inline-block', animation: isReloadingScraper ? 'spin 1.5s linear infinite' : 'none' }}>⚡</span>
+            {isReloadingScraper ? 'Rebooting...' : 'Reload Scraper'}
+          </button>
+          
+          <button onClick={() => fetchAnalysis(false)} disabled={loading} style={{padding:'12px 24px',background:loading?`rgba(255,255,255,0.1)`:`linear-gradient(135deg, ${PURPLE}30, ${NEON}30)`,border:`1px solid ${PURPLE}50`,borderRadius:8,color:'white',fontWeight:800,fontSize:'0.9rem',cursor:loading?'not-allowed':'pointer',boxShadow:`0 0 20px ${PURPLE}20`,transition:'all 0.3s'}}>
+            {loading ? '⏳ Generating AI Analysis...' : '✨ Force Refresh'}
+          </button>
+        </div>
       </div>
 
       {error && (

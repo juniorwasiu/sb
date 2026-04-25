@@ -3313,77 +3313,85 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             return maxB - maxA;
         });
         
-        // 3. Cross-reference with live list to find ACTUAL currently playing opponents
-        // live matches are the true immediate "next" matches for teams that just triggered a pattern.
+        // 3. Cross-reference STRICTLY with the live list.
+        // Patterns are derived from completed results — the "next match" for each pattern
+        // team MUST be what is currently live. We never fall back to upcoming/betslip fixtures
+        // (globalData) because those haven't started yet and would give wrong predictions.
         const liveListGames = await scrapeLiveListOnDemand();
-        const upcomingGames = globalData || [];
+        const liveMatchCount = liveListGames.reduce((acc, g) => acc + (g.matches?.length || 0), 0);
+        console.log(`[Upcoming AI] Live list scraped: ${liveListGames.length} league groups, ${liveMatchCount} total live matches.`);
+
+        if (!liveListGames || liveListGames.length === 0 || liveMatchCount === 0) {
+            console.log('[Upcoming AI] Live list is empty — waiting for next match round.');
+            return res.json({
+                success: true,
+                message: 'The live list is empty right now. Waiting for the next match round to start (usually within 5 minutes).',
+                analyses: []
+            });
+        }
 
         const upcomingMatches = [];
         const topPatterns = patterns.slice(0, 15); // Don't check too many
-        
+
         for (const pattern of topPatterns) {
             let foundFixture = null;
-            let isFromLiveList = false;
 
-            // First check liveListGames
-            if (liveListGames && Array.isArray(liveListGames) && liveListGames.length > 0) {
-                for (const group of liveListGames) {
-                    const pCountry = pattern.league.split(' ')[0];
-                    if (group.league !== pattern.league && group.league !== 'vFootball Live Odds' && group.league !== 'vFootball Live' && (!group.league || !group.league.includes(pCountry))) continue;
-                    
-                    const fixture = group.matches.find(m => m.home?.includes(pattern.team) || m.away?.includes(pattern.team) || pattern.team.includes(m.home) || pattern.team.includes(m.away));
-                    if (fixture) {
-                        foundFixture = fixture;
-                        isFromLiveList = true;
-                        break;
-                    }
+            // STRICTLY search the live list only — no globalData fallback
+            for (const group of liveListGames) {
+                const pCountry = pattern.league.split(' ')[0];
+                // Match by exact league name, or by the country prefix (e.g. "England"), or catch-all virtual groups
+                if (
+                    group.league !== pattern.league &&
+                    group.league !== 'vFootball Live Odds' &&
+                    group.league !== 'vFootball Live' &&
+                    (!group.league || !group.league.includes(pCountry))
+                ) continue;
+
+                const fixture = group.matches.find(m =>
+                    m.home?.includes(pattern.team) ||
+                    m.away?.includes(pattern.team) ||
+                    pattern.team.includes(m.home) ||
+                    pattern.team.includes(m.away)
+                );
+
+                if (fixture) {
+                    foundFixture = fixture;
+                    console.log(`[Upcoming AI] ✅ Pattern team "${pattern.team}" (${pattern.league}) is LIVE: ${fixture.home} vs ${fixture.away}`);
+                    break;
                 }
             }
 
-            // If not found in liveListGames, fallback to upcomingGames (globalData)
-            if (!foundFixture && upcomingGames && Array.isArray(upcomingGames)) {
-                for (const group of upcomingGames) {
-                    const pCountry = pattern.league.split(' ')[0];
-                    if (group.league !== pattern.league && group.league !== 'vFootball Live Odds' && group.league !== 'vFootball Live' && (!group.league || !group.league.includes(pCountry))) continue;
-                    
-                    const fixture = group.matches.find(m => m.home?.includes(pattern.team) || m.away?.includes(pattern.team) || pattern.team.includes(m.home) || pattern.team.includes(m.away));
-                    if (fixture) {
-                        foundFixture = fixture;
-                        isFromLiveList = false;
-                        break;
-                    }
-                }
+            if (!foundFixture) {
+                console.log(`[Upcoming AI] ⏳ Pattern team "${pattern.team}" (${pattern.league}) not found in live list — skipping this round.`);
+                continue; // This team isn't playing yet — skip, don't pollute analysis
             }
 
-            if (foundFixture) {
-                const isHome = foundFixture.home?.includes(pattern.team) || pattern.team.includes(foundFixture.home);
-                const displayTime = isFromLiveList 
-                    ? (foundFixture.time ? `${foundFixture.time} (LIVE)` : 'LIVE') 
-                    : (foundFixture.time || 'Upcoming');
-                    
-                upcomingMatches.push({
-                    pattern,
-                    fixture: {
-                        time: displayTime,
-                        code: foundFixture.code,
-                        home: foundFixture.home,
-                        away: foundFixture.away,
-                        odds: foundFixture.score, // usually the odds string
-                        teamRole: isHome ? 'Home' : 'Away',
-                        opponent: isHome ? foundFixture.away : foundFixture.home
-                    }
-                });
-            }
+            const isHome = foundFixture.home?.includes(pattern.team) || pattern.team.includes(foundFixture.home);
+            const displayTime = foundFixture.time ? `${foundFixture.time} (LIVE)` : 'LIVE';
+
+            upcomingMatches.push({
+                pattern,
+                fixture: {
+                    time: displayTime,
+                    code: foundFixture.code,
+                    home: foundFixture.home,
+                    away: foundFixture.away,
+                    odds: foundFixture.score,
+                    teamRole: isHome ? 'Home' : 'Away',
+                    opponent: isHome ? foundFixture.away : foundFixture.home
+                }
+            });
         }
-        
-        // Take top 5 best upcoming matches
+
+        // Take top 5 best live matches
         const finalMatches = upcomingMatches.slice(0, 5);
-        
+        console.log(`[Upcoming AI] ${finalMatches.length} live pattern matches found for AI analysis.`);
+
         if (finalMatches.length === 0) {
-            return res.json({ 
-                success: true, 
-                message: 'No elite patterns are currently playing in the immediate upcoming fixtures. Wait for the next round (in ~5 minutes).',
-                analyses: [] 
+            return res.json({
+                success: true,
+                message: 'None of the elite pattern teams are currently live. The live list is active but no pattern team is playing right now — check back in a few minutes.',
+                analyses: []
             });
         }
         
