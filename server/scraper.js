@@ -552,6 +552,7 @@ async function scrapeLiveListOnDemand() {
     try {
         console.log('[Live Scraper OnDemand] Opening new page for live_list...');
         page = await _scraperCtrl.browser.newPage();
+        await page.setViewport({ width: 1366, height: 8000 });
         await page.goto('https://www.sportybet.com/ng/m/sport/vFootball/live_list', { waitUntil: 'domcontentloaded', timeout: 15000 });
         
         // Wait for JS framework to render the matches
