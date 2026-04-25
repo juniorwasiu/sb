@@ -554,6 +554,9 @@ async function scrapeLiveListOnDemand() {
         page = await _scraperCtrl.browser.newPage();
         await page.goto('https://www.sportybet.com/ng/m/sport/vFootball/live_list', { waitUntil: 'domcontentloaded', timeout: 15000 });
         
+        // Wait for JS framework to render the matches
+        await new Promise(r => setTimeout(r, 2500));
+        
         const content = await page.evaluate(() => document.body.innerText);
         const lines = content.split('\n');
         const grouped = {};
