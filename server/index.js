@@ -3334,23 +3334,59 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
         
         let patterns = patternJson.patterns || [];
         
-        // 2. Filter top patterns (must have elite outcomes > 80%)
+        // ── Filter: must have at least one outcome >= minPct ─────────────────
         patterns = patterns.filter(p => p.eliteOutcomes && p.eliteOutcomes.some(o => o.pct >= minPct));
         
-        // Sort by highest probability outcome
+        // ── Sort by strongest probability outcome ─────────────────────────────
         patterns.sort((a, b) => {
             const maxA = Math.max(...a.eliteOutcomes.map(o => o.pct));
             const maxB = Math.max(...b.eliteOutcomes.map(o => o.pct));
             return maxB - maxA;
         });
-        
-        // 3. Cross-reference STRICTLY with the live list.
-        // Patterns are derived from completed results — the "next match" for each pattern
-        // team MUST be what is currently live. We never fall back to upcoming/betslip fixtures
-        // (globalData) because those haven't started yet and would give wrong predictions.
+
+        // ── FIX 1: TRIGGER CHECK — only keep patterns whose trigger is ACTIVE ─
+        // A trigger is "active" only if the team's most recent completed match
+        // in the DB matches the pattern's trigger score AND role exactly.
+        const { getCachedDocs, parseDDMMYYYY } = require('./db_reader');
+        const allDocs = await getCachedDocs();
+
+        function isTriggerActive(pattern) {
+            const teamMatches = allDocs.filter(m =>
+                m.league === pattern.league &&
+                (m.homeTeam === pattern.team || m.awayTeam === pattern.team) &&
+                m.score && /^\d+[:\-]\d+$/.test(m.score.trim())
+            );
+            if (teamMatches.length === 0) return false;
+
+            // Sort newest first
+            teamMatches.sort((a, b) => {
+                const pa = parseDDMMYYYY(a.date) || new Date(0);
+                const pb = parseDDMMYYYY(b.date) || new Date(0);
+                return pb - pa;
+            });
+
+            const lastMatch = teamMatches[0];
+            const lastScore = lastMatch.score.replace('-', ':').trim();
+            const lastRole  = lastMatch.homeTeam === pattern.team ? 'Home' : 'Away';
+
+            const isActive = lastScore === pattern.score && lastRole === pattern.role;
+            if (isActive) {
+                console.log(`[Upcoming AI] 🎯 Trigger ACTIVE: ${pattern.team} (${pattern.league}) — last played ${lastScore} as ${lastRole}`);
+            }
+            return isActive;
+        }
+
+        const activePatterns = patterns.filter(isTriggerActive);
+        console.log(`[Upcoming AI] Trigger check: ${activePatterns.length} / ${patterns.length} patterns are currently triggered.`);
+
+        // If no triggers are active (between rounds), fall back to all elite patterns
+        // so the AI still has something useful to say
+        const patternsToSearch = activePatterns.length > 0 ? activePatterns : patterns;
+
+        // ── FIX 2: Scrape live list ───────────────────────────────────────────
         const liveListGames = await scrapeLiveListOnDemand();
         const liveMatchCount = liveListGames.reduce((acc, g) => acc + (g.matches?.length || 0), 0);
-        console.log(`[Upcoming AI] Live list scraped: ${liveListGames.length} league groups, ${liveMatchCount} total live matches.`);
+        console.log(`[Upcoming AI] Live list scraped: ${liveListGames.length} league groups, ${liveMatchCount} total matches.`);
 
         if (!liveListGames || liveListGames.length === 0 || liveMatchCount === 0) {
             console.log('[Upcoming AI] Live list is empty — waiting for next match round.');
@@ -3361,57 +3397,117 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             });
         }
 
+        // ── FIX 3: Helper — parse in-play minute from time string ─────────────
+        const MAX_INPLAY_MINUTE = 9;
+        function getInPlayMinute(timeStr) {
+            if (!timeStr) return null;
+            const m = String(timeStr).match(/(\d+)/);
+            return m ? parseInt(m[1], 10) : null;
+        }
+
+        // ── FIX 4: Team name fuzzy match (handles abbreviations + full names) ──
+        function teamsMatch(patternTeam, fixtureTeam) {
+            if (!patternTeam || !fixtureTeam) return false;
+            const a = patternTeam.toLowerCase().trim();
+            const b = fixtureTeam.toLowerCase().trim();
+            return a === b || a.includes(b) || b.includes(a);
+        }
+
+        // ── FIX 5: Cross-reference with priority: IN-PLAY 0–9 first, UPCOMING fallback ──
+        // League is secondary — if no league match, we search ALL groups by team name.
         const upcomingMatches = [];
-        const topPatterns = patterns.slice(0, 15); // Don't check too many
 
-        for (const pattern of topPatterns) {
+        // FIX 6: Check ALL active triggered patterns (no artificial 15-cap)
+        for (const pattern of patternsToSearch) {
             let foundFixture = null;
+            let foundStatus  = null;
 
-            // STRICTLY search the live list only — no globalData fallback
-            for (const group of liveListGames) {
-                const pCountry = pattern.league.split(' ')[0];
-                // Match by exact league name, or by the country prefix (e.g. "England"), or catch-all virtual groups
-                if (
-                    group.league !== pattern.league &&
-                    group.league !== 'vFootball Live Odds' &&
-                    group.league !== 'vFootball Live' &&
-                    (!group.league || !group.league.includes(pCountry))
-                ) continue;
+            // PASS 1: Look for IN-PLAY match in minute 0–MAX_INPLAY_MINUTE
+            // First try same league, then fall back to all groups
+            const passOneGroups = [
+                ...liveListGames.filter(g => {
+                    const pCountry = pattern.league.split(' ')[0];
+                    return g.league === pattern.league ||
+                           g.league.includes(pCountry) ||
+                           g.league === 'vFootball Live Odds' ||
+                           g.league === 'vFootball Live';
+                }),
+                // Broad fallback — all groups
+                ...liveListGames
+            ];
 
-                const fixture = group.matches.find(m =>
-                    m.home?.includes(pattern.team) ||
-                    m.away?.includes(pattern.team) ||
-                    pattern.team.includes(m.home) ||
-                    pattern.team.includes(m.away)
-                );
+            // Deduplicate groups by league name
+            const seenLeagues = new Set();
+            const dedupedGroups = passOneGroups.filter(g => {
+                if (seenLeagues.has(g.league)) return false;
+                seenLeagues.add(g.league);
+                return true;
+            });
+
+            for (const group of dedupedGroups) {
+                // Skip groups tagged as UPCOMING in pass 1 — we want IN-PLAY first
+                if (group.league.includes('(Upcoming)')) continue;
+
+                const fixture = group.matches.find(m => {
+                    if (!teamsMatch(pattern.team, m.home) && !teamsMatch(pattern.team, m.away)) return false;
+                    // Must be IN-PLAY and within the early minute window
+                    if (m.status === 'IN-PLAY') {
+                        const min = getInPlayMinute(m.time);
+                        if (min === null || min > MAX_INPLAY_MINUTE) {
+                            console.log(`[Upcoming AI] ⏩ ${pattern.team} found IN-PLAY at min ${min} — too late, skipping.`);
+                            return false;
+                        }
+                        return true;
+                    }
+                    return false;
+                });
 
                 if (fixture) {
                     foundFixture = fixture;
-                    console.log(`[Upcoming AI] ✅ Pattern team "${pattern.team}" (${pattern.league}) is LIVE: ${fixture.home} vs ${fixture.away}`);
+                    foundStatus  = 'IN-PLAY';
+                    console.log(`[Upcoming AI] ✅ [PASS 1 IN-PLAY] ${pattern.team} found at min ${getInPlayMinute(fixture.time)} in "${group.league}": ${fixture.home} vs ${fixture.away}`);
                     break;
                 }
             }
 
+            // PASS 2: If no early IN-PLAY found, look for UPCOMING match (not yet started)
             if (!foundFixture) {
-                console.log(`[Upcoming AI] ⏳ Pattern team "${pattern.team}" (${pattern.league}) not found in live list — skipping this round.`);
-                continue; // This team isn't playing yet — skip, don't pollute analysis
+                for (const group of dedupedGroups) {
+                    const fixture = group.matches.find(m => {
+                        if (!teamsMatch(pattern.team, m.home) && !teamsMatch(pattern.team, m.away)) return false;
+                        // Accept only UPCOMING (not started) — never accept late IN-PLAY
+                        return m.status === 'UPCOMING';
+                    });
+
+                    if (fixture) {
+                        foundFixture = fixture;
+                        foundStatus  = 'UPCOMING';
+                        console.log(`[Upcoming AI] ✅ [PASS 2 UPCOMING] ${pattern.team} found UPCOMING in "${group.league}": ${fixture.home} vs ${fixture.away}`);
+                        break;
+                    }
+                }
             }
 
-            const isHome = foundFixture.home?.includes(pattern.team) || pattern.team.includes(foundFixture.home);
-            
-            let displayTime = 'LIVE';
-            if (foundFixture.status === 'IN-PLAY') {
-                displayTime = foundFixture.time ? `${foundFixture.time} (IN-PLAY)` : 'IN-PLAY';
-            } else if (foundFixture.status === 'UPCOMING') {
-                displayTime = foundFixture.time ? `${foundFixture.time} (Next)` : 'Next Match';
+            if (!foundFixture) {
+                console.log(`[Upcoming AI] ⏳ ${pattern.team} (${pattern.league}) — no eligible IN-PLAY (0–${MAX_INPLAY_MINUTE}min) or UPCOMING fixture found.`);
+                continue;
+            }
+
+            const isHome = teamsMatch(pattern.team, foundFixture.home);
+            const inPlayMin = foundStatus === 'IN-PLAY' ? getInPlayMinute(foundFixture.time) : null;
+
+            let displayTime;
+            if (foundStatus === 'IN-PLAY') {
+                displayTime = inPlayMin !== null ? `Min ${inPlayMin} (IN-PLAY)` : 'IN-PLAY';
             } else {
-                displayTime = foundFixture.time ? `${foundFixture.time} (LIVE)` : 'LIVE';
+                displayTime = foundFixture.time ? `${foundFixture.time} (Upcoming)` : 'Next Match';
             }
 
             upcomingMatches.push({
                 pattern,
                 fixture: {
                     time: displayTime,
+                    status: foundStatus,
                     code: foundFixture.code || '',
                     home: foundFixture.home,
                     away: foundFixture.away,
@@ -3422,14 +3518,25 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             });
         }
 
-        // Take top 5 best live matches
+        // Prioritise IN-PLAY (0–9) over UPCOMING, then by pattern strength
+        upcomingMatches.sort((a, b) => {
+            if (a.fixture.status === 'IN-PLAY' && b.fixture.status !== 'IN-PLAY') return -1;
+            if (b.fixture.status === 'IN-PLAY' && a.fixture.status !== 'IN-PLAY') return 1;
+            const maxA = Math.max(...a.pattern.eliteOutcomes.map(o => o.pct));
+            const maxB = Math.max(...b.pattern.eliteOutcomes.map(o => o.pct));
+            return maxB - maxA;
+        });
+
+        // Take top 5 best matches
         const finalMatches = upcomingMatches.slice(0, 5);
-        console.log(`[Upcoming AI] ${finalMatches.length} live pattern matches found for AI analysis.`);
+        console.log(`[Upcoming AI] ✅ ${finalMatches.length} eligible fixture(s) selected for AI analysis (${activePatterns.length} active triggers).`);
 
         if (finalMatches.length === 0) {
             return res.json({
                 success: true,
-                message: 'None of the elite pattern teams are currently live. The live list is active but no pattern team is playing right now — check back in a few minutes.',
+                message: activePatterns.length > 0
+                    ? `${activePatterns.length} pattern trigger(s) are active but none of those teams appear in the current IN-PLAY (0–${MAX_INPLAY_MINUTE}min) or upcoming fixture list yet. Check back in a moment.`
+                    : 'No pattern triggers are active between rounds. Check back in 1–2 minutes when the next round results are uploaded.',
                 analyses: []
             });
         }
