@@ -3357,9 +3357,18 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             m.score && /^\d+[:\-]\d+$/.test(m.score.trim()) && m.league && m.date
         );
         validDocs.sort((a, b) => {
-            const pa = parseDDMMYYYY(a.date) || new Date(0);
-            const pb = parseDDMMYYYY(b.date) || new Date(0);
-            return pb - pa; // newest first
+            const paDate = parseDDMMYYYY(a.date) || new Date(0);
+            const pbDate = parseDDMMYYYY(b.date) || new Date(0);
+            if (pbDate.getTime() !== paDate.getTime()) {
+                return pbDate - paDate; // newest date first
+            }
+            // Same date, sort by time (HH:MM) descending
+            const toMins = t => {
+                if (!t) return 0;
+                const [h, m] = t.split(':').map(Number);
+                return (h || 0) * 60 + (m || 0);
+            };
+            return toMins(b.time) - toMins(a.time); // newest time first
         });
 
         const lastResultMap = {};
@@ -3412,15 +3421,27 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
         const MAX_INPLAY_MINUTE = 9;
         function getInPlayMinute(timeStr) {
             if (!timeStr) return null;
-            const m = String(timeStr).match(/(\d+)/);
+            const str = String(timeStr).toUpperCase();
+            if (str.includes('HT')) return null; // Half-time is between halves
+            // Match formats like "1H 40'", "40'", "2H 88'"
+            const m = str.match(/(?:1H|2H)?\s*(\d+)'?/);
             return m ? parseInt(m[1], 10) : null;
         }
 
-        // ── FIX 4: Team name fuzzy match (handles abbreviations + full names) ──
         function teamsMatch(patternTeam, fixtureTeam) {
             if (!patternTeam || !fixtureTeam) return false;
-            const a = patternTeam.toLowerCase().trim();
-            const b = fixtureTeam.toLowerCase().trim();
+            let a = patternTeam.toLowerCase().trim();
+            let b = fixtureTeam.toLowerCase().trim();
+            
+            // Map common vFootball aliases
+            const aliases = {
+                'mci': 'man blue', 'mun': 'man red',
+                'rma': 'madrid', 'atm': 'madrid', // 'madrid' could match either, but b.includes(a) handles it
+                'man blue': 'mci', 'man red': 'mun'
+            };
+            if (aliases[a]) a = aliases[a];
+            if (aliases[b]) b = aliases[b];
+            
             return a === b || a.includes(b) || b.includes(a);
         }
 
