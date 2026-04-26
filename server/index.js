@@ -3481,19 +3481,45 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
                 }
             }
 
-            // PASS 2: If no early IN-PLAY found, look for UPCOMING match (not yet started)
+            // PASS 2: Team is in the upcoming fixture list but match hasn't started yet.
+            // Accept any fixture that is:
+            //   ✅ status === 'UPCOMING' (explicit)
+            //   ✅ in a group tagged '(Upcoming)' (regardless of status field)
+            //   ✅ has no status set (scraper didn't tag it)
+            //   ❌ IN-PLAY past minute MAX_INPLAY_MINUTE (still rejected)
             if (!foundFixture) {
-                for (const group of dedupedGroups) {
+                // Scan (Upcoming) groups first, then all groups, deduped
+                const pass2Groups = [
+                    ...dedupedGroups.filter(g => g.league.includes('(Upcoming)')),
+                    ...dedupedGroups.filter(g => !g.league.includes('(Upcoming)'))
+                ];
+
+                for (const group of pass2Groups) {
                     const fixture = group.matches.find(m => {
                         if (!teamsMatch(pattern.team, m.home) && !teamsMatch(pattern.team, m.away)) return false;
-                        // Accept only UPCOMING (not started) — never accept late IN-PLAY
-                        return m.status === 'UPCOMING';
+
+                        // Hard reject: IN-PLAY past the allowed window
+                        if (m.status === 'IN-PLAY') {
+                            const min = getInPlayMinute(m.time);
+                            if (min !== null && min > MAX_INPLAY_MINUTE) return false;
+                        }
+
+                        // Accept: explicitly upcoming, in an upcoming group, or no status set
+                        const isExplicitlyUpcoming = m.status === 'UPCOMING';
+                        const isInUpcomingGroup     = group.league.includes('(Upcoming)');
+                        const hasNoStatus           = !m.status;
+
+                        if (isExplicitlyUpcoming || isInUpcomingGroup || hasNoStatus) {
+                            console.log(`[Upcoming AI] 🔍 [PASS 2] ${pattern.team} candidate: ${m.home} vs ${m.away} | status="${m.status || 'none'}" | group="${group.league}"`);
+                            return true;
+                        }
+                        return false;
                     });
 
                     if (fixture) {
                         foundFixture = fixture;
                         foundStatus  = 'UPCOMING';
-                        console.log(`[Upcoming AI] ✅ [PASS 2 UPCOMING] ${pattern.team} found UPCOMING in "${group.league}": ${fixture.home} vs ${fixture.away}`);
+                        console.log(`[Upcoming AI] ✅ [PASS 2 UPCOMING] ${pattern.team} found in "${group.league}": ${fixture.home} vs ${fixture.away} (status: ${fixture.status || 'none'})`);
                         break;
                     }
                 }
