@@ -348,10 +348,12 @@ function AdminDashboard() {
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 20px', display: 'flex', gap: '32px', flexDirection: 'column' }}>
       <header>
         {/* Admin breadcrumb */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+          <Link to="/" style={{ color: 'var(--accent-neon)', fontSize: '0.8rem', textDecoration: 'none', fontWeight: 700 }}>🧠 Pattern Intel</Link>
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
           <Link to="/results" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textDecoration: 'none' }}>← Public Dashboard</Link>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
-          <Link to="/daily-tips" style={{ color: 'var(--accent-purple)', fontSize: '0.8rem', textDecoration: 'none' }}>🧠 Daily Tips</Link>
+          <Link to="/daily-tips" style={{ color: 'var(--accent-purple)', fontSize: '0.8rem', textDecoration: 'none' }}>🔮 Daily Tips</Link>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
           <Link to="/behaviour" style={{ color: 'var(--accent-purple)', fontSize: '0.8rem', textDecoration: 'none' }}>🧬 Behaviour</Link>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>

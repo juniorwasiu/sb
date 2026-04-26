@@ -3633,18 +3633,20 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
         
         // 4. Send to AI
         const { callPredictionAI, getActivePredictionProvider, parseAIJson } = require('./prediction_ai');
-        const { computeTeamForm, getLeagueBaseline } = require('./db_reader');
+        const { computeTeamForm, getLeagueBaseline, computeH2HForm } = require('./db_reader');
         const { getLeagueIntelligence } = require('./ai_memory');
         const activeProvider = getActivePredictionProvider();
         
-        // Fetch team form and league DNA for each match concurrently
+        // Fetch team form, opponent form, H2H, and league DNA for each match concurrently
         const enhancedMatches = await Promise.all(finalMatches.map(async (m) => {
-            const [teamForm, leagueBaseline, leagueIntel] = await Promise.all([
+            const [teamForm, opponentForm, h2hForm, leagueBaseline, leagueIntel] = await Promise.all([
                 computeTeamForm(m.pattern.league, m.pattern.team),
+                computeTeamForm(m.pattern.league, m.fixture.opponent),
+                computeH2HForm(m.pattern.league, m.pattern.team, m.fixture.opponent, 10),
                 getLeagueBaseline(m.pattern.league),
                 getLeagueIntelligence(m.pattern.league)
             ]);
-            return { ...m, teamForm, leagueBaseline, leagueIntel };
+            return { ...m, teamForm, opponentForm, h2hForm, leagueBaseline, leagueIntel };
         }));
         
         const matchDataStr = enhancedMatches.map((m, i) => `
@@ -3662,6 +3664,16 @@ Win Rate: ${m.teamForm?.matchesAnalysed ? Math.round((m.teamForm.wins/m.teamForm
 Avg Goals Scored: ${m.teamForm?.goalsScored || 0} / Avg Conceded: ${m.teamForm?.goalsConceded || 0}
 Over 2.5 Hit Rate: ${m.teamForm?.over2_5_percent || 0}% / BTTS Hit Rate: ${m.teamForm?.btts_percent || 0}%
 
+OPPONENT CURRENT FORM (LAST 10 MATCHES):
+Opponent: ${m.fixture.opponent}
+Streak: ${m.opponentForm?.streak || 'N/A'}
+Win Rate: ${m.opponentForm?.matchesAnalysed ? Math.round((m.opponentForm.wins/m.opponentForm.matchesAnalysed)*100) : 0}% (W${m.opponentForm?.wins || 0} D${m.opponentForm?.draws || 0} L${m.opponentForm?.losses || 0})
+Avg Goals Scored: ${m.opponentForm?.goalsScored || 0} / Avg Conceded: ${m.opponentForm?.goalsConceded || 0}
+
+HEAD TO HEAD (LAST 10 MATCHES):
+Win Rate for ${m.pattern.team} vs ${m.fixture.opponent}: ${m.h2hForm?.homeWinsInH2H || 0}W - ${m.h2hForm?.drawsInH2H || 0}D - ${m.h2hForm?.awayWinsInH2H || 0}L
+Over 2.5 Hit Rate: ${m.h2hForm?.over2_5_percent || 0}% / BTTS Hit Rate: ${m.h2hForm?.btts_percent || 0}%
+
 LEAGUE DNA & TACTICAL INTELLIGENCE:
 League Baseline Avg Goals: ${m.leagueBaseline?.stats?.avgGoals || 'N/A'}
 League Over 2.5 Rate: ${m.leagueBaseline?.stats?.over2_5Percent || 'N/A'}%
@@ -3677,7 +3689,11 @@ DATA:
 ${matchDataStr}
 
 INSTRUCTIONS:
-Return a JSON array of analysis objects. DO NOT return markdown blocks around the JSON, just the raw JSON array.
+1. You MUST cross-reference the "Pattern Trigger" with the "OPPONENT CURRENT FORM" and "HEAD TO HEAD" stats.
+2. If the pattern suggests a "Win" but the opponent has a superior win rate or H2H dominance, you MUST downgrade confidence or explicitly address this risk in your analysis.
+3. If the pattern suggests "Over 2.5" but BOTH teams average < 1 goal per game, highlight this contradiction.
+4. Return a JSON array of analysis objects. DO NOT return markdown blocks around the JSON, just the raw JSON array.
+
 Each object in the array must have the following keys:
 - "match": string (e.g. "Chelsea vs Arsenal")
 - "time": string (The match starting time from the data provided)
@@ -3685,13 +3701,13 @@ Each object in the array must have the following keys:
 - "league": string (The league name provided in the data, e.g. "England - Virtual")
 - "pattern": string (Brief summary of the pattern trigger)
 - "signal": string (The highest probability outcome, e.g. "Win (85%)")
-- "analysis": string (A punchy 2-3 sentence expert explanation synthesizing the pattern against the specific opponent. Be extremely confident and professional.)
-- "confidence": number (A score out of 100 based on the probability)
-- "color": string (A hex color code representing the outcome type: e.g. Win=#00FF88, Goals=#00E5FF)
+- "analysis": string (A punchy 2-3 sentence expert explanation synthesizing the pattern against the opponent's specific form and H2H. Be extremely analytical and critical.)
+- "confidence": number (A score out of 100 based on the probability and opponent resistance)
+- "color": string (A hex color code representing the outcome type: e.g. Win=#00FF88, Goals=#00E5FF, Warning=#FFB800)
 `;
 
         const result = await callPredictionAI(prompt, activeProvider, {
-            temperature: 0.4,
+            temperature: 0.3,
             maxTokens: 2000
         });
         

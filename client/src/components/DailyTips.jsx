@@ -299,7 +299,12 @@ export default function DailyTips() {
             }}>
                 <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '20px' }}>
                     <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                            <Link to="/" style={{ color: NEON, textDecoration: 'none', fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.03em', transition: 'opacity 0.2s' }}
+                                onMouseOver={e => e.currentTarget.style.opacity = '1'}
+                                onMouseOut={e => e.currentTarget.style.opacity = '0.85'}
+                            >🧠 Pattern Intel</Link>
+                            <span style={{ color: 'rgba(255,255,255,0.1)', fontSize: '1rem' }}>|</span>
                             <Link to="/results" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.03em', transition: 'color 0.2s' }}
                                 onMouseOver={e => e.currentTarget.style.color = 'white'}
                                 onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}

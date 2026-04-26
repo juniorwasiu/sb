@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 
 // ── Theme tokens (consistent with rest of app) ────────────────────────────────
 const THEME = {
@@ -485,6 +486,15 @@ export default function BehaviourPatterns() {
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div style={{ marginBottom: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+            <Link to="/" style={{ color: THEME.neon, fontSize: '0.8rem', textDecoration: 'none', fontWeight: 700 }}>🧠 Pattern Intel</Link>
+            <span style={{ color: THEME.textMuted, fontSize: '0.8rem' }}>/</span>
+            <Link to="/results" style={{ color: THEME.textSecondary, fontSize: '0.8rem', textDecoration: 'none' }}>← Dashboard</Link>
+            <span style={{ color: THEME.textMuted, fontSize: '0.8rem' }}>/</span>
+            <Link to="/daily-tips" style={{ color: THEME.purple, fontSize: '0.8rem', textDecoration: 'none' }}>🔮 Daily Tips</Link>
+            <span style={{ color: THEME.textMuted, fontSize: '0.8rem' }}>/</span>
+            <Link to="/admin" style={{ color: THEME.textSecondary, fontSize: '0.8rem', textDecoration: 'none' }}>⚙️ Admin</Link>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
             <div>
               <h1 style={{ fontSize: '2rem', fontWeight: 800, margin: 0, letterSpacing: '-0.03em' }}>
