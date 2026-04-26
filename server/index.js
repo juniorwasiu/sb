@@ -3967,6 +3967,115 @@ app.get('/api/pattern-intel/performance', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/advanced-engine/analyze
+// V1 Testing Sandbox for Deep ML Engine 
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/advanced-engine/analyze', async (req, res) => {
+    try {
+        const { league, homeTeam, awayTeam } = req.query;
+        if (!league || !homeTeam || !awayTeam) {
+            return res.status(400).json({ success: false, error: 'Missing required parameters: league, homeTeam, awayTeam' });
+        }
+
+        const allDocs = await getCachedDocs();
+        
+        // Filter by league and valid scores
+        const validDocs = allDocs.filter(m => 
+            m.league === league && 
+            m.score && /^\d+[:\-]\d+$/.test(m.score.trim())
+        );
+
+        // Sort chronologically (newest first to easily grab the last 10)
+        validDocs.sort((a, b) => {
+            const parseDate = (d, t) => {
+                if (!d) return new Date(0);
+                const [dd, mm, yyyy] = d.split('/');
+                const [hh, min] = (t || '0:0').split(':');
+                return new Date(`${yyyy}-${mm}-${dd}T${hh.padStart(2, '0')}:${min.padStart(2, '0')}:00Z`);
+            };
+            return parseDate(b.date, b.time) - parseDate(a.date, a.time);
+        });
+
+        const computeForm = (team) => {
+            const matches = validDocs.filter(m => m.homeTeam === team || m.awayTeam === team).slice(0, 10);
+            if (matches.length === 0) return { winRate: 0, avgScored: 0, avgConceded: 0, matches: 0 };
+            
+            let wins = 0, scored = 0, conceded = 0;
+            matches.forEach(m => {
+                const parts = m.score.replace('-', ':').split(':').map(Number);
+                const isHome = m.homeTeam === team;
+                const gf = isHome ? parts[0] : parts[1];
+                const ga = isHome ? parts[1] : parts[0];
+                
+                if (gf > ga) wins++;
+                scored += gf;
+                conceded += ga;
+            });
+            
+            return {
+                winRate: Math.round((wins / matches.length) * 100),
+                avgScored: (scored / matches.length).toFixed(2),
+                avgConceded: (conceded / matches.length).toFixed(2),
+                matches: matches.length
+            };
+        };
+
+        const homeForm = computeForm(homeTeam);
+        const awayForm = computeForm(awayTeam);
+
+        // H2H
+        const h2hMatches = validDocs.filter(m => 
+            (m.homeTeam === homeTeam && m.awayTeam === awayTeam) ||
+            (m.homeTeam === awayTeam && m.awayTeam === homeTeam)
+        ).slice(0, 5);
+
+        let h2hText = "No recent H2H matches.";
+        if (h2hMatches.length > 0) {
+            h2hText = h2hMatches.map(m => `${m.homeTeam} ${m.score} ${m.awayTeam} (${m.date})`).join(' | ');
+        }
+
+        const prompt = `You are an elite sports betting AI risk assessor.
+Analyze the following statistical data for an upcoming match in the "${league}" virtual football league.
+Your goal is to provide a "Contextual Risk Assessment" and predict the safest betting market (e.g., Over 1.5, GG, Home Win, etc).
+
+**Home Team:** ${homeTeam}
+- Form (Last 10): ${homeForm.winRate}% Win Rate
+- Avg Goals Scored: ${homeForm.avgScored}
+- Avg Goals Conceded: ${homeForm.avgConceded}
+
+**Away Team:** ${awayTeam}
+- Form (Last 10): ${awayForm.winRate}% Win Rate
+- Avg Goals Scored: ${awayForm.avgScored}
+- Avg Goals Conceded: ${awayForm.avgConceded}
+
+**Recent Head-to-Head (Last 5):**
+${h2hText}
+
+Write a short, sharp paragraph (3-4 sentences max) identifying the highest value bet and explaining your reasoning. Keep it highly analytical.`;
+
+        const { queryAI } = require('./ai_router');
+        const aiResponse = await queryAI(prompt);
+
+        res.json({
+            success: true,
+            stats: {
+                league,
+                homeTeam,
+                awayTeam,
+                homeForm,
+                awayForm,
+                h2hMatches: h2hMatches.length
+            },
+            aiAnalysis: aiResponse
+        });
+
+    } catch (err) {
+        console.error('[AdvancedEngine] Error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // React Router catch-all — must be LAST route.
 // Any non-API request (e.g. /dashboard, /history) returns index.html so
 // React Router can handle the path on the client side.

@@ -10,6 +10,8 @@ import BehaviourPatterns from './components/BehaviourPatterns';
 import ServerHealthWidget from './components/ServerHealthWidget';
 import LeagueIntelligencePanel from './components/LeagueIntelligencePanel';
 import PatternIntelligence from './components/PatternIntelligence';
+import NavigationBar from './components/NavigationBar';
+import AdvancedPredictionEngine from './components/AdvancedPredictionEngine';
 import './index.css';
 
 // ── Live scores SSE hook ──────────────────────────────────────────────────────
@@ -412,13 +414,17 @@ function AdminDashboard() {
 // ── Root App with routing ────────────────────────────────────────────────────
 export default function App() {
   return (
-    <Routes>
-      <Route path="/"          element={<PatternIntelligence />} />
-      <Route path="/daily-tips" element={<DailyTips />} />
-      <Route path="/admin"     element={<AdminDashboard />} />
-      <Route path="/behaviour" element={<BehaviourPatterns />} />
-      <Route path="/results" element={<LandingPage />} />
-      <Route path="*"          element={<Navigate to="/" replace />} />
-    </Routes>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <NavigationBar />
+      <Routes>
+        <Route path="/"          element={<PatternIntelligence />} />
+        <Route path="/advanced-engine" element={<AdvancedPredictionEngine />} />
+        <Route path="/daily-tips" element={<DailyTips />} />
+        <Route path="/admin"     element={<AdminDashboard />} />
+        <Route path="/behaviour" element={<BehaviourPatterns />} />
+        <Route path="/results" element={<LandingPage />} />
+        <Route path="*"          element={<Navigate to="/" replace />} />
+      </Routes>
+    </div>
   );
 }
