@@ -3344,43 +3344,54 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             return maxB - maxA;
         });
 
-        // ── FIX 1: TRIGGER CHECK — only keep patterns whose trigger is ACTIVE ─
-        // A trigger is "active" only if the team's most recent completed match
-        // in the DB matches the pattern's trigger score AND role exactly.
+        // ── TRIGGER CHECK (fast single-pass map approach) ─────────────────────
+        // Step 1: Fetch all DB docs once — use cached copy (5-min TTL)
         const { getCachedDocs, parseDDMMYYYY } = require('./db_reader');
         const allDocs = await getCachedDocs();
 
-        function isTriggerActive(pattern) {
-            const teamMatches = allDocs.filter(m =>
-                m.league === pattern.league &&
-                (m.homeTeam === pattern.team || m.awayTeam === pattern.team) &&
-                m.score && /^\d+[:\-]\d+$/.test(m.score.trim())
-            );
-            if (teamMatches.length === 0) return false;
+        // Step 2: Build a lastResultMap in ONE pass (sort once, set once per team)
+        // key: "league||team" → { score, role, date, homeTeam, awayTeam }
+        // This is O(n log n) once, then O(1) lookups — far faster than
+        // re-filtering + re-sorting allDocs for every single pattern.
+        const validDocs = allDocs.filter(m =>
+            m.score && /^\d+[:\-]\d+$/.test(m.score.trim()) && m.league && m.date
+        );
+        validDocs.sort((a, b) => {
+            const pa = parseDDMMYYYY(a.date) || new Date(0);
+            const pb = parseDDMMYYYY(b.date) || new Date(0);
+            return pb - pa; // newest first
+        });
 
-            // Sort newest first
-            teamMatches.sort((a, b) => {
-                const pa = parseDDMMYYYY(a.date) || new Date(0);
-                const pb = parseDDMMYYYY(b.date) || new Date(0);
-                return pb - pa;
-            });
+        const lastResultMap = {};
+        for (const m of validDocs) {
+            const score = m.score.replace('-', ':').trim();
+            const lg    = m.league;
+            const setIfFirst = (team, role) => {
+                if (!team) return;
+                const k = `${lg}||${team}`;
+                if (!lastResultMap[k]) {
+                    lastResultMap[k] = { score, role, date: m.date, homeTeam: m.homeTeam, awayTeam: m.awayTeam };
+                }
+            };
+            setIfFirst(m.homeTeam, 'Home');
+            setIfFirst(m.awayTeam, 'Away');
+        }
+        console.log(`[Upcoming AI] 📋 lastResultMap built: ${Object.keys(lastResultMap).length} unique team/league entries`);
 
-            const lastMatch = teamMatches[0];
-            const lastScore = lastMatch.score.replace('-', ':').trim();
-            const lastRole  = lastMatch.homeTeam === pattern.team ? 'Home' : 'Away';
-
-            const isActive = lastScore === pattern.score && lastRole === pattern.role;
+        // Step 3: O(1) lookup per pattern — is the trigger currently active?
+        const activePatterns = patterns.filter(pattern => {
+            const k          = `${pattern.league}||${pattern.team}`;
+            const lastResult = lastResultMap[k];
+            if (!lastResult) return false;
+            const isActive = lastResult.score === pattern.score && lastResult.role === pattern.role;
             if (isActive) {
-                console.log(`[Upcoming AI] 🎯 Trigger ACTIVE: ${pattern.team} (${pattern.league}) — last played ${lastScore} as ${lastRole}`);
+                console.log(`[Upcoming AI] 🎯 Trigger ACTIVE: ${pattern.team} (${pattern.league}) — last: ${lastResult.homeTeam} ${lastResult.score} ${lastResult.awayTeam} on ${lastResult.date}`);
             }
             return isActive;
-        }
-
-        const activePatterns = patterns.filter(isTriggerActive);
-        console.log(`[Upcoming AI] Trigger check: ${activePatterns.length} / ${patterns.length} patterns are currently triggered.`);
+        });
+        console.log(`[Upcoming AI] Trigger check: ${activePatterns.length} / ${patterns.length} patterns currently triggered.`);
 
         // If no triggers are active (between rounds), fall back to all elite patterns
-        // so the AI still has something useful to say
         const patternsToSearch = activePatterns.length > 0 ? activePatterns : patterns;
 
         // ── FIX 2: Scrape live list ───────────────────────────────────────────
