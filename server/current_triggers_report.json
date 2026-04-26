@@ -1,0 +1,1105 @@
+{
+  "generatedAt": "2026-04-26T04:15:19.599Z",
+  "totalElitePatterns": 290,
+  "totalTriggered": 25,
+  "totalDormant": 265,
+  "triggeredPatterns": [
+    {
+      "league": "France - Virtual",
+      "team": "PSG",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "sampleSize": 25,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "NAN",
+        "awayTeam": "PSG"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "96%",
+          "hits": "24/25"
+        },
+        {
+          "outcome": "🎯 BTTS",
+          "probability": "92%",
+          "hits": "23/25"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "92%",
+          "hits": "23/25"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "100%",
+          "hits": "25/25"
+        }
+      ]
+    },
+    {
+      "league": "England - Virtual",
+      "team": "BRE",
+      "triggerScore": "0:2",
+      "triggerRole": "Home",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "0:2",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "BRE",
+        "awayTeam": "LIV"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "90%",
+          "hits": "18/20"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "85%",
+          "hits": "17/20"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "80%",
+          "hits": "16/20"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "LEV",
+      "triggerScore": "2:1",
+      "triggerRole": "Away",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "2:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "CEL",
+        "awayTeam": "LEV"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "80%",
+          "hits": "16/20"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "90%",
+          "hits": "18/20"
+        }
+      ]
+    },
+    {
+      "league": "France - Virtual",
+      "team": "NCE",
+      "triggerScore": "1:0",
+      "triggerRole": "Away",
+      "sampleSize": 21,
+      "lastResult": {
+        "score": "1:0",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "AUX",
+        "awayTeam": "NCE"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "90%",
+          "hits": "19/21"
+        },
+        {
+          "outcome": "🔥 Over 2.5",
+          "probability": "71%",
+          "hits": "15/21"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "81%",
+          "hits": "17/21"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "81%",
+          "hits": "17/21"
+        }
+      ]
+    },
+    {
+      "league": "France - Virtual",
+      "team": "STR",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "sampleSize": 22,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "STR",
+        "awayTeam": "LEN"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "86%",
+          "hits": "19/22"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "77%",
+          "hits": "17/22"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "82%",
+          "hits": "18/22"
+        }
+      ]
+    },
+    {
+      "league": "England - Virtual",
+      "team": "BUR",
+      "triggerScore": "0:1",
+      "triggerRole": "Home",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "BUR",
+        "awayTeam": "FOR"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "85%",
+          "hits": "17/20"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "80%",
+          "hits": "16/20"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "70%",
+          "hits": "14/20"
+        }
+      ]
+    },
+    {
+      "league": "France - Virtual",
+      "team": "LEN",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "sampleSize": 26,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "STR",
+        "awayTeam": "LEN"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "73%",
+          "hits": "19/26"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "73%",
+          "hits": "19/26"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "85%",
+          "hits": "22/26"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "GET",
+      "triggerScore": "0:1",
+      "triggerRole": "Away",
+      "sampleSize": 21,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "GIR",
+        "awayTeam": "GET"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "71%",
+          "hits": "15/21"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "81%",
+          "hits": "17/21"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "71%",
+          "hits": "15/21"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "VIL",
+      "triggerScore": "2:0",
+      "triggerRole": "Home",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "2:0",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "VIL",
+        "awayTeam": "ALA"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "80%",
+          "hits": "16/20"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "75%",
+          "hits": "15/20"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "80%",
+          "hits": "16/20"
+        }
+      ]
+    },
+    {
+      "league": "France - Virtual",
+      "team": "ANG",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "sampleSize": 24,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "ANG",
+        "awayTeam": "MET"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "71%",
+          "hits": "17/24"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "79%",
+          "hits": "19/24"
+        }
+      ]
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "FCA",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "sampleSize": 30,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "SVW",
+        "awayTeam": "FCA"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "70%",
+          "hits": "21/30"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "77%",
+          "hits": "23/30"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "OSA",
+      "triggerScore": "0:1",
+      "triggerRole": "Home",
+      "sampleSize": 25,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "OSA",
+        "awayTeam": "VCF"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "72%",
+          "hits": "18/25"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "76%",
+          "hits": "19/25"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "ESP",
+      "triggerScore": "0:0",
+      "triggerRole": "Home",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "0:0",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "ESP",
+        "awayTeam": "RMA"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "70%",
+          "hits": "14/20"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "70%",
+          "hits": "14/20"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "75%",
+          "hits": "15/20"
+        }
+      ]
+    },
+    {
+      "league": "Italy - Virtual",
+      "team": "LAZ",
+      "triggerScore": "0:1",
+      "triggerRole": "Home",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "LAZ",
+        "awayTeam": "FIO"
+      },
+      "predictions": [
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "75%",
+          "hits": "15/20"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "70%",
+          "hits": "14/20"
+        }
+      ]
+    },
+    {
+      "league": "Italy - Virtual",
+      "team": "ROM",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "sampleSize": 24,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "PAR",
+        "awayTeam": "ROM"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "75%",
+          "hits": "18/24"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "75%",
+          "hits": "18/24"
+        }
+      ]
+    },
+    {
+      "league": "Italy - Virtual",
+      "team": "USC",
+      "triggerScore": "0:1",
+      "triggerRole": "Home",
+      "sampleSize": 28,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "USC",
+        "awayTeam": "INT"
+      },
+      "predictions": [
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "75%",
+          "hits": "21/28"
+        }
+      ]
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "KOE",
+      "triggerScore": "1:0",
+      "triggerRole": "Away",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "1:0",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "STP",
+        "awayTeam": "KOE"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "70%",
+          "hits": "14/20"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "75%",
+          "hits": "15/20"
+        },
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "75%",
+          "hits": "15/20"
+        }
+      ]
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "WOB",
+      "triggerScore": "1:0",
+      "triggerRole": "Away",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "1:0",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "SGE",
+        "awayTeam": "WOB"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "75%",
+          "hits": "15/20"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "75%",
+          "hits": "15/20"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "OVI",
+      "triggerScore": "0:0",
+      "triggerRole": "Home",
+      "sampleSize": 27,
+      "lastResult": {
+        "score": "0:0",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "OVI",
+        "awayTeam": "MAL"
+      },
+      "predictions": [
+        {
+          "outcome": "✈️ Away Scores",
+          "probability": "74%",
+          "hits": "20/27"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "SEV",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "sampleSize": 27,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "ATM",
+        "awayTeam": "SEV"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "74%",
+          "hits": "20/27"
+        },
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "74%",
+          "hits": "20/27"
+        }
+      ]
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "MAI",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "sampleSize": 26,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "LEV",
+        "awayTeam": "MAI"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "73%",
+          "hits": "19/26"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "VCF",
+      "triggerScore": "0:1",
+      "triggerRole": "Away",
+      "sampleSize": 25,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "OSA",
+        "awayTeam": "VCF"
+      },
+      "predictions": [
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "72%",
+          "hits": "18/25"
+        }
+      ]
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "RAY",
+      "triggerScore": "0:1",
+      "triggerRole": "Away",
+      "sampleSize": 21,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "RSO",
+        "awayTeam": "RAY"
+      },
+      "predictions": [
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "71%",
+          "hits": "15/21"
+        }
+      ]
+    },
+    {
+      "league": "France - Virtual",
+      "team": "NAN",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "sampleSize": 21,
+      "lastResult": {
+        "score": "1:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "NAN",
+        "awayTeam": "PSG"
+      },
+      "predictions": [
+        {
+          "outcome": "🏠 Home Scores",
+          "probability": "71%",
+          "hits": "15/21"
+        }
+      ]
+    },
+    {
+      "league": "Italy - Virtual",
+      "team": "FIO",
+      "triggerScore": "0:1",
+      "triggerRole": "Away",
+      "sampleSize": 20,
+      "lastResult": {
+        "score": "0:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "LAZ",
+        "awayTeam": "FIO"
+      },
+      "predictions": [
+        {
+          "outcome": "⚽ Over 1.5",
+          "probability": "70%",
+          "hits": "14/20"
+        }
+      ]
+    }
+  ],
+  "dormantPatterns": [
+    {
+      "league": "England - Virtual",
+      "team": "AST",
+      "triggerScore": "1:2",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "2:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "BHA",
+        "awayTeam": "AST"
+      },
+      "reason": "Last: 2:1 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "CHE",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "2:2",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "CHE",
+        "awayTeam": "BOU"
+      },
+      "reason": "Last: 2:2 as Home"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "AST",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "2:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "BHA",
+        "awayTeam": "AST"
+      },
+      "reason": "Last: 2:1 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "MCI",
+      "triggerScore": "0:2",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "2:2",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "TOT",
+        "awayTeam": "MCI"
+      },
+      "reason": "Last: 2:2 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "WOL",
+      "triggerScore": "0:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "3:2",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "WOL",
+        "awayTeam": "WHU"
+      },
+      "reason": "Last: 3:2 as Home"
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "ATM",
+      "triggerScore": "0:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "1:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "ATM",
+        "awayTeam": "SEV"
+      },
+      "reason": "Last: 1:1 as Home"
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "RBL",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "4:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "BMG",
+        "awayTeam": "RBL"
+      },
+      "reason": "Last: 4:1 as Away"
+    },
+    {
+      "league": "France - Virtual",
+      "team": "OLM",
+      "triggerScore": "1:0",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "3:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "LIL",
+        "awayTeam": "OLM"
+      },
+      "reason": "Last: 3:1 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "WHU",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "3:2",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "WOL",
+        "awayTeam": "WHU"
+      },
+      "reason": "Last: 3:2 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "ARS",
+      "triggerScore": "2:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "1:4",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "NEW",
+        "awayTeam": "ARS"
+      },
+      "reason": "Last: 1:4 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "LEE",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "3:0",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "LEE",
+        "awayTeam": "EVE"
+      },
+      "reason": "Last: 3:0 as Home"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "WOL",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "3:2",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "WOL",
+        "awayTeam": "WHU"
+      },
+      "reason": "Last: 3:2 as Home"
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "TSG",
+      "triggerScore": "2:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "VFB",
+        "awayTeam": "TSG"
+      },
+      "reason": "Last: 1:1 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "FOR",
+      "triggerScore": "1:2",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "0:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "BUR",
+        "awayTeam": "FOR"
+      },
+      "reason": "Last: 0:1 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "MUN",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "2:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "SUN",
+        "awayTeam": "MUN"
+      },
+      "reason": "Last: 2:1 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "NEW",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "1:4",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "NEW",
+        "awayTeam": "ARS"
+      },
+      "reason": "Last: 1:4 as Home"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "TOT",
+      "triggerScore": "2:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "2:2",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "TOT",
+        "awayTeam": "MCI"
+      },
+      "reason": "Last: 2:2 as Home"
+    },
+    {
+      "league": "Italy - Virtual",
+      "team": "PIS",
+      "triggerScore": "2:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "2:4",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "PIS",
+        "awayTeam": "JUV"
+      },
+      "reason": "Last: 2:4 as Home"
+    },
+    {
+      "league": "Italy - Virtual",
+      "team": "GEN",
+      "triggerScore": "1:0",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "2:0",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "GEN",
+        "awayTeam": "UDI"
+      },
+      "reason": "Last: 2:0 as Home"
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "FCA",
+      "triggerScore": "1:0",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "1:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "SVW",
+        "awayTeam": "FCA"
+      },
+      "reason": "Last: 1:1 as Away"
+    },
+    {
+      "league": "France - Virtual",
+      "team": "TOU",
+      "triggerScore": "1:2",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "2:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "LOR",
+        "awayTeam": "TOU"
+      },
+      "reason": "Last: 2:1 as Away"
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "RAY",
+      "triggerScore": "1:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "0:1",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "RSO",
+        "awayTeam": "RAY"
+      },
+      "reason": "Last: 0:1 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "TOT",
+      "triggerScore": "2:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "2:2",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "TOT",
+        "awayTeam": "MCI"
+      },
+      "reason": "Last: 2:2 as Home"
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "ELC",
+      "triggerScore": "1:1",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "0:5",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "RBB",
+        "awayTeam": "ELC"
+      },
+      "reason": "Last: 0:5 as Away"
+    },
+    {
+      "league": "Spain - Virtual",
+      "team": "MAL",
+      "triggerScore": "1:0",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "0:0",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "OVI",
+        "awayTeam": "MAL"
+      },
+      "reason": "Last: 0:0 as Away"
+    },
+    {
+      "league": "Germany - Virtual",
+      "team": "SCF",
+      "triggerScore": "0:1",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "2:0",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "HSV",
+        "awayTeam": "SCF"
+      },
+      "reason": "Last: 2:0 as Away"
+    },
+    {
+      "league": "France - Virtual",
+      "team": "STR",
+      "triggerScore": "1:0",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "1:1",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "STR",
+        "awayTeam": "LEN"
+      },
+      "reason": "Last: 1:1 as Home"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "LIV",
+      "triggerScore": "1:2",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "0:2",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "BRE",
+        "awayTeam": "LIV"
+      },
+      "reason": "Last: 0:2 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "WHU",
+      "triggerScore": "1:2",
+      "triggerRole": "Home",
+      "lastResult": {
+        "score": "3:2",
+        "role": "Away",
+        "date": "26/04/2026",
+        "homeTeam": "WOL",
+        "awayTeam": "WHU"
+      },
+      "reason": "Last: 3:2 as Away"
+    },
+    {
+      "league": "England - Virtual",
+      "team": "CHE",
+      "triggerScore": "1:2",
+      "triggerRole": "Away",
+      "lastResult": {
+        "score": "2:2",
+        "role": "Home",
+        "date": "26/04/2026",
+        "homeTeam": "CHE",
+        "awayTeam": "BOU"
+      },
+      "reason": "Last: 2:2 as Home"
+    }
+  ]
+}
