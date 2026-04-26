@@ -3502,13 +3502,34 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
                 }
             }
 
-            // PASS 2: Team is in the upcoming fixture list but match hasn't started yet.
-            // Accept any fixture that is:
-            //   ✅ status === 'UPCOMING' (explicit)
-            //   ✅ in a group tagged '(Upcoming)' (regardless of status field)
-            //   ✅ has no status set (scraper didn't tag it)
-            //   ❌ IN-PLAY past minute MAX_INPLAY_MINUTE (still rejected)
+            // Before PASS 2, check if the league is currently playing a round.
+            // If the league has active IN-PLAY matches, the team's true "next" match 
+            // is already underway. If we didn't catch it in PASS 1 (e.g., > 9 mins), 
+            // we MUST NOT fall back to an UPCOMING match, as that would be predicting 2 rounds away.
+            let isLeagueCurrentlyInPlay = false;
             if (!foundFixture) {
+                isLeagueCurrentlyInPlay = dedupedGroups.some(g => {
+                    if (g.league.includes('(Upcoming)')) return false;
+                    const pCountry = pattern.league.split(' ')[0];
+                    const matchesLeague = g.league === pattern.league || 
+                                          g.league.includes(pCountry) ||
+                                          g.league === 'vFootball Live Odds' ||
+                                          g.league === 'vFootball Live';
+                    if (!matchesLeague) return false;
+                    return g.matches.some(m => m.status === 'IN-PLAY');
+                });
+            }
+
+            if (!foundFixture && isLeagueCurrentlyInPlay) {
+                console.log(`[Upcoming AI] 🛑 ${pattern.team} skipped PASS 2: League is currently IN-PLAY. Their true "next" match is already underway but past the 9-min window. Cannot analyze the subsequent round.`);
+            } else if (!foundFixture) {
+                // PASS 2: Team is in the upcoming fixture list but match hasn't started yet.
+                // Accept any fixture that is:
+                //   ✅ status === 'UPCOMING' (explicit)
+                //   ✅ in a group tagged '(Upcoming)' (regardless of status field)
+                //   ✅ has no status set (scraper didn't tag it)
+                //   ❌ IN-PLAY past minute MAX_INPLAY_MINUTE (still rejected)
+                
                 // Scan (Upcoming) groups first, then all groups, deduped
                 const pass2Groups = [
                     ...dedupedGroups.filter(g => g.league.includes('(Upcoming)')),
