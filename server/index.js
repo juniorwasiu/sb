@@ -3482,11 +3482,23 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
 
                 const fixture = group.matches.find(m => {
                     if (!teamsMatch(pattern.team, m.home) && !teamsMatch(pattern.team, m.away)) return false;
-                    // Must be IN-PLAY and within the early minute window
+                    // Must be IN-PLAY
                     if (m.status === 'IN-PLAY') {
-                        const min = getInPlayMinute(m.time);
-                        if (min === null || min > MAX_INPLAY_MINUTE) {
-                            console.log(`[Upcoming AI] ⏩ ${pattern.team} found IN-PLAY at min ${min} — too late, skipping.`);
+                        // Check if tip has already happened
+                        const bestOutcome = pattern.eliteOutcomes.reduce((prev, current) => (prev.pct > current.pct) ? prev : current);
+                        const hScore = parseInt(m.homeScore) || 0;
+                        const aScore = parseInt(m.awayScore) || 0;
+                        const tGoals = hScore + aScore;
+                        
+                        let alreadyHappened = false;
+                        if (bestOutcome.label === 'Over 1.5' && tGoals >= 2) alreadyHappened = true;
+                        if (bestOutcome.label === 'Over 2.5' && tGoals >= 3) alreadyHappened = true;
+                        if (bestOutcome.label === 'GG (BTTS)' && hScore >= 1 && aScore >= 1) alreadyHappened = true;
+                        if (bestOutcome.label === 'Home Scores' && hScore >= 1) alreadyHappened = true;
+                        if (bestOutcome.label === 'Away Scores' && aScore >= 1) alreadyHappened = true;
+                        
+                        if (alreadyHappened) {
+                            console.log(`[Upcoming AI] ⏩ ${pattern.team} found IN-PLAY but the best tip (${bestOutcome.label}) has already happened. Skipping.`);
                             return false;
                         }
                         return true;
@@ -3521,7 +3533,7 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             }
 
             if (!foundFixture && isLeagueCurrentlyInPlay) {
-                console.log(`[Upcoming AI] 🛑 ${pattern.team} skipped PASS 2: League is currently IN-PLAY. Their true "next" match is already underway but past the 9-min window. Cannot analyze the subsequent round.`);
+                console.log(`[Upcoming AI] 🛑 ${pattern.team} skipped PASS 2: League is currently IN-PLAY. Their true "next" match is already underway but tip likely happened. Cannot analyze the subsequent round.`);
             } else if (!foundFixture) {
                 // PASS 2: Team is in the upcoming fixture list but match hasn't started yet.
                 // Accept any fixture that is:
@@ -3540,10 +3552,9 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
                     const fixture = group.matches.find(m => {
                         if (!teamsMatch(pattern.team, m.home) && !teamsMatch(pattern.team, m.away)) return false;
 
-                        // Hard reject: IN-PLAY past the allowed window
+                        // Hard reject: IN-PLAY matches that were rejected by PASS 1 (e.g. tip already happened)
                         if (m.status === 'IN-PLAY') {
-                            const min = getInPlayMinute(m.time);
-                            if (min !== null && min > MAX_INPLAY_MINUTE) return false;
+                            return false;
                         }
 
                         // Accept: explicitly upcoming, in an upcoming group, or no status set
@@ -3568,7 +3579,7 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             }
 
             if (!foundFixture) {
-                console.log(`[Upcoming AI] ⏳ ${pattern.team} (${pattern.league}) — no eligible IN-PLAY (0–${MAX_INPLAY_MINUTE}min) or UPCOMING fixture found.`);
+                console.log(`[Upcoming AI] ⏳ ${pattern.team} (${pattern.league}) — no eligible IN-PLAY or UPCOMING fixture found.`);
                 continue;
             }
 
@@ -3597,7 +3608,7 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             });
         }
 
-        // Prioritise IN-PLAY (0–9) over UPCOMING, then by pattern strength
+        // Prioritise IN-PLAY over UPCOMING, then by pattern strength
         upcomingMatches.sort((a, b) => {
             if (a.fixture.status === 'IN-PLAY' && b.fixture.status !== 'IN-PLAY') return -1;
             if (b.fixture.status === 'IN-PLAY' && a.fixture.status !== 'IN-PLAY') return 1;
@@ -3606,15 +3617,15 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
             return maxB - maxA;
         });
 
-        // Take top 5 best matches
-        const finalMatches = upcomingMatches.slice(0, 5);
+        // Show all matches sorted by percentage instead of taking top 5
+        const finalMatches = upcomingMatches;
         console.log(`[Upcoming AI] ✅ ${finalMatches.length} eligible fixture(s) selected for AI analysis (${activePatterns.length} active triggers).`);
 
         if (finalMatches.length === 0) {
             return res.json({
                 success: true,
                 message: activePatterns.length > 0
-                    ? `${activePatterns.length} pattern trigger(s) are active but none of those teams appear in the current IN-PLAY (0–${MAX_INPLAY_MINUTE}min) or upcoming fixture list yet. Check back in a moment.`
+                    ? `${activePatterns.length} pattern trigger(s) are active but none of those teams appear in the current IN-PLAY or upcoming fixture list yet (or the tip has already happened). Check back in a moment.`
                     : 'No pattern triggers are active between rounds. Check back in 1–2 minutes when the next round results are uploaded.',
                 analyses: []
             });
