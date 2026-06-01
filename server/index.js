@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // CRITICAL: Load .env FIRST before any other imports use process.env
 // ─────────────────────────────────────────────────────────────────────────────
-require('dotenv').config();
+require('dotenv').config({ override: true });
 console.log('[DEBUG] [Env] GEMINI_API_KEY loaded:', process.env.GEMINI_API_KEY ? '✅ Present' : '❌ MISSING — check .env file');
 
 const express = require('express');
@@ -79,7 +79,10 @@ if (fs.existsSync(PUBLIC_DIR)) {
     console.log('[DEBUG] [Server] No /public folder found — running in API-only mode (dev). Run "npm run build" to bundle the client.');
 }
 
+let isAutoScrapingActive = false;
+
 // ─────────────────────────────────────────────────────────────────────────────
+
 // GET /api/health  — Server health check for Admin panel monitoring
 // Returns: uptime, memory, scraper status, Node version, environment
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4132,6 +4135,1011 @@ if (fs.existsSync(PUBLIC_DIR)) {
         res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
     });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOCAL FILE STORAGE VFOOTBALL ENGINE (NO MONGO/FIREBASE)
+// ─────────────────────────────────────────────────────────────────────────────
+const LOCAL_DB_PATH = path.join(__dirname, 'local_results.json');
+
+function saveToLocalJson(newMatches) {
+    console.log(`[DEBUG] [Local DB] Attempting to save ${newMatches.length} matches...`);
+    let current = [];
+    if (fs.existsSync(LOCAL_DB_PATH)) {
+        try {
+            current = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+        } catch (e) {
+            console.error('[DEBUG] [Local DB] Error reading file, resetting:', e.message);
+            current = [];
+        }
+    }
+    
+    let added = 0;
+    let dupes = 0;
+    
+    newMatches.forEach(match => {
+        // Construct canonical id
+        const dateSafe = (match.date || '').replace(/\//g, '-');
+        const leagueSafe = (match.league || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const gameId = match.gameId || `fallback_${(match.time || '00:00').replace(':', '')}_${(match.homeTeam || match.home || '').replace(/\s+/g, '')}`;
+        const matchId = `${dateSafe}_${gameId}_${leagueSafe}`;
+        
+        const isDupe = current.some(m => {
+            const mDateSafe = (m.date || '').replace(/\//g, '-');
+            const mLeagueSafe = (m.league || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const mGameId = m.gameId || `fallback_${(m.time || '00:00').replace(':', '')}_${(m.homeTeam || m.home || '').replace(/\s+/g, '')}`;
+            const mMatchId = `${mDateSafe}_${mGameId}_${mLeagueSafe}`;
+            return mMatchId === matchId || (m.gameId === match.gameId && m.league === match.league && m.date === match.date);
+        });
+        
+        if (!isDupe) {
+            current.push({
+                ...match,
+                _id: matchId,
+                uploadedAt: new Date().toISOString()
+            });
+            added++;
+        } else {
+            dupes++;
+        }
+    });
+    
+    if (added > 0) {
+        fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(current, null, 2), 'utf8');
+        console.log(`[DEBUG] [Local DB] Saved ${added} new matches to file. Total: ${current.length}`);
+    } else {
+        console.log(`[DEBUG] [Local DB] No new matches saved. All ${dupes} were duplicate.`);
+    }
+    
+    return { added, dupes, total: current.length };
+}
+
+// 1. GET local results
+app.get('/api/local-vfootball/results', (req, res) => {
+    console.log('[DEBUG] [Local API] GET /api/local-vfootball/results requested');
+    try {
+        if (!fs.existsSync(LOCAL_DB_PATH)) {
+            return res.json({ success: true, count: 0, matches: [] });
+        }
+        const data = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+        res.json({ success: true, count: data.length, matches: data });
+    } catch (e) {
+        console.error('[DEBUG] [Local API] Failed to read local results:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 2. POST upload local results
+app.post('/api/local-vfootball/upload', express.json(), (req, res) => {
+    console.log('[DEBUG] [Local API] POST /api/local-vfootball/upload requested');
+    try {
+        const matches = req.body;
+        if (!Array.isArray(matches)) {
+            return res.status(400).json({ success: false, error: 'Request body must be an array of matches' });
+        }
+        const stats = saveToLocalJson(matches);
+        res.json({ success: true, ...stats });
+    } catch (e) {
+        console.error('[DEBUG] [Local API] Failed to upload local results:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 3. POST scrape directly to local JSON
+app.post('/api/local-vfootball/scrape', express.json(), async (req, res) => {
+    console.log('[DEBUG] [Local API] POST /api/local-vfootball/scrape requested');
+    const { league, date } = req.body;
+    if (!league) {
+        return res.status(400).json({ success: false, error: 'league field is required' });
+    }
+    
+    // Set headers for Server-Sent Events to stream progress to UI
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    
+    const sendProgress = (step, msg, type = 'progress') => {
+        res.write(`data: ${JSON.stringify({ type, step, message: msg, timestamp: Date.now() })}\n\n`);
+        console.log(`[DEBUG] [Local Scraper] [${step}] ${msg}`);
+    };
+    
+    try {
+        const { nativeCaptureLeagueResults } = require('./native_scraper');
+        
+        sendProgress('init', `Launching browser for native capture of ${league} on ${date || 'today'}...`);
+        
+        let consecutiveDupesCount = 0;
+        const result = await nativeCaptureLeagueResults(league, date || null, {
+            onPageCaptured: async (err, matchRows, pageNum) => {
+                if (err) {
+                    sendProgress('page_error', `Error on page ${pageNum}: ${err.message}`, 'error');
+                    return;
+                }
+                if (matchRows && matchRows.length > 0) {
+                    sendProgress('page_capture', `Captured page ${pageNum} with ${matchRows.length} matches. Deduplicating and writing to local JSON storage...`);
+                    const stats = saveToLocalJson(matchRows);
+                    sendProgress('page_saved', `Saved to local storage: +${stats.added} new matches, skipped ${stats.dupes} duplicates. Total file records: ${stats.total}.`);
+                    
+                    if (stats.added === 0 && stats.dupes > 0) {
+                        consecutiveDupesCount++;
+                        if (consecutiveDupesCount >= 3) {
+                            sendProgress('page_capture', `🛑 All matches on 3 consecutive pages already exist in storage. Halting early as we are fully up-to-date!`, 'progress');
+                            return { stop: true };
+                        } else {
+                            sendProgress('page_capture', `Page ${pageNum} has only duplicates (consecutive: ${consecutiveDupesCount}/3). Continuing lookahead to backfill any potential missing matches in between...`, 'progress');
+                        }
+                    } else if (stats.added > 0) {
+                        consecutiveDupesCount = 0; // Reset counter when a new match is successfully written
+                    }
+                } else {
+                    sendProgress('page_capture', `No matches found on page ${pageNum}.`);
+                }
+            }
+        });
+        
+        if (result.success) {
+            sendProgress('complete', `Scrape complete! Successfully processed ${result.totalPages} page(s).`, 'success');
+            res.write(`data: ${JSON.stringify({ type: 'done', success: true, totalPages: result.totalPages })}\n\n`);
+            res.end();
+        } else {
+            sendProgress('failed', `Scrape failed: ${result.error}`, 'error');
+            res.write(`data: ${JSON.stringify({ type: 'error', success: false, error: result.error })}\n\n`);
+            res.end();
+        }
+    } catch (err) {
+        console.error('[DEBUG] [Local Scraper] Fatal error:', err.message);
+        sendProgress('error', `Fatal error during scraping: ${err.message}`, 'error');
+        res.write(`data: ${JSON.stringify({ type: 'error', success: false, error: err.message })}\n\n`);
+        res.end();
+    }
+});
+
+// 3.5. POST trigger background results scraping on demand
+app.post('/api/local-vfootball/trigger-background-scrape', (req, res) => {
+    console.log('[DEBUG] [Local API] POST /api/local-vfootball/trigger-background-scrape requested');
+    if (isAutoScrapingActive) {
+        console.log('[DEBUG] [Local API] Scraper manual trigger skipped: background scraper already active.');
+        return res.status(409).json({ 
+            success: false, 
+            message: 'Background results scraper is already running. Please wait for it to complete.' 
+        });
+    }
+    
+    // Execute asynchronously so the response returns immediately without blocking
+    console.log('[DEBUG] [Local API] Manually triggering asynchronous background scraper session...');
+    runAutoScrapeResults();
+    
+    return res.json({ 
+        success: true, 
+        message: 'Background results scraper triggered successfully! Scanning and extracting new matches...' 
+    });
+});
+
+// 4. GET pattern engine on local JSON data
+app.get('/api/local-vfootball/patterns', (req, res) => {
+    console.log('[DEBUG] [Local API] GET /api/local-vfootball/patterns requested');
+    const sortType = req.query.sortType || 'scraped'; // 'scraped' | 'homeTeam'
+    
+    try {
+        if (!fs.existsSync(LOCAL_DB_PATH)) {
+            return res.json({ success: true, count: 0, totalRounds: 0, rounds: [], positionPatterns: [] });
+        }
+        
+        const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+        
+        // Filter England - Virtual matches
+        const englandMatches = allMatches.filter(m => 
+            (m.league === 'England - Virtual' || m.league === 'England League') && 
+            m.date && m.time && m.score
+        );
+        
+        // Step 1: Group matches by round key (date + time)
+        const roundGroups = {};
+        englandMatches.forEach(m => {
+            const key = `${m.date}_${m.time}`;
+            if (!roundGroups[key]) {
+                roundGroups[key] = {
+                    key,
+                    date: m.date,
+                    time: m.time,
+                    matches: []
+                };
+            }
+            roundGroups[key].matches.push(m);
+        });
+        
+        // Step 2: Only analyze rounds with EXACTLY 10 matches (aligned kickoff)
+        const validRounds = Object.values(roundGroups).filter(r => r.matches.length === 10);
+        console.log(`[DEBUG] [Patterns] Total England rounds: ${Object.keys(roundGroups).length}. Aligned rounds (10 matches): ${validRounds.length}`);
+        
+        // Step 3: Sort rounds chronologically (oldest to newest)
+        const parseDateTime = (dStr, tStr) => {
+            try {
+                const [d, m, y] = dStr.split('/').map(Number);
+                const [h, min] = tStr.split(':').map(Number);
+                return new Date(y, m - 1, d, h, min);
+            } catch (err) {
+                return new Date(0);
+            }
+        };
+        
+        validRounds.sort((a, b) => {
+            const dtA = parseDateTime(a.date, a.time);
+            const dtB = parseDateTime(b.date, b.time);
+            return dtA - dtB;
+        });
+        
+        // Step 4: Sort matches within each round to establish the 10 fixed visual positions (0 to 9)
+        validRounds.forEach(round => {
+            if (sortType === 'homeTeam') {
+                round.matches.sort((a, b) => {
+                    const nameA = (a.homeTeam || a.home || '').toLowerCase();
+                    const nameB = (b.homeTeam || b.home || '').toLowerCase();
+                    return nameA.localeCompare(nameB);
+                });
+            } else {
+                // 'scraped' order: keep original Visual Scraped order
+            }
+        });
+        
+        // Step 5: Perform row-by-row position analysis (Positions 0 to 9)
+        const positionPatterns = [];
+        const numPositions = 10;
+        
+        for (let pos = 0; pos < numPositions; pos++) {
+            console.log(`[DEBUG] [Patterns] Analysing position ${pos + 1}/10...`);
+            
+            // Build sequence of outcomes for this position across all sorted rounds
+            const history = [];
+            
+            validRounds.forEach(round => {
+                const match = round.matches[pos];
+                const score = match.score.replace('-', ':').trim();
+                const [hg, ag] = score.split(':').map(Number);
+                
+                let outcome = 'D';
+                if (hg > ag) outcome = 'H';
+                else if (hg < ag) outcome = 'A';
+                
+                history.push({
+                    date: match.date,
+                    time: match.time,
+                    gameId: match.gameId,
+                    homeTeam: match.homeTeam || match.home,
+                    awayTeam: match.awayTeam || match.away,
+                    score,
+                    outcome
+                });
+            });
+            
+            // Analyze statistics
+            const totalCount = history.length;
+            if (totalCount === 0) continue;
+            
+            // A. Streak analysis backwards from newest (index history.length - 1)
+            let currentOutcome = history[totalCount - 1].outcome;
+            let currentStreak = 0;
+            for (let i = totalCount - 1; i >= 0; i--) {
+                if (history[i].outcome === currentOutcome) {
+                    currentStreak++;
+                } else {
+                    break;
+                }
+            }
+            
+            // B. Historical longest streaks
+            let maxHStreak = 0, maxAStreak = 0, maxDStreak = 0;
+            let curH = 0, curA = 0, curD = 0;
+            
+            history.forEach(h => {
+                if (h.outcome === 'H') {
+                    curH++; maxHStreak = Math.max(maxHStreak, curH);
+                    curA = 0; curD = 0;
+                } else if (h.outcome === 'A') {
+                    curA++; maxAStreak = Math.max(maxAStreak, curA);
+                    curH = 0; curD = 0;
+                } else {
+                    curD++; maxDStreak = Math.max(maxDStreak, curD);
+                    curH = 0; curA = 0;
+                }
+            });
+            
+            // C. Transition probabilities (Given outcome at R_t, what is outcome at R_t+1?)
+            const transitions = {
+                H: { H: 0, A: 0, D: 0, total: 0 },
+                A: { H: 0, A: 0, D: 0, total: 0 },
+                D: { H: 0, A: 0, D: 0, total: 0 }
+            };
+            
+            const bttsTransitions = {
+                GG: { GG: 0, NG: 0, total: 0 },
+                NG: { GG: 0, NG: 0, total: 0 }
+            };
+            
+            for (let i = 0; i < totalCount - 1; i++) {
+                // Outcome transitions
+                const cur = history[i].outcome;
+                const nxt = history[i + 1].outcome;
+                transitions[cur][nxt]++;
+                transitions[cur].total++;
+                
+                // BTTS transitions
+                const curParts = history[i].score.split(':').map(Number);
+                const curIsGG = curParts[0] > 0 && curParts[1] > 0;
+                const curKey = curIsGG ? 'GG' : 'NG';
+                
+                const nxtParts = history[i + 1].score.split(':').map(Number);
+                const nxtIsGG = nxtParts[0] > 0 && nxtParts[1] > 0;
+                const nxtKey = nxtIsGG ? 'GG' : 'NG';
+                
+                bttsTransitions[curKey][nxtKey]++;
+                bttsTransitions[curKey].total++;
+            }
+            
+            // Convert transitions to percentages
+            const transitionPct = {};
+            Object.keys(transitions).forEach(outcome => {
+                const data = transitions[outcome];
+                transitionPct[outcome] = {
+                    H: data.total > 0 ? Math.round((data.H / data.total) * 100) : 0,
+                    A: data.total > 0 ? Math.round((data.A / data.total) * 100) : 0,
+                    D: data.total > 0 ? Math.round((data.D / data.total) * 100) : 0,
+                    totalCount: data.total
+                };
+            });
+            
+            const bttsTransitionPct = {};
+            Object.keys(bttsTransitions).forEach(key => {
+                const data = bttsTransitions[key];
+                bttsTransitionPct[key] = {
+                    GG: data.total > 0 ? Math.round((data.GG / data.total) * 100) : 0,
+                    NG: data.total > 0 ? Math.round((data.NG / data.total) * 100) : 0,
+                    totalCount: data.total
+                };
+            });
+            
+            // D. Top recurring scores
+            const scoreCounts = {};
+            history.forEach(h => {
+                scoreCounts[h.score] = (scoreCounts[h.score] || 0) + 1;
+            });
+            const topScores = Object.entries(scoreCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([score, count]) => ({
+                    score,
+                    count,
+                    percent: Math.round((count / totalCount) * 100)
+                }));
+                
+            // E. Basic home/away win & draw counts
+            const hWins = history.filter(h => h.outcome === 'H').length;
+            const aWins = history.filter(h => h.outcome === 'A').length;
+            const draws = history.filter(h => h.outcome === 'D').length;
+            
+            // Both Teams To Score (BTTS) calculation
+            const bttsYes = history.filter(h => {
+                const parts = h.score.split(':').map(Number);
+                return parts[0] > 0 && parts[1] > 0;
+            }).length;
+            const bttsNo = totalCount - bttsYes;
+            
+            // Next prediction based on transition probabilities of current outcome
+            const nextPredicted = { ...transitionPct[currentOutcome] };
+            let predictedOutcome = 'Home Win';
+            let predictedSymbol = 'H';
+            let maxProb = nextPredicted.H;
+            
+            if (nextPredicted.A > maxProb) {
+                maxProb = nextPredicted.A;
+                predictedOutcome = 'Away Win';
+                predictedSymbol = 'A';
+            }
+            if (nextPredicted.D > maxProb) {
+                maxProb = nextPredicted.D;
+                predictedOutcome = 'Draw';
+                predictedSymbol = 'D';
+            }
+            
+            positionPatterns.push({
+                position: pos,
+                positionLabel: `Match Position #${pos + 1}`,
+                currentStreak: {
+                    outcome: currentOutcome,
+                    streak: currentStreak,
+                    label: currentOutcome === 'H' ? 'Home Win' : currentOutcome === 'A' ? 'Away Win' : 'Draw'
+                },
+                longestStreaks: { H: maxHStreak, A: maxAStreak, D: maxDStreak },
+                transitionProbabilities: transitionPct,
+                bttsTransitionProbabilities: bttsTransitionPct,
+                topScores,
+                winLossDrawStats: {
+                    homeWins: hWins,
+                    homeWinPercent: Math.round((hWins / totalCount) * 100),
+                    awayWins: aWins,
+                    awayWinPercent: Math.round((aWins / totalCount) * 100),
+                    draws,
+                    drawPercent: Math.round((draws / totalCount) * 100),
+                    bttsYes,
+                    bttsYesPercent: Math.round((bttsYes / totalCount) * 100),
+                    bttsNo,
+                    bttsNoPercent: Math.round((bttsNo / totalCount) * 100),
+                    totalMatches: totalCount
+                },
+                nextPrediction: {
+                    outcome: predictedOutcome,
+                    symbol: predictedSymbol,
+                    probability: maxProb,
+                    currentOutcome
+                },
+                recentHistory: history.slice(-30).reverse() // Return last 30, newest first
+            });
+        }
+        
+        console.log('[DEBUG] [Patterns] Position analysis completed successfully.');
+        res.json({
+            success: true,
+            totalRounds: validRounds.length,
+            sortType,
+            rounds: validRounds.slice(-10).reverse().map(r => ({
+                key: r.key,
+                date: r.date,
+                time: r.time,
+                matches: r.matches.map(m => ({
+                    homeTeam: m.homeTeam || m.home,
+                    awayTeam: m.awayTeam || m.away,
+                    score: m.score
+                }))
+            })),
+            positionPatterns
+        });
+        
+    } catch (e) {
+        console.error('[DEBUG] [Local API] Pattern analysis failed:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Local helper to compute England positional row patterns
+function computeLocalPatterns(sortType = 'scraped') {
+    if (!fs.existsSync(LOCAL_DB_PATH)) {
+        return { count: 0, totalRounds: 0, positionPatterns: [] };
+    }
+    const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+    const englandMatches = allMatches.filter(m => 
+        (m.league === 'England - Virtual' || m.league === 'England League') && 
+        m.date && m.time && m.score
+    );
+    const roundGroups = {};
+    englandMatches.forEach(m => {
+        const key = `${m.date}_${m.time}`;
+        if (!roundGroups[key]) {
+            roundGroups[key] = { key, date: m.date, time: m.time, matches: [] };
+        }
+        roundGroups[key].matches.push(m);
+    });
+    const validRounds = Object.values(roundGroups).filter(r => r.matches.length === 10);
+    const parseDateTime = (dStr, tStr) => {
+        try {
+            const [d, m, y] = dStr.split('/').map(Number);
+            const [h, min] = tStr.split(':').map(Number);
+            return new Date(y, m - 1, d, h, min);
+        } catch (err) { return new Date(0); }
+    };
+    validRounds.sort((a, b) => parseDateTime(a.date, a.time) - parseDateTime(b.date, b.time));
+    validRounds.forEach(round => {
+        if (sortType === 'homeTeam') {
+            round.matches.sort((a, b) => {
+                const nameA = (a.homeTeam || a.home || '').toLowerCase();
+                const nameB = (b.homeTeam || b.home || '').toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+        }
+    });
+    const positionPatterns = [];
+    const numPositions = 10;
+    for (let pos = 0; pos < numPositions; pos++) {
+        const history = [];
+        validRounds.forEach(round => {
+            const match = round.matches[pos];
+            if (!match) return;
+            const score = match.score.replace('-', ':').trim();
+            const [hg, ag] = score.split(':').map(Number);
+            let outcome = 'D';
+            if (hg > ag) outcome = 'H';
+            else if (hg < ag) outcome = 'A';
+            history.push({
+                date: match.date,
+                time: match.time,
+                homeTeam: match.homeTeam || match.home,
+                awayTeam: match.awayTeam || match.away,
+                score,
+                outcome
+            });
+        });
+        const totalCount = history.length;
+        if (totalCount === 0) continue;
+        let currentOutcome = history[totalCount - 1].outcome;
+        let currentStreak = 0;
+        for (let i = totalCount - 1; i >= 0; i--) {
+            if (history[i].outcome === currentOutcome) {
+                currentStreak++;
+            } else { break; }
+        }
+        const transitions = {
+            H: { H: 0, A: 0, D: 0, total: 0 },
+            A: { H: 0, A: 0, D: 0, total: 0 },
+            D: { H: 0, A: 0, D: 0, total: 0 }
+        };
+        const bttsTransitions = {
+            GG: { GG: 0, NG: 0, total: 0 },
+            NG: { GG: 0, NG: 0, total: 0 }
+        };
+        for (let i = 0; i < totalCount - 1; i++) {
+            const cur = history[i].outcome;
+            const nxt = history[i + 1].outcome;
+            transitions[cur][nxt]++;
+            transitions[cur].total++;
+            const curParts = history[i].score.split(':').map(Number);
+            const curIsGG = curParts[0] > 0 && curParts[1] > 0;
+            const curKey = curIsGG ? 'GG' : 'NG';
+            const nxtParts = history[i + 1].score.split(':').map(Number);
+            const nxtIsGG = nxtParts[0] > 0 && nxtParts[1] > 0;
+            const nxtKey = nxtIsGG ? 'GG' : 'NG';
+            bttsTransitions[curKey][nxtKey]++;
+            bttsTransitions[curKey].total++;
+        }
+        const transitionPct = {};
+        Object.keys(transitions).forEach(outcome => {
+            const data = transitions[outcome];
+            transitionPct[outcome] = {
+                H: data.total > 0 ? Math.round((data.H / data.total) * 100) : 0,
+                A: data.total > 0 ? Math.round((data.A / data.total) * 100) : 0,
+                D: data.total > 0 ? Math.round((data.D / data.total) * 100) : 0,
+            };
+        });
+        const bttsTransitionPct = {};
+        Object.keys(bttsTransitions).forEach(key => {
+            const data = bttsTransitions[key];
+            bttsTransitionPct[key] = {
+                GG: data.total > 0 ? Math.round((data.GG / data.total) * 100) : 0,
+                NG: data.total > 0 ? Math.round((data.NG / data.total) * 100) : 0,
+            };
+        });
+        const hWins = history.filter(h => h.outcome === 'H').length;
+        const aWins = history.filter(h => h.outcome === 'A').length;
+        const draws = history.filter(h => h.outcome === 'D').length;
+        const bttsYes = history.filter(h => {
+            const parts = h.score.split(':').map(Number);
+            return parts[0] > 0 && parts[1] > 0;
+        }).length;
+        const bttsNo = totalCount - bttsYes;
+        positionPatterns.push({
+            position: pos,
+            currentStreak: { outcome: currentOutcome, streak: currentStreak },
+            transitionProbabilities: transitionPct,
+            bttsTransitionProbabilities: bttsTransitionPct,
+            winLossDrawStats: {
+                homeWinPercent: Math.round((hWins / totalCount) * 100),
+                awayWinPercent: Math.round((aWins / totalCount) * 100),
+                drawPercent: Math.round((draws / totalCount) * 100),
+                bttsYesPercent: Math.round((bttsYes / totalCount) * 100),
+                bttsNoPercent: Math.round((bttsNo / totalCount) * 100),
+                totalMatches: totalCount
+            }
+        });
+    }
+    return { count: englandMatches.length, totalRounds: validRounds.length, positionPatterns };
+}
+
+// 5. GET DeepSeek Live List Predictions using local England visual patterns
+app.get('/api/local-vfootball/predict-live', async (req, res) => {
+    console.log('[DEBUG] [Local API] GET /api/local-vfootball/predict-live requested');
+    try {
+        // Step 1: Scrape real-time live list vFootball games on SportyBet
+        const { scrapeLiveListOnDemand } = require('./scraper');
+        console.log('[DEBUG] [Local API] Step 1: Scraping SportyBet live list on-demand...');
+        const liveListGames = await scrapeLiveListOnDemand();
+        
+        if (!liveListGames || liveListGames.length === 0) {
+            console.warn('[DEBUG] [Local API] Scraper returned empty or null live list.');
+            return res.json({
+                success: true,
+                message: 'No live matches could be scraped from the SportyBet live list. Please check back in a moment.',
+                predictions: [],
+                fixtures: null
+            });
+        }
+
+        // Step 2: Look for England League groups (both in-play and upcoming)
+        const englandGroup = liveListGames.find(g => 
+            g.league && g.league.toLowerCase().includes('england') && !g.league.toLowerCase().includes('upcoming')
+        );
+        const upcomingGroup = liveListGames.find(g => 
+            g.league && g.league.toLowerCase().includes('england') && g.league.toLowerCase().includes('upcoming')
+        );
+        
+        let targetGroup = null;
+        if (englandGroup && englandGroup.matches && englandGroup.matches.length > 0) {
+            targetGroup = englandGroup;
+            console.log(`[DEBUG] [Local API] England group has ${englandGroup.matches.length} active in-play matches. Selected IN-PLAY mode.`);
+        } else if (upcomingGroup && upcomingGroup.matches && upcomingGroup.matches.length > 0) {
+            targetGroup = upcomingGroup;
+            console.log(`[DEBUG] [Local API] No active in-play England matches found. Selected UPCOMING fallback mode with ${upcomingGroup.matches.length} matches.`);
+        }
+        
+        if (!targetGroup || !targetGroup.matches || targetGroup.matches.length === 0) {
+            console.warn('[DEBUG] [Local API] No England League matches found in scraped data.');
+            return res.json({
+                success: true,
+                message: 'Active England League matches are not in play or upcoming on SportyBet right now. Current live leagues: ' + liveListGames.map(g => g.league).join(', '),
+                predictions: [],
+                fixtures: null,
+                allLeagues: liveListGames
+            });
+        }
+        
+        // Sort matches alphabetically by home team to match the visual row positions (0 to 9)
+        console.log(`[DEBUG] [Local API] Sorting ${targetGroup.matches.length} matches alphabetically by home team for correct positional alignment...`);
+        const sortedMatches = [...targetGroup.matches].sort((a, b) => {
+            const nameA = (a.home || '').toLowerCase();
+            const nameB = (b.home || '').toLowerCase();
+            return nameA.localeCompare(nameB);
+        });
+        
+        sortedMatches.forEach((m, idx) => {
+            console.log(`  [Match Sorted] Position #${idx + 1}: ${m.home} vs ${m.away} (${m.time || 'N/A'})`);
+        });
+
+        // Step 3: Compute the latest visual positional patterns from the database (force homeTeam sorting)
+        console.log('[DEBUG] [Local API] Computing local database pattern profiles with alphabetical sorting...');
+        const patternsData = computeLocalPatterns('homeTeam');
+        const posPatterns = patternsData.positionPatterns || [];
+
+        if (posPatterns.length === 0) {
+            console.error('[DEBUG] [Local API] Failed to compute local patterns: positionPatterns array is empty.');
+            return res.json({
+                success: false,
+                error: 'Positional database patterns are empty. Scrape some historic England League rounds first.'
+            });
+        }
+
+        // Step 4: Build cross-reference fixture data string for DeepSeek analysis
+        console.log('[DEBUG] [Local API] Step 4: Building cross-reference fixture data list for AI analyzer...');
+        const fixturesDataList = [];
+        sortedMatches.forEach((match, index) => {
+            if (index >= 10) return; // vFootball has exactly 10 matches
+            const pattern = posPatterns[index] || {
+                winLossDrawStats: { homeWinPercent: 0, drawPercent: 0, awayWinPercent: 0, bttsYesPercent: 0, bttsNoPercent: 0, totalMatches: 0 },
+                currentStreak: { outcome: 'D', streak: 0 },
+                transitionProbabilities: { D: { H: 0, D: 0, A: 0 }, H: { H: 0, D: 0, A: 0 }, A: { H: 0, D: 0, A: 0 } },
+                bttsTransitionProbabilities: { GG: { GG: 0, NG: 0 }, NG: { GG: 0, NG: 0 } }
+            };
+            
+            fixturesDataList.push({
+                position: index,
+                home: match.home,
+                away: match.away,
+                status: match.status || (targetGroup.league.toLowerCase().includes('upcoming') ? 'UPCOMING' : 'IN-PLAY'),
+                time: match.time || '',
+                odds: match.score || '', // Odds are stored in the score field for live list
+                stats: pattern.winLossDrawStats,
+                streak: pattern.currentStreak,
+                transitions: pattern.transitionProbabilities,
+                bttsTransitions: pattern.bttsTransitionProbabilities
+            });
+        });
+
+        const fixturesDataStr = fixturesDataList.map((f, i) => `
+POSITION #${i+1}:
+Matchup: ${f.home} vs ${f.away} (Status: ${f.status}, Kickoff Time/Min: ${f.time || 'N/A'})
+Live odds string: ${f.odds}
+Visual Row Position Historical Win Stats (Over ${f.stats.totalMatches} matches):
+- Home Win: ${f.stats.homeWinPercent}% | Draw: ${f.stats.drawPercent}% | Away Win: ${f.stats.awayWinPercent}%
+- BTTS GG (Both Score): ${f.stats.bttsYesPercent}% | BTTS NG (One/None): ${f.stats.bttsNoPercent}%
+Visual Row Position Current Streaks:
+- Position Row currently on a ${f.streak.streak}x ${f.streak.outcome === 'H' ? 'Home Win' : f.streak.outcome === 'A' ? 'Away Win' : 'Draw'} streak.
+Visual Row Position Markov Next-Outcome Transition Probabilities:
+- After a Draw usually transitions to → H:${f.transitions.D?.H || 0}% | D:${f.transitions.D?.D || 0}% | A:${f.transitions.D?.A || 0}%
+- After a Home Loss (Away Win - A) transitions to → H:${f.transitions.A?.H || 0}% | D:${f.transitions.A?.D || 0}% | A:${f.transitions.A?.A || 0}%
+- After an Away Loss (Home Win - H) transitions to → H:${f.transitions.H?.H || 0}% | D:${f.transitions.H?.D || 0}% | A:${f.transitions.H?.A || 0}%
+Visual Row Position Markov BTTS Transition Probabilities:
+- After Both Score (GG) transitions to → GG:${f.bttsTransitions.GG?.GG || 0}% | NG:${f.bttsTransitions.GG?.NG || 0}%
+- After One/None (NG) transitions to → GG:${f.bttsTransitions.NG?.GG || 0}% | NG:${f.bttsTransitions.NG?.NG || 0}%
+`).join('\n');
+
+        // Step 5: Send structured prompt to DeepSeek
+        const { callPredictionAI, parseAIJson } = require('./prediction_ai');
+        
+        const prompt = `
+You are DeepSeek Chat, an elite sports betting Virtual Football prediction model. 
+Your task is to analyze the 10 virtual matches starting in the next England League round using historical visual row position statistics.
+
+INSTRUCTIONS:
+1. Review the historical win rates, streaks, and Markov transitions for each visual row position.
+2. Formulate predictions for all 10 positions.
+3. Be highly critical and analytical. If a position currently has a long win streak, account for regression to the mean.
+4. Return a JSON array of exactly 10 prediction objects. DO NOT wrap the output in markdown code fences (\`\`\`json), just return the raw JSON array.
+
+Each object must contain the following keys:
+- "position": number (0 to 9)
+- "match": string (e.g. "Arsenal vs Chelsea")
+- "status": string ("IN-PLAY" or "UPCOMING")
+- "predictedOutcome": string ("H" or "D" or "A")
+- "predictedBtts": string ("GG" or "NG")
+- "confidence": number (0 to 100 representing confidence score)
+- "reasoning": string (Brief 1-sentence expert prediction reasoning combining matchup, row statistics, and Markov transitions)
+- "color": string (hex color representing predicted outcome: H=#00FF88, D=#FFD700, A=#A78BFA)
+
+FIXTURES AND PATTERNS DATA:
+${fixturesDataStr}
+`;
+
+        console.log('[DEBUG] [Predict Live] 📡 Dispatching structured prompt to DeepSeek Chat API...');
+        const aiResponse = await callPredictionAI(prompt, 'deepseek', { temperature: 0.2 });
+        let predictions = parseAIJson(aiResponse.content);
+        
+        if (Array.isArray(predictions) && predictions.length > 0) {
+            // Sort predictions chronologically by position (0 to 9) to ensure correct visual order
+            predictions.sort((a, b) => (a.position || 0) - (b.position || 0));
+            // Attach match times from the sortedMatches array for direct access on the frontend
+            predictions.forEach((pred) => {
+                const match = sortedMatches[pred.position];
+                if (match) {
+                    pred.time = match.time || '';
+                }
+            });
+            console.log(`[DEBUG] [Predict Live] Sorted ${predictions.length} AI predictions and attached match times.`);
+            
+            // Save to local JSON history file
+            try {
+                savePredictionsToHistory(targetGroup.league, sortedMatches, predictions);
+            } catch (saveErr) {
+                console.error('[DEBUG] [Predict Live] Failed to save predictions to history (non-fatal):', saveErr.message);
+            }
+        } else {
+            console.warn('[DEBUG] [Predict Live] AI did not return a valid predictions array. Initializing empty.');
+            predictions = [];
+        }
+        
+        console.log(`[DEBUG] [Predict Live] ✅ Successfully parsed and sorted ${predictions.length} DeepSeek predictions for England League.`);
+        res.json({
+            success: true,
+            provider: 'deepseek',
+            league: targetGroup.league,
+            matches: sortedMatches,
+            predictions
+        });
+
+    } catch (err) {
+        console.error('[DEBUG] [Local API] predict-live failed:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PREDICTIONS HISTORY AND ACCURACY RESOLUTION (LOCAL FILE STORE)
+// ─────────────────────────────────────────────────────────────────────────────
+const PREDICTIONS_HISTORY_PATH = path.join(__dirname, 'local_predictions_history.json');
+
+const abbreviateTeamBackend = (name) => {
+  if (!name) return '???';
+  const clean = name.trim();
+  const lower = clean.toLowerCase();
+  const teamMap = {
+    'arsenal': 'ARS', 'aston villa': 'AVL', 'chelsea': 'CHE', 'everton': 'EVE',
+    'liverpool': 'LIV', 'manchester city': 'MCI', 'man city': 'MCI', 'manchester united': 'MUN',
+    'man united': 'MUN', 'newcastle': 'NEW', 'tottenham': 'TOT', 'spurs': 'TOT',
+    'west ham': 'WHU', 'leicester': 'LEI', 'wolves': 'WOL', 'wolverhampton': 'WOL',
+    'southampton': 'SOU', 'bournemouth': 'BOU', 'crystal palace': 'CRY', 'brighton': 'BHA',
+    'brentford': 'BRE', 'fulham': 'FUL', 'nottingham': 'NOT', 'nottingham forest': 'NOT',
+    'sheffield utd': 'SHU', 'sheffield united': 'SHU', 'leeds': 'LEE', 'burnley': 'BUR',
+    'watford': 'WAT', 'norwich': 'NOR', 'luton': 'LUT', 'luton town': 'LUT', 'sunderland': 'SUN'
+  };
+  if (teamMap[lower]) return teamMap[lower];
+  const words = clean.split(/\s+/);
+  if (words.length > 1) {
+    const abbrev = words.map(w => w[0]).join('').toUpperCase();
+    if (abbrev.length >= 2 && abbrev.length <= 4) return abbrev;
+  }
+  return clean.substring(0, 3).toUpperCase();
+};
+
+function savePredictionsToHistory(league, matches, predictions) {
+    console.log('[DEBUG] [Predictions History] Saving predictions to history...');
+    let history = [];
+    if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
+        try {
+            history = JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
+        } catch (e) {
+            console.error('[DEBUG] [Predictions History] Error reading history file, resetting:', e.message);
+            history = [];
+        }
+    }
+    const firstMatch = matches[0];
+    if (!firstMatch) return;
+    
+    const date = firstMatch.date || new Date().toLocaleDateString('en-GB'); // DD/MM/YYYY
+    let time = firstMatch.time || '';
+    if (time.includes("'") || time.includes("LIVE") || !time.includes(":")) {
+        const now = new Date();
+        const hrs = String(now.getHours()).padStart(2, '0');
+        const mins = String(now.getMinutes()).padStart(2, '0');
+        time = `${hrs}:${mins} (Live Captured)`;
+    }
+    
+    const roundId = `${date.replace(/\//g, '-')}_${time.replace(/[^a-zA-Z0-9]/g, '_')}_${league.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const existingIndex = history.findIndex(h => h.id === roundId);
+    
+    const roundData = {
+        id: roundId,
+        date,
+        time,
+        league,
+        capturedAt: new Date().toISOString(),
+        predictions: predictions.map(p => {
+            const m = matches[p.position];
+            return {
+                ...p,
+                homeTeam: m ? (m.homeTeam || m.home) : '',
+                awayTeam: m ? (m.awayTeam || m.away) : ''
+            };
+        })
+    };
+    
+    if (existingIndex !== -1) {
+        history[existingIndex] = roundData;
+        console.log(`[DEBUG] [Predictions History] Updated existing round predictions for ID: ${roundId}`);
+    } else {
+        history.push(roundData);
+        console.log(`[DEBUG] [Predictions History] Added new round predictions for ID: ${roundId}`);
+    }
+    
+    // Limit history length to conserve storage
+    if (history.length > 100) {
+        history.shift();
+    }
+    
+    fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify(history, null, 2), 'utf8');
+}
+
+function resolvePredictionOutcomes(predictions, date) {
+    if (!fs.existsSync(LOCAL_DB_PATH)) return predictions;
+    let finishedMatches = [];
+    try {
+        finishedMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+    } catch (e) {
+        return predictions;
+    }
+    
+    return predictions.map(pred => {
+        const homeAbbr = abbreviateTeamBackend(pred.homeTeam || pred.match.split(' vs ')[0]);
+        const awayAbbr = abbreviateTeamBackend(pred.awayTeam || pred.match.split(' vs ')[1]);
+        
+        // Find matching finished result on the same date
+        const actual = finishedMatches.find(m => {
+            const dateMatch = m.date === date;
+            const mHomeAbbr = abbreviateTeamBackend(m.homeTeam || m.home);
+            const mAwayAbbr = abbreviateTeamBackend(m.awayTeam || m.away);
+            return dateMatch && mHomeAbbr === homeAbbr && mAwayAbbr === awayAbbr;
+        });
+        
+        if (actual && actual.score && /^\d+[-:]\d+$/.test(actual.score.trim())) {
+            const score = actual.score.replace('-', ':').trim();
+            const [hg, ag] = score.split(':').map(Number);
+            let actualOutcome = 'D';
+            if (hg > ag) actualOutcome = 'H';
+            else if (hg < ag) actualOutcome = 'A';
+            
+            const isGG = hg > 0 && ag > 0;
+            const actualBtts = isGG ? 'GG' : 'NG';
+            
+            return {
+                ...pred,
+                actualScore: score,
+                actualOutcome,
+                actualBtts,
+                outcomeCorrect: pred.predictedOutcome === actualOutcome,
+                bttsCorrect: pred.predictedBtts === actualBtts,
+                resolved: true
+            };
+        }
+        
+        return {
+            ...pred,
+            resolved: false
+        };
+    });
+}
+
+// 6. GET predictions history resolved against completed scores
+app.get('/api/local-vfootball/predictions-history', (req, res) => {
+    console.log('[DEBUG] [Local API] GET /api/local-vfootball/predictions-history requested');
+    try {
+        if (!fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
+            return res.json({ success: true, history: [] });
+        }
+        
+        const history = JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
+        const resolvedHistory = history.map(round => {
+            return {
+                ...round,
+                predictions: resolvePredictionOutcomes(round.predictions, round.date)
+            };
+        });
+        
+        // Return reverse chronological order (newest first)
+        resolvedHistory.reverse();
+        
+        console.log(`[DEBUG] [Local API] Returning ${resolvedHistory.length} rounds of prediction history.`);
+        res.json({ success: true, history: resolvedHistory });
+    } catch (err) {
+        console.error('[DEBUG] [Local API] Failed to fetch predictions history:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── Automatic Background Results Scraper (Every 90 Seconds) ──────────────────
+
+async function runAutoScrapeResults() {
+    if (isAutoScrapingActive) {
+        console.log('[Auto Scrape] ⏳ Results scraper is already active. Skipping...');
+        return;
+    }
+    
+    isAutoScrapingActive = true;
+    const today = new Date().toISOString().split('T')[0];
+    console.log(`[Auto Scrape] 🔄 Starting automatic results scraper for "England League" on ${today}...`);
+    
+    try {
+        const { nativeCaptureLeagueResults } = require('./native_scraper');
+        
+        let consecutiveDupesCount = 0;
+        const result = await nativeCaptureLeagueResults('England League', today, {
+            onPageCaptured: async (err, matchRows, pageNum) => {
+                if (err) {
+                    console.error(`[Auto Scrape Page Error] Page ${pageNum}: ${err.message}`);
+                    return;
+                }
+                if (matchRows && matchRows.length > 0) {
+                    const stats = saveToLocalJson(matchRows);
+                    console.log(`[Auto Scrape Saved] Page ${pageNum}: Added ${stats.added} matches. Total local DB: ${stats.total}`);
+                    
+                    if (stats.added === 0 && stats.dupes > 0) {
+                        consecutiveDupesCount++;
+                        if (consecutiveDupesCount >= 3) {
+                            console.log(`[Auto Scrape] 🛑 All matches on 3 consecutive pages already exist in storage. Halting early to conserve resources.`);
+                            return { stop: true };
+                        } else {
+                            console.log(`[Auto Scrape] Page ${pageNum} has only duplicates (consecutive: ${consecutiveDupesCount}/3). Continuing lookahead to backfill any potential missing matches in between...`);
+                        }
+                    } else if (stats.added > 0) {
+                        consecutiveDupesCount = 0; // Reset counter when a new match is successfully written
+                    }
+                }
+            }
+        });
+        
+        if (result.success) {
+            console.log(`[Auto Scrape] ✅ Successfully completed automatic scrape. Total pages: ${result.totalPages}`);
+        } else {
+            console.error(`[Auto Scrape Failed] Scraper returned failure: ${result.error}`);
+        }
+    } catch (err) {
+        console.error(`[Auto Scrape Fatal Error] Background scraper failed:`, err.message);
+    } finally {
+        isAutoScrapingActive = false;
+    }
+}
+
+// Trigger once on server startup, then poll every 90 seconds
+setTimeout(() => {
+    runAutoScrapeResults();
+}, 5000); // 5 seconds after boot
+
+setInterval(() => {
+    runAutoScrapeResults();
+}, 90 * 1000); // 90 seconds (1.5 minutes)
 
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, '0.0.0.0', () => {

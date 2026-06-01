@@ -12,6 +12,7 @@ import LeagueIntelligencePanel from './components/LeagueIntelligencePanel';
 import PatternIntelligence from './components/PatternIntelligence';
 import NavigationBar from './components/NavigationBar';
 import AdvancedPredictionEngine from './components/AdvancedPredictionEngine';
+import LocalPatternEngine from './components/LocalPatternEngine';
 import './index.css';
 
 // ── Live scores SSE hook ──────────────────────────────────────────────────────
@@ -419,12 +420,13 @@ export default function App() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <NavigationBar />
       <Routes>
-        <Route path="/"          element={<PatternIntelligence />} />
+        <Route path="/"          element={<LocalPatternEngine />} />
         <Route path="/advanced-engine" element={<AdvancedPredictionEngine />} />
         <Route path="/daily-tips" element={<DailyTips />} />
         <Route path="/admin"     element={<AdminDashboard />} />
         <Route path="/behaviour" element={<BehaviourPatterns />} />
         <Route path="/results" element={<LandingPage />} />
+        <Route path="/local-engine" element={<LocalPatternEngine />} />
         <Route path="*"          element={<Navigate to="/" replace />} />
       </Routes>
     </div>

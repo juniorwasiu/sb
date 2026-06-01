@@ -850,3 +850,31 @@ body {
     padding: 16px;
   }
 }
+
+/* ── LocalPatternEngine Mobile Adaptability ── */
+.pattern-engine-root {
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 24px 32px;
+  display: flex;
+  gap: 28px;
+  flex-direction: column;
+  width: 100%;
+}
+
+.pattern-engine-title {
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+@media (max-width: 768px) {
+  .pattern-engine-root {
+    padding: 16px 12px;
+    gap: 20px;
+  }
+  
+  .pattern-engine-title {
+    font-size: 2rem !important;
+  }
+}

@@ -244,45 +244,119 @@ async function captureLeagueResults(leagueName, targetDate = null, options = {})
         // ── Step 3: Parse Optional Date Target ─────────────────────
         let tDateStr = null;
         let tDayNum = null;
-        if (targetDate) {
-            const d = new Date(targetDate);
-            if (!isNaN(d.getTime())) {
+        let targetYear = null;
+        let targetMonthIdx = null;
+
+        if (targetDate && targetDate.includes('-')) {
+            const parts = targetDate.split('-');
+            if (parts.length === 3) {
+                targetYear = parseInt(parts[0], 10);
+                targetMonthIdx = parseInt(parts[1], 10) - 1; // 0-indexed month
+                tDayNum = parseInt(parts[2], 10).toString();
                 const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                tDateStr = `${shortMonths[d.getMonth()]} ${d.getFullYear()}`;
-                tDayNum = d.getDate().toString();
+                tDateStr = `${shortMonths[targetMonthIdx]} ${targetYear}`;
             }
         }
 
         console.log(`[Screenshot Service] [3/6] 🔍 Handling Date Selection: ${tDateStr ? tDateStr + ' Day ' + tDayNum : 'Default/Today'}...`);
         await new Promise(r => setTimeout(r, 4000)); // wait for React to mount
 
-        if (tDateStr && tDayNum) {
+        if (targetYear !== null && targetMonthIdx !== null && tDayNum !== null) {
             const clickedPicker = await clickDropdownIndex(page, 0, "Date Picker");
             if (clickedPicker) {
                 await new Promise(r => setTimeout(r, 1500));
-                await page.evaluate(async (targetMonth, targetDayNum) => {
+                await page.evaluate(async (targetMonthIdx, targetYear, targetDayNum) => {
                     const sleep = ms => new Promise(r => setTimeout(r, ms));
                     const calendar = document.querySelector('.vdp-datepicker__calendar');
                     if (!calendar) return;
 
-                    let attempts = 0;
-                    while (attempts < 24) {
-                        const headerSpans = Array.from(calendar.querySelectorAll('header span'));
-                        const titleSpan = headerSpans.length >= 3 ? headerSpans[1] : headerSpans[0];
-                        if (titleSpan && titleSpan.textContent.trim().includes(targetMonth)) break;
+                    const monthAbbrevMap = {
+                        jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+                    };
+                    const targetVal = targetYear * 12 + targetMonthIdx;
 
-                        const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
-                        if (prevBtn) {
-                            prevBtn.click();
-                            await sleep(400);
+                    let attempts = 0;
+                    while (attempts < 36) { // allow up to 3 years of navigation
+                        const headerSpans = Array.from(calendar.querySelectorAll('header span'));
+                        // Find the span containing a 4-digit year, which uniquely identifies the Month-Year title
+                        const titleSpan = headerSpans.find(span => span.textContent.match(/\d{4}/)) || 
+                                          (headerSpans.length >= 3 ? headerSpans[1] : headerSpans[0]);
+                        
+                        if (!titleSpan) {
+                            console.log('[Screenshot Scraper Calendar Navigation] Could not locate calendar title span!');
+                            break;
+                        }
+
+                        const titleText = titleSpan.textContent.trim();
+                        const textLower = titleText.toLowerCase();
+                        let currentMonthIdx = -1;
+                        for (const [key, idx] of Object.entries(monthAbbrevMap)) {
+                            if (textLower.includes(key)) {
+                                currentMonthIdx = idx;
+                                break;
+                            }
+                        }
+                        
+                        const yearMatch = titleText.match(/\d{4}/);
+                        const currentYear = yearMatch ? parseInt(yearMatch[0], 10) : null;
+
+                        console.log(`[Screenshot Scraper Calendar Navigation] Attempt ${attempts}: Current title = "${titleText}" (Year: ${currentYear}, MonthIdx: ${currentMonthIdx}). Target Year: ${targetYear}, MonthIdx: ${targetMonthIdx}`);
+
+                        if (currentMonthIdx !== -1 && currentYear !== null) {
+                            const currentVal = currentYear * 12 + currentMonthIdx;
+                            if (currentVal === targetVal) {
+                                console.log(`[Screenshot Scraper Calendar Navigation] Correct month reached: "${titleText}"`);
+                                break;
+                            }
+
+                            if (currentVal > targetVal) {
+                                // Target is in the past, click prev
+                                const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
+                                if (prevBtn) {
+                                    console.log('[Screenshot Scraper Calendar Navigation] Clicking PREV button...');
+                                    prevBtn.click();
+                                    await sleep(500);
+                                } else {
+                                    console.log('[Screenshot Scraper Calendar Navigation] PREV button not found!');
+                                    break;
+                                }
+                            } else {
+                                // Target is in the future, click next
+                                const nextBtn = calendar.querySelector('header .next') || headerSpans[headerSpans.length - 1];
+                                if (nextBtn) {
+                                    console.log('[Screenshot Scraper Calendar Navigation] Clicking NEXT button...');
+                                    nextBtn.click();
+                                    await sleep(500);
+                                } else {
+                                    console.log('[Screenshot Scraper Calendar Navigation] NEXT button not found!');
+                                    break;
+                                }
+                            }
+                        } else {
+                            console.log(`[Screenshot Scraper Calendar Navigation] Failed to parse month/year from title text: "${titleText}"`);
+                            // Fallback: click prev
+                            const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
+                            if (prevBtn) {
+                                prevBtn.click();
+                                await sleep(500);
+                            } else {
+                                break;
+                            }
                         }
                         attempts++;
                     }
                     await sleep(800);
+
+                    // Click the specific day cell
                     const cells = Array.from(document.querySelectorAll('.vdp-datepicker__calendar .cell.day:not(.disabled):not(.blank)'));
                     const cell = cells.find(c => c.textContent.trim() === targetDayNum);
-                    if (cell) cell.click();
-                }, tDateStr, tDayNum);
+                    if (cell) {
+                        console.log(`[Screenshot Scraper Calendar Navigation] Clicking day cell: "${targetDayNum}"`);
+                        cell.click();
+                    } else {
+                        console.log(`[Screenshot Scraper Calendar Navigation] Day cell "${targetDayNum}" not found in available cells!`);
+                    }
+                }, targetMonthIdx, targetYear, tDayNum);
 
                 await new Promise(r => setTimeout(r, 6000)); // Crucial to wait for deep refresh 
             }

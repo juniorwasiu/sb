@@ -175,34 +175,105 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
         const resolvedDate = targetDate || new Date().toISOString().split('T')[0];
         console.log(`[Native Scraper] 🎯 Selecting date: ${resolvedDate}`);
 
-        const d = new Date(resolvedDate);
-        if (!isNaN(d.getTime())) {
-            const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const tDateStr = `${shortMonths[d.getMonth()]} ${d.getFullYear()}`; // e.g. "Apr 2026"
-            const tDayNum  = d.getDate().toString();                            // e.g. "17"
+        let tDateStr = null;
+        let tDayNum = null;
+        let targetYear = null;
+        let targetMonthIdx = null;
 
-            console.log(`[Native Scraper] 📅 Opening date picker → target: ${tDateStr} Day ${tDayNum}`);
+        if (resolvedDate.includes('-')) {
+            const parts = resolvedDate.split('-');
+            if (parts.length === 3) {
+                targetYear = parseInt(parts[0], 10);
+                targetMonthIdx = parseInt(parts[1], 10) - 1; // 0-indexed month
+                tDayNum = parseInt(parts[2], 10).toString();
+                const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                tDateStr = `${shortMonths[targetMonthIdx]} ${targetYear}`;
+            }
+        }
+
+        if (targetYear !== null && targetMonthIdx !== null && tDayNum !== null) {
+            console.log(`[Native Scraper] 📅 Opening date picker → target: ${tDateStr} (Year: ${targetYear}, MonthIdx: ${targetMonthIdx}) Day ${tDayNum}`);
             const clickedPicker = await clickDropdownIndex(page, 0, "Date Picker");
             if (clickedPicker) {
                 await new Promise(r => setTimeout(r, 1500));
 
-                await page.evaluate(async (targetMonthYear, targetDayNum) => {
+                await page.evaluate(async (targetMonthIdx, targetYear, targetDayNum) => {
                     const sleep = ms => new Promise(r => setTimeout(r, ms));
                     const calendar = document.querySelector('.vdp-datepicker__calendar');
                     if (!calendar) return;
 
-                    // Navigate calendar to the correct month/year
-                    let attempts = 0;
-                    while (attempts < 24) {
-                        const headerSpans = Array.from(calendar.querySelectorAll('header span'));
-                        // headerSpans[1] is the month+year title in SportyBet's calendar
-                        const titleSpan = headerSpans.length >= 3 ? headerSpans[1] : headerSpans[0];
-                        if (titleSpan && titleSpan.textContent.trim().includes(targetMonthYear)) break;
+                    const monthAbbrevMap = {
+                        jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+                    };
+                    const targetVal = targetYear * 12 + targetMonthIdx;
 
-                        const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
-                        if (prevBtn) {
-                            prevBtn.click();
-                            await sleep(400);
+                    let attempts = 0;
+                    while (attempts < 36) { // allow up to 3 years of navigation
+                        const headerSpans = Array.from(calendar.querySelectorAll('header span'));
+                        // Find the span containing a 4-digit year, which uniquely identifies the Month-Year title
+                        const titleSpan = headerSpans.find(span => span.textContent.match(/\d{4}/)) || 
+                                          (headerSpans.length >= 3 ? headerSpans[1] : headerSpans[0]);
+                        
+                        if (!titleSpan) {
+                            console.log('[Native Scraper Calendar Navigation] Could not locate calendar title span!');
+                            break;
+                        }
+
+                        const titleText = titleSpan.textContent.trim();
+                        const textLower = titleText.toLowerCase();
+                        let currentMonthIdx = -1;
+                        for (const [key, idx] of Object.entries(monthAbbrevMap)) {
+                            if (textLower.includes(key)) {
+                                currentMonthIdx = idx;
+                                break;
+                            }
+                        }
+                        
+                        const yearMatch = titleText.match(/\d{4}/);
+                        const currentYear = yearMatch ? parseInt(yearMatch[0], 10) : null;
+
+                        console.log(`[Native Scraper Calendar Navigation] Attempt ${attempts}: Current title = "${titleText}" (Year: ${currentYear}, MonthIdx: ${currentMonthIdx}). Target Year: ${targetYear}, MonthIdx: ${targetMonthIdx}`);
+
+                        if (currentMonthIdx !== -1 && currentYear !== null) {
+                            const currentVal = currentYear * 12 + currentMonthIdx;
+                            if (currentVal === targetVal) {
+                                console.log(`[Native Scraper Calendar Navigation] Correct month reached: "${titleText}"`);
+                                break;
+                            }
+
+                            if (currentVal > targetVal) {
+                                // Target is in the past, click prev
+                                const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
+                                if (prevBtn) {
+                                    console.log('[Native Scraper Calendar Navigation] Clicking PREV button...');
+                                    prevBtn.click();
+                                    await sleep(500);
+                                } else {
+                                    console.log('[Native Scraper Calendar Navigation] PREV button not found!');
+                                    break;
+                                }
+                            } else {
+                                // Target is in the future, click next
+                                const nextBtn = calendar.querySelector('header .next') || headerSpans[headerSpans.length - 1];
+                                if (nextBtn) {
+                                    console.log('[Native Scraper Calendar Navigation] Clicking NEXT button...');
+                                    nextBtn.click();
+                                    await sleep(500);
+                                } else {
+                                    console.log('[Native Scraper Calendar Navigation] NEXT button not found!');
+                                    break;
+                                }
+                            }
+                        } else {
+                            console.log(`[Native Scraper Calendar Navigation] Failed to parse month/year from title text: "${titleText}"`);
+                            // Fallback: click prev
+                            const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
+                            if (prevBtn) {
+                                prevBtn.click();
+                                await sleep(500);
+                            } else {
+                                break;
+                            }
                         }
                         attempts++;
                     }
@@ -211,8 +282,13 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
                     // Click the specific day cell
                     const cells = Array.from(document.querySelectorAll('.vdp-datepicker__calendar .cell.day:not(.disabled):not(.blank)'));
                     const cell = cells.find(c => c.textContent.trim() === targetDayNum);
-                    if (cell) cell.click();
-                }, tDateStr, tDayNum);
+                    if (cell) {
+                        console.log(`[Native Scraper Calendar Navigation] Clicking day cell: "${targetDayNum}"`);
+                        cell.click();
+                    } else {
+                        console.log(`[Native Scraper Calendar Navigation] Day cell "${targetDayNum}" not found in available cells!`);
+                    }
+                }, targetMonthIdx, targetYear, tDayNum);
 
                 await new Promise(r => setTimeout(r, 6000)); // Match screenshot_scraper's wait for deep refresh
             }
@@ -244,7 +320,12 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
             if (pageMatches.length > 0) {
                 allMatches = allMatches.concat(pageMatches);
                 // Call the hook to handle files/upload/cleanup
-                await onPageCaptured(null, pageMatches, pageNum);
+                const hookResult = await onPageCaptured(null, pageMatches, pageNum);
+                if (hookResult && hookResult.stop) {
+                    console.log(`[Native Scraper] 🛑 Hook requested termination (database is fully up-to-date). Halting page extraction early.`);
+                    hasNextPage = false;
+                    break;
+                }
             }
 
             // Pagination detection

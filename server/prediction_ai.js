@@ -15,7 +15,7 @@
 //   const json   = parseAIJson(result.content);
 // ─────────────────────────────────────────────────────────────────────────────
 
-require('dotenv').config();
+require('dotenv').config({ override: true });
 
 let GoogleGenerativeAI;
 try {

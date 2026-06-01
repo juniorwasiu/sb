@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const { OpenAI } = require('openai');
 const Tesseract = require('tesseract.js');
 const Jimp = require('jimp');

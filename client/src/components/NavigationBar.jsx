@@ -10,6 +10,7 @@ export default function NavigationBar() {
     { path: '/daily-tips', label: 'Daily Tips', icon: '🧠' },
     { path: '/behaviour', label: 'Behaviour', icon: '🧬' },
     { path: '/results', label: 'Dashboard', icon: '📋' },
+    { path: '/local-engine', label: 'Local Store', icon: '💾' },
     { path: '/admin', label: 'Admin', icon: '⚙️' }
   ];
 

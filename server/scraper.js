@@ -543,21 +543,46 @@ async function reloadContinuousScraper() {
 // immediate next fixtures that pattern intelligence should predict.
 // ─────────────────────────────────────────────────────────────────────────────
 async function scrapeLiveListOnDemand() {
-    if (!_scraperCtrl.browser) {
-        console.warn('[Live Scraper OnDemand] No browser instance available.');
-        return [];
+    let tempBrowser = null;
+    let browserToUse = _scraperCtrl.browser;
+    
+    // Check if we have an active, connected browser instance
+    if (!browserToUse || typeof browserToUse.isConnected !== 'function' || !browserToUse.isConnected()) {
+        console.log('[Live Scraper OnDemand] No active browser instance available. Launching temporary Chrome instance...');
+        try {
+            tempBrowser = await puppeteer.launch(buildLaunchOptions());
+            browserToUse = tempBrowser;
+        } catch (launchErr) {
+            console.error('[Live Scraper OnDemand] Failed to launch temporary browser:', launchErr.message);
+            throw new Error(`Browser Launch Failed: ${launchErr.message}`);
+        }
     }
     
     let page;
     try {
         console.log('[Live Scraper OnDemand] Opening new page for live_list...');
-        page = await _scraperCtrl.browser.newPage();
+        page = await browserToUse.newPage();
         await page.setViewport({ width: 1366, height: 8000 });
-        await page.goto('https://www.sportybet.com/ng/m/sport/vFootball/live_list', { waitUntil: 'domcontentloaded', timeout: 15000 });
         
-        // Wait for JS framework to render the matches
-        await page.waitForSelector('.m-league, .m-live-upcoming', { timeout: 8000 }).catch(() => console.log('[Live Scraper OnDemand] Timed out waiting for matches to render'));
-        await new Promise(r => setTimeout(r, 1000)); // Brief pause to ensure all React child components finished hydrating
+        // Set user agent and hide webdriver to match main scraper settings
+        await page.setUserAgent(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        );
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        });
+        
+        console.log('[Live Scraper OnDemand] Navigating to https://www.sportybet.com/ng/m/sport/vFootball/live_list ...');
+        // Use domcontentloaded instead of networkidle2 to prevent timeouts due to persistent websocket/SSE activity
+        await page.goto('https://www.sportybet.com/ng/m/sport/vFootball/live_list', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        
+        console.log('[Live Scraper OnDemand] Navigation complete. Waiting for matches to render in DOM...');
+        // Wait for JS framework to render the matches (with 20s timeout)
+        await page.waitForSelector('.m-league, .m-live-upcoming, .m-sports-row, div[data-key]', { timeout: 20000 })
+            .catch(() => console.log('[Live Scraper OnDemand] ⚠️ Timed out waiting for matches to render, checking page body anyway...'));
+            
+        console.log('[Live Scraper OnDemand] Matches rendered. Pausing 5 seconds for full React hydration...');
+        await new Promise(r => setTimeout(r, 5000)); // 5 seconds pause to ensure React components are fully hydrated
         
         const results = await page.evaluate(() => {
             const groups = [];
@@ -641,10 +666,16 @@ async function scrapeLiveListOnDemand() {
         
     } catch (err) {
         console.error('[Live Scraper OnDemand] Error scraping live_list:', err.message);
-        return [];
+        throw new Error(`SportyBet Live List Scrape Failed: ${err.message}`);
     } finally {
         if (page) {
             try { await page.close(); } catch (_) {}
+        }
+        if (tempBrowser) {
+            try {
+                console.log('[Live Scraper OnDemand] Closing temporary Chrome instance...');
+                await tempBrowser.close();
+            } catch (_) {}
         }
     }
 }
