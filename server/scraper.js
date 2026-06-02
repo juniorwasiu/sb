@@ -470,17 +470,17 @@ async function startContinuousScraper(updateCallback) {
                     pollErr.message.includes('Protocol error');
 
                 if (isFatalError) {
-                    console.log('[DEBUG] [Live Scraper] ☠️ Fatal browser error. Restarting Chrome in 5s...');
+                    console.log('[DEBUG] [Live Scraper] ☠️ Fatal browser error. Restarting Chrome in 10s...');
                     try { await browser.close(); } catch (_) { }
                     _scraperCtrl.browser = null;
                     _livePage = null;
-                    await new Promise(r => setTimeout(r, 5000));
+                    await new Promise(r => setTimeout(r, 10000));
                     shouldRestart = true;
                     break;
                 }
             }
 
-            await new Promise(r => setTimeout(r, 5000));
+            await new Promise(r => setTimeout(r, 10000));
         }
     }
 }

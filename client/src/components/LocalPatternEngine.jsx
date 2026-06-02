@@ -151,10 +151,10 @@ export default function LocalPatternEngine() {
   const predictionsRef = useRef(null);
   const [capturing, setCapturing] = useState(false);
 
-  // Auto-update / Polling states (Defaults to 60s as requested)
+  // Auto-update / Polling states (Defaults to 120s, doubled)
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
-  const [countdown, setCountdown] = useState(60);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(120);
+  const [countdown, setCountdown] = useState(120);
   const [manualTriggering, setManualTriggering] = useState(false);
 
   // View states: 'live' | 'history'
@@ -990,8 +990,10 @@ export default function LocalPatternEngine() {
                   <option value={10}>10s</option>
                   <option value={15}>15s</option>
                   <option value={30}>30s</option>
-                  <option value={60}>60s (Default)</option>
+                  <option value={60}>60s</option>
                   <option value={90}>90s</option>
+                  <option value={120}>120s (Default)</option>
+                  <option value={180}>180s</option>
                 </select>
               </div>
             </div>

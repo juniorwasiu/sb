@@ -5566,14 +5566,14 @@ async function runAutoScrapeResults() {
     }
 }
 
-// Trigger once on server startup, then poll every 90 seconds
+// Trigger once on server startup, then poll every 180 seconds (increased to a multiple of 2)
 setTimeout(() => {
     runAutoScrapeResults();
 }, 5000); // 5 seconds after boot
 
 setInterval(() => {
     runAutoScrapeResults();
-}, 90 * 1000); // 90 seconds (1.5 minutes)
+}, 180 * 1000); // 180 seconds (3 minutes)
 
 // Expose dedicated Positional Trace Dashboard APIs
 app.get('/api/positional-trace/patterns', (req, res) => {
