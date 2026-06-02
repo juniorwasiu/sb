@@ -103,6 +103,25 @@ export default function LocalPatternEngine() {
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   
+  // Mobile responsive trace collapse state (screens <= 768px)
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [expandedTraces, setExpandedTraces] = useState({});
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const toggleTraceExpand = (positionIndex) => {
+    setExpandedTraces(prev => ({
+      ...prev,
+      [positionIndex]: !prev[positionIndex]
+    }));
+  };
+  
   // Scraper inputs
   const todayISO = new Date().toISOString().split('T')[0];
   const [targetDate, setTargetDate] = useState(todayISO);
@@ -1534,124 +1553,197 @@ export default function LocalPatternEngine() {
                   {/* Trace Timeline with Interactive Filters */}
                   <div style={{ background: 'rgba(0,0,0,0.2)', padding: '14px 18px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.03)' }}>
                     
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                    <div 
+                      onClick={isMobile ? () => toggleTraceExpand(posData.position) : undefined}
+                      style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        flexWrap: 'wrap', 
+                        gap: '12px', 
+                        marginBottom: (!isMobile || expandedTraces[posData.position]) ? '12px' : '0px',
+                        cursor: isMobile ? 'pointer' : 'default',
+                        userSelect: 'none'
+                      }}
+                    >
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 'bold' }}>
                         ⬅️ CHRONOLOGICAL BACKWARD TRACE (NEWEST TO OLDEST) — ({filteredHistory.length} match{filteredHistory.length !== 1 ? 'es' : ''} shown)
                       </span>
                       
-                      {/* Home/Away and BTTS Consideration Toggle Filters */}
-                      <div style={{ display: 'flex', gap: '6px', background: 'rgba(0,0,0,0.3)', padding: '3px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap' }}>
-                        {[
-                          { val: 'all', label: 'All' },
-                          { val: 'H', label: '🏠 Home' },
-                          { val: 'A', label: '✈️ Away' },
-                          { val: 'D', label: '🤝 Draw' },
-                          { val: 'GG', label: '⚽ GG' },
-                          { val: 'NG', label: '🚫 NG' },
-                          { val: 'O15', label: '⚽ O1.5' },
-                          { val: 'O25', label: '⚽ O2.5' }
-                        ].map((btn) => (
-                          <button
-                            key={btn.val}
-                            onClick={() => handleTraceFilterChange(posData.position, btn.val)}
-                            style={{
-                              background: currentFilter === btn.val ? 'rgba(0, 229, 255, 0.15)' : 'transparent',
-                              border: 'none',
-                              color: currentFilter === btn.val ? 'var(--accent-neon)' : 'var(--text-secondary)',
-                              padding: '4px 10px',
-                              borderRadius: '16px',
-                              fontSize: '0.7rem',
-                              fontWeight: currentFilter === btn.val ? 'bold' : 'normal',
-                              cursor: 'pointer',
-                              outline: 'none',
-                              transition: 'all 0.15s'
-                            }}
-                          >
-                            {btn.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', paddingBottom: '8px' }}>
-                      {filteredHistory.length > 0 ? (
-                        filteredHistory.map((h, index) => {
-                          const parts = h.score.split(':').map(Number);
-                          const isGG = parts[0] > 0 && parts[1] > 0;
-                          const goals = parts[0] + parts[1];
-                          const isO15 = goals >= 2;
-                          const isO25 = goals >= 3;
-                          return (
-                            <div 
-                              key={index} 
-                              title={`${h.date} ${h.time} | ${h.homeTeam} ${h.score} ${h.awayTeam} | BTTS: ${isGG ? 'Yes (GG)' : 'No (NG)'} | Goals: ${goals} (O1.5: ${isO15 ? 'Yes' : 'No'}, O2.5: ${isO25 ? 'Yes' : 'No'})`}
-                              style={{
-                                padding: '8px 12px', borderRadius: '8px',
-                                background: `${getOutcomeColor(h.outcome)}10`,
-                                border: `1px solid ${getOutcomeColor(h.outcome)}40`,
-                                color: getOutcomeColor(h.outcome),
-                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                                flexShrink: 0,
-                                minWidth: '85px',
-                                cursor: 'help',
-                                transition: 'all 0.2s',
-                                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)'
+                      {!isMobile && (
+                        /* Home/Away and BTTS Consideration Toggle Filters (Desktop) */
+                        <div style={{ display: 'flex', gap: '6px', background: 'rgba(0,0,0,0.3)', padding: '3px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap' }}>
+                          {[
+                            { val: 'all', label: 'All' },
+                            { val: 'H', label: '🏠 Home' },
+                            { val: 'A', label: '✈️ Away' },
+                            { val: 'D', label: '🤝 Draw' },
+                            { val: 'GG', label: '⚽ GG' },
+                            { val: 'NG', label: '🚫 NG' },
+                            { val: 'O15', label: '⚽ O1.5' },
+                            { val: 'O25', label: '⚽ O2.5' }
+                          ].map((btn) => (
+                            <button
+                              key={btn.val}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleTraceFilterChange(posData.position, btn.val);
                               }}
-                              className="hover-lift"
+                              style={{
+                                background: currentFilter === btn.val ? 'rgba(0, 229, 255, 0.15)' : 'transparent',
+                                border: 'none',
+                                color: currentFilter === btn.val ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                                padding: '4px 10px',
+                                borderRadius: '16px',
+                                fontSize: '0.7rem',
+                                fontWeight: currentFilter === btn.val ? 'bold' : 'normal',
+                                cursor: 'pointer',
+                                outline: 'none',
+                                transition: 'all 0.15s'
+                              }}
                             >
-                              <span style={{ fontSize: '0.62rem', fontWeight: 700, opacity: 0.85, color: '#FFFFFF', marginBottom: '4px', textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
-                                {abbreviateTeam(h.homeTeam)} vs {abbreviateTeam(h.awayTeam)}
-                              </span>
-                              <span style={{ fontSize: '1rem', fontWeight: 900, textShadow: `0 0 8px ${getOutcomeColor(h.outcome)}` }}>
-                                {h.outcome}
-                              </span>
-                              <span style={{ fontSize: '0.68rem', fontWeight: 700, opacity: 0.9, fontFamily: 'monospace', marginTop: '2px', color: '#FFF' }}>
-                                {h.score}
-                              </span>
-                              <div style={{ display: 'flex', gap: '3px', marginTop: '4px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                                <span style={{ 
-                                  fontSize: '0.55rem', 
-                                  fontWeight: 700, 
-                                  background: isGG ? 'rgba(0, 255, 136, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
-                                  color: isGG ? '#00FF88' : '#888',
-                                  padding: '1px 4px', 
-                                  borderRadius: '3px',
-                                  border: isGG ? '1px solid rgba(0, 255, 136, 0.2)' : '1px solid rgba(255,255,255,0.05)'
-                                }}>
-                                  {isGG ? 'GG' : 'NG'}
-                                </span>
-                                <span style={{ 
-                                  fontSize: '0.55rem', 
-                                  fontWeight: 700, 
-                                  background: isO15 ? 'rgba(0, 229, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
-                                  color: isO15 ? '#00E5FF' : '#888',
-                                  padding: '1px 4px', 
-                                  borderRadius: '3px',
-                                  border: isO15 ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid rgba(255,255,255,0.05)'
-                                }}>
-                                  {isO15 ? 'O1.5' : 'U1.5'}
-                                </span>
-                                <span style={{ 
-                                  fontSize: '0.55rem', 
-                                  fontWeight: 700, 
-                                  background: isO25 ? 'rgba(167, 139, 250, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
-                                  color: isO25 ? '#A78BFA' : '#888',
-                                  padding: '1px 4px', 
-                                  borderRadius: '3px',
-                                  border: isO25 ? '1px solid rgba(167, 139, 250, 0.2)' : '1px solid rgba(255,255,255,0.05)'
-                                }}>
-                                  {isO25 ? 'O2.5' : 'U2.5'}
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center', width: '100%' }}>
-                          No matches in recent trace history match the selected outcome filter.
+                              {btn.label}
+                            </button>
+                          ))}
                         </div>
                       )}
+
+                      {isMobile && (
+                        <span style={{
+                          fontSize: '0.75rem',
+                          color: 'var(--accent-neon)',
+                          fontWeight: 'bold',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          background: 'rgba(0, 229, 255, 0.1)',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid rgba(0, 229, 255, 0.2)'
+                        }}>
+                          {expandedTraces[posData.position] ? '▲ COLLAPSE' : '▼ EXPAND'}
+                        </span>
+                      )}
                     </div>
+
+                    {(!isMobile || expandedTraces[posData.position]) && (
+                      <>
+                        {isMobile && (
+                          /* Home/Away and BTTS Consideration Toggle Filters (Mobile) */
+                          <div style={{ display: 'flex', gap: '6px', background: 'rgba(0,0,0,0.3)', padding: '3px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap', marginBottom: '12px' }}>
+                            {[
+                              { val: 'all', label: 'All' },
+                              { val: 'H', label: '🏠 Home' },
+                              { val: 'A', label: '✈️ Away' },
+                              { val: 'D', label: '🤝 Draw' },
+                              { val: 'GG', label: '⚽ GG' },
+                              { val: 'NG', label: '🚫 NG' },
+                              { val: 'O15', label: '⚽ O1.5' },
+                              { val: 'O25', label: '⚽ O2.5' }
+                            ].map((btn) => (
+                              <button
+                                key={btn.val}
+                                onClick={() => handleTraceFilterChange(posData.position, btn.val)}
+                                style={{
+                                  background: currentFilter === btn.val ? 'rgba(0, 229, 255, 0.15)' : 'transparent',
+                                  border: 'none',
+                                  color: currentFilter === btn.val ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                                  padding: '4px 10px',
+                                  borderRadius: '16px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: currentFilter === btn.val ? 'bold' : 'normal',
+                                  cursor: 'pointer',
+                                  outline: 'none',
+                                  transition: 'all 0.15s'
+                                }}
+                              >
+                                {btn.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', paddingBottom: '8px' }}>
+                          {filteredHistory.length > 0 ? (
+                            filteredHistory.map((h, index) => {
+                              const parts = h.score.split(':').map(Number);
+                              const isGG = parts[0] > 0 && parts[1] > 0;
+                              const goals = parts[0] + parts[1];
+                              const isO15 = goals >= 2;
+                              const isO25 = goals >= 3;
+                              return (
+                                <div 
+                                  key={index} 
+                                  title={`${h.date} ${h.time} | ${h.homeTeam} ${h.score} ${h.awayTeam} | BTTS: ${isGG ? 'Yes (GG)' : 'No (NG)'} | Goals: ${goals} (O1.5: ${isO15 ? 'Yes' : 'No'}, O2.5: ${isO25 ? 'Yes' : 'No'})`}
+                                  style={{
+                                    padding: '8px 12px', borderRadius: '8px',
+                                    background: `${getOutcomeColor(h.outcome)}10`,
+                                    border: `1px solid ${getOutcomeColor(h.outcome)}40`,
+                                    color: getOutcomeColor(h.outcome),
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                                    flexShrink: 0,
+                                    minWidth: '85px',
+                                    cursor: 'help',
+                                    transition: 'all 0.2s',
+                                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)'
+                                  }}
+                                  className="hover-lift"
+                                >
+                                  <span style={{ fontSize: '0.62rem', fontWeight: 700, opacity: 0.85, color: '#FFFFFF', marginBottom: '4px', textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
+                                    {abbreviateTeam(h.homeTeam)} vs {abbreviateTeam(h.awayTeam)}
+                                  </span>
+                                  <span style={{ fontSize: '1rem', fontWeight: 900, textShadow: `0 0 8px ${getOutcomeColor(h.outcome)}` }}>
+                                    {h.outcome}
+                                  </span>
+                                  <span style={{ fontSize: '0.68rem', fontWeight: 700, opacity: 0.9, fontFamily: 'monospace', marginTop: '2px', color: '#FFF' }}>
+                                    {h.score}
+                                  </span>
+                                  <div style={{ display: 'flex', gap: '3px', marginTop: '4px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                    <span style={{ 
+                                      fontSize: '0.55rem', 
+                                      fontWeight: 700, 
+                                      background: isGG ? 'rgba(0, 255, 136, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
+                                      color: isGG ? '#00FF88' : '#888',
+                                      padding: '1px 4px', 
+                                      borderRadius: '3px',
+                                      border: isGG ? '1px solid rgba(0, 255, 136, 0.2)' : '1px solid rgba(255,255,255,0.05)'
+                                    }}>
+                                      {isGG ? 'GG' : 'NG'}
+                                    </span>
+                                    <span style={{ 
+                                      fontSize: '0.55rem', 
+                                      fontWeight: 700, 
+                                      background: isO15 ? 'rgba(0, 229, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
+                                      color: isO15 ? '#00E5FF' : '#888',
+                                      padding: '1px 4px', 
+                                      borderRadius: '3px',
+                                      border: isO15 ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid rgba(255,255,255,0.05)'
+                                    }}>
+                                      {isO15 ? 'O1.5' : 'U1.5'}
+                                    </span>
+                                    <span style={{ 
+                                      fontSize: '0.55rem', 
+                                      fontWeight: 700, 
+                                      background: isO25 ? 'rgba(167, 139, 250, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
+                                      color: isO25 ? '#A78BFA' : '#888',
+                                      padding: '1px 4px', 
+                                      borderRadius: '3px',
+                                      border: isO25 ? '1px solid rgba(167, 139, 250, 0.2)' : '1px solid rgba(255,255,255,0.05)'
+                                    }}>
+                                      {isO25 ? 'O2.5' : 'U2.5'}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center', width: '100%' }}>
+                              No matches in recent trace history match the selected outcome filter.
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                   
                   {/* Analytics columns */}
