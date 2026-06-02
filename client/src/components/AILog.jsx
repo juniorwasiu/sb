@@ -211,7 +211,7 @@ export default function AILog() {
 
   const handleLearnAll = async () => {
     if (!trainDate || availableDates.length === 0) return;
-    const allLeagues = ["England - Virtual", "Germany - Virtual", "Italy - Virtual", "Spain - Virtual"];
+    const allLeagues = ["England - Virtual", "Germany - Virtual", "Italy - Virtual", "Spain - Virtual", "France - Virtual"];
     setTrainStatus('loadingAll');
     setTrainProfile(null);
     let successCount = 0;
@@ -428,6 +428,7 @@ export default function AILog() {
             <option value="Germany - Virtual">🇩🇪 Germany</option>
             <option value="Italy - Virtual">🇮🇹 Italy</option>
             <option value="Spain - Virtual">🇪🇸 Spain</option>
+            <option value="France - Virtual">🇫🇷 France</option>
           </select>
           <select
             value={trainDate}

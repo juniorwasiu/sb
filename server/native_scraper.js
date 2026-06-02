@@ -25,21 +25,15 @@ function getChromePath() {
 async function clickByText(page, textMatches, description) {
     console.log(`[Native Scraper] Locating '${description}'...`);
     const box = await page.evaluate((matches) => {
-        const selectors = ['li', 'a', 'span', 'div', 'button'];
-        for (const sel of selectors) {
-            const elements = Array.from(document.querySelectorAll(sel));
-            const target = elements.find(el => {
-                if (el.offsetParent === null) return false;
-                const txt = el.textContent.trim();
-                return matches.some(m => txt === m || txt.includes(m));
-            });
-            if (target) {
-                target.scrollIntoView({ block: 'center' });
-                const rect = target.getBoundingClientRect();
-                return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-            }
-        }
-        return null;
+        const elements = Array.from(document.querySelectorAll('span, div, a, li, button'));
+        const target = elements.find(el => {
+            const txt = el.textContent.trim();
+            return matches.some(m => txt === m || txt.includes(m)) && el.children.length === 0 && el.offsetParent !== null;
+        });
+        if (!target) return null;
+        target.scrollIntoView({ block: 'center' });
+        const rect = target.getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
     }, textMatches);
 
     if (box) {
@@ -302,8 +296,43 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
             if (!selectedLeague) {
                 throw new Error(`Failed to select league option: ${leagueShort}`);
             }
-            console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] Waiting for ${leagueName} data to load...`);
-            await new Promise(r => setTimeout(r, 6000));
+            console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] Verification: waiting for ${targetLeagueName} matches to load in DOM...`);
+            
+            const LEAGUE_TEAMS = {
+                'England - Virtual': ['ars', 'ast', 'bha', 'bou', 'bre', 'bur', 'che', 'cry', 'eve', 'for', 'ful', 'lee', 'liv', 'mci', 'mun', 'new', 'sun', 'tot', 'whu', 'wol'],
+                'Spain - Virtual': ['ala', 'atm', 'bil', 'cel', 'elc', 'esp', 'fcb', 'get', 'gir', 'lev', 'mal', 'osa', 'ovi', 'ray', 'rbb', 'rma', 'rso', 'sev', 'vcf', 'vil'],
+                'Italy - Virtual': ['acm', 'ata', 'bfc', 'cag', 'com', 'fio', 'gen', 'int', 'juv', 'laz', 'lec', 'nap', 'par', 'pis', 'rom', 'sas', 'tor', 'udi', 'usc', 'ver'],
+                'France - Virtual': ['amo', 'ang', 'aux', 'b29', 'leh', 'len', 'lil', 'lor', 'lyo', 'met', 'nan', 'nce', 'olm', 'pfc', 'psg', 'ren', 'str', 'tou'],
+                'Germany - Virtual': ['bmg', 'bmu', 'bvb', 'fca', 'hdh', 'hsv', 'koe', 'lev', 'mai', 'rbl', 'scf', 'sge', 'stp', 'svw', 'tsg', 'uni', 'vfb', 'wob']
+            };
+
+            const targetTeams = LEAGUE_TEAMS[targetLeagueName] || [];
+            let verifiedLoaded = false;
+
+            // Loop for up to 15 seconds to wait for league teams to show up in the first match
+            for (let check = 1; check <= 15; check++) {
+                const checkMatches = await extractMatchesFromDom(page, targetLeagueName, targetDate);
+                if (checkMatches.length > 0) {
+                    const m1 = checkMatches[0];
+                    const hTeam = (m1.homeTeam || '').toLowerCase();
+                    const aTeam = (m1.awayTeam || '').toLowerCase();
+
+                    if (targetTeams.includes(hTeam) || targetTeams.includes(aTeam)) {
+                        console.log(`[Native Scraper] ✅ Verified ${targetLeagueName} loaded on page (matchup: "${m1.homeTeam} vs ${m1.awayTeam}").`);
+                        verifiedLoaded = true;
+                        break;
+                    } else {
+                        console.log(`[Native Scraper] ⏳ DOM matches represent other league (e.g. "${m1.homeTeam} vs ${m1.awayTeam}"). Waiting...`);
+                    }
+                } else {
+                    console.log(`[Native Scraper] ⏳ No matches in DOM yet. Waiting...`);
+                }
+                await new Promise(r => setTimeout(r, 1000));
+            }
+
+            if (!verifiedLoaded) {
+                throw new Error(`Timing failure: SportyBet did not update the DOM to ${targetLeagueName} matches in time.`);
+            }
 
             // Verify League Selection dropdown text
             const verifyText = await page.evaluate(() => {
@@ -328,24 +357,14 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
                 const pageMatches = await extractMatchesFromDom(page, targetLeagueName, targetDate);
                 
                 if (pageMatches.length > 0) {
-                    // Sanity check scraped matches team names for Germany and France
-                    const isGermany = targetLeagueName.toLowerCase().includes('germany');
-                    const isFrance = targetLeagueName.toLowerCase().includes('france');
-                    const m1 = pageMatches[0];
-                    const hTeam = (m1.homeTeam || '').toLowerCase();
-                    const aTeam = (m1.awayTeam || '').toLowerCase();
-
-                    if (isGermany) {
-                        const gerTeams = ['bmu', 'bvb', 'koe', 'lev', 'mai', 'rbl', 'stp', 'svw', 'uni', 'hsv', 'tsg', 'sge', 'bmg', 'hdh', 'scf', 'fca', 'wob', 'vfb'];
-                        const isValidGer = gerTeams.includes(hTeam) || gerTeams.includes(aTeam);
-                        if (!isValidGer) {
-                            throw new Error(`Germany league validation failed. First matchup: "${m1.homeTeam} vs ${m1.awayTeam}" has teams not matching Bundesliga database.`);
-                        }
-                    } else if (isFrance) {
-                        const fraTeams = ['b29', 'nan', 'lor', 'aux', 'met', 'len', 'olm', 'leh', 'pfc', 'amo', 'psg', 'nce', 'ren', 'lyo', 'str', 'lil', 'tou', 'ang'];
-                        const isValidFra = fraTeams.includes(hTeam) || fraTeams.includes(aTeam);
-                        if (!isValidFra) {
-                            throw new Error(`France league validation failed. First matchup: "${m1.homeTeam} vs ${m1.awayTeam}" has teams not matching Ligue 1 database.`);
+                    // Double check team validity on the first page
+                    if (pageNum === 1) {
+                        const m1 = pageMatches[0];
+                        const hTeam = (m1.homeTeam || '').toLowerCase();
+                        const aTeam = (m1.awayTeam || '').toLowerCase();
+                        const isValid = targetTeams.includes(hTeam) || targetTeams.includes(aTeam);
+                        if (!isValid) {
+                            throw new Error(`${targetLeagueName} validation failed. Matchup: "${m1.homeTeam} vs ${m1.awayTeam}" has teams not matching this league's database.`);
                         }
                     }
 

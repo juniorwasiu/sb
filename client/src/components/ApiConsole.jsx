@@ -255,7 +255,7 @@ export default function ApiConsole() {
         console.warn('[ApiConsole] Failed to parse SSE data:', e);
       }
     };
-    es.onerror = (e) => {
+    es.onerror = () => {
       console.warn('[ApiConsole] SSE connection disconnected or errored.');
     };
     return () => {
@@ -601,7 +601,7 @@ export default function ApiConsole() {
                         try {
                           const parsed = JSON.parse(requestBody);
                           setRequestBody(JSON.stringify(parsed, null, 2));
-                        } catch (e) {
+                        } catch {
                           alert('Invalid JSON structure. Please check layout.');
                         }
                       }}

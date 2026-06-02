@@ -4510,9 +4510,12 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
             roundGroups[key].matches.push(m);
         });
         
-        // Step 2: Only analyze rounds with EXACTLY 10 matches (aligned kickoff)
-        const validRounds = Object.values(roundGroups).filter(r => r.matches.length === 10);
-        console.log(`[DEBUG] [Patterns] Total ${leagueQuery} rounds: ${Object.keys(roundGroups).length}. Aligned rounds (10 matches): ${validRounds.length}`);
+        const isNineTeamsLeague = leagueQuery.toLowerCase().includes('france') || leagueQuery.toLowerCase().includes('germany');
+        const expectedMatchCount = isNineTeamsLeague ? 9 : 10;
+
+        // Step 2: Only analyze rounds with EXPECTED matches (aligned kickoff)
+        const validRounds = Object.values(roundGroups).filter(r => r.matches.length === expectedMatchCount);
+        console.log(`[DEBUG] [Patterns] Total ${leagueQuery} rounds: ${Object.keys(roundGroups).length}. Aligned rounds (${expectedMatchCount} matches): ${validRounds.length}`);
         
         // Step 3: Sort rounds chronologically (oldest to newest)
         const parseDateTime = (dStr, tStr) => {
@@ -4531,7 +4534,7 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
             return dtA - dtB;
         });
         
-        // Step 4: Sort matches within each round to establish the 10 fixed visual positions (0 to 9)
+        // Step 4: Sort matches within each round to establish the fixed visual positions
         validRounds.forEach(round => {
             if (sortType === 'homeTeam') {
                 round.matches.sort((a, b) => {
@@ -4544,12 +4547,12 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
             }
         });
         
-        // Step 5: Perform row-by-row position analysis (Positions 0 to 9)
+        // Step 5: Perform row-by-row position analysis
         const positionPatterns = [];
-        const numPositions = 10;
+        const numPositions = expectedMatchCount;
         
         for (let pos = 0; pos < numPositions; pos++) {
-            console.log(`[DEBUG] [Patterns] Analysing position ${pos + 1}/10...`);
+            console.log(`[DEBUG] [Patterns] Analysing position ${pos + 1}/${numPositions}...`);
             
             // Build sequence of outcomes for this position across all sorted rounds
             const history = [];

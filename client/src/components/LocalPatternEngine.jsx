@@ -106,6 +106,7 @@ export default function LocalPatternEngine() {
   // Mobile responsive trace collapse state (screens <= 768px)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [expandedTraces, setExpandedTraces] = useState({});
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -810,81 +811,218 @@ export default function LocalPatternEngine() {
         </p>
       </header>
 
-      {/* LEAGUE TAB SELECTOR */}
-      <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '4px 0 16px 0', borderBottom: '1px solid var(--glass-border)', marginBottom: '16px' }}>
-        {leagueTabs.map(tab => {
-          const isSelected = selectedLeague === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => handleLeagueTabChange(tab.id)}
-              className="hover-lift"
+      {/* LEAGUE & VIEW SEGMENT SELECTORS */}
+      {isMobile ? (
+        <div style={{ marginBottom: '20px', width: '100%' }}>
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            style={{
+              width: '100%',
+              background: 'linear-gradient(135deg, rgba(0, 229, 255, 0.1), rgba(0, 255, 136, 0.1))',
+              border: '1px solid rgba(0, 229, 255, 0.25)',
+              color: 'var(--text-primary)',
+              padding: '12px 16px',
+              borderRadius: '10px',
+              fontWeight: 'bold',
+              fontSize: '0.88rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              boxShadow: '0 4px 15px rgba(0, 0, 0, 0.2)',
+              transition: 'all 0.2s'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>⚙️</span>
+              <span>Controls: {selectedLeague.replace(' League', '')} ({activeView === 'live' ? 'Live Predictor' : 'History'})</span>
+            </div>
+            <span>{mobileMenuOpen ? '▲ CLOSE' : '▼ EXPAND MENU'}</span>
+          </button>
+
+          {mobileMenuOpen && (
+            <div style={{
+              marginTop: '8px',
+              padding: '16px',
+              background: 'rgba(10,15,30,0.95)',
+              border: '1px solid rgba(0, 229, 255, 0.15)',
+              borderRadius: '10px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
+              position: 'relative',
+              zIndex: 10
+            }}>
+              <div>
+                <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold', letterSpacing: '0.05em' }}>
+                  🏆 SELECT VIRTUAL LEAGUE
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {leagueTabs.map(tab => {
+                    const isSelected = selectedLeague === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          handleLeagueTabChange(tab.id);
+                          setMobileMenuOpen(false);
+                        }}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          background: isSelected ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255,255,255,0.02)',
+                          color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                          border: isSelected ? '1px solid rgba(0, 229, 255, 0.3)' : '1px solid var(--glass-border)',
+                          padding: '10px 14px',
+                          borderRadius: '8px',
+                          fontSize: '0.8rem',
+                          fontWeight: isSelected ? 800 : 500,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          transition: 'all 0.15s'
+                        }}
+                      >
+                        <span>{tab.emoji}</span>
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold', letterSpacing: '0.05em' }}>
+                  🔮 SELECT VIEW MODE
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button 
+                    onClick={() => {
+                      setActiveView('live');
+                      setMobileMenuOpen(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      background: activeView === 'live' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'rgba(255,255,255,0.02)',
+                      color: activeView === 'live' ? '#000' : 'var(--text-secondary)',
+                      border: 'none',
+                      padding: '10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: '900',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    Live Predictor
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setActiveView('history');
+                      setMobileMenuOpen(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      background: activeView === 'history' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'rgba(255,255,255,0.02)',
+                      color: activeView === 'history' ? '#000' : 'var(--text-secondary)',
+                      border: 'none',
+                      padding: '10px',
+                      borderRadius: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: '900',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    History Log
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* LEAGUE TAB SELECTOR (DESKTOP) */}
+          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '4px 0 16px 0', borderBottom: '1px solid var(--glass-border)', marginBottom: '16px' }}>
+            {leagueTabs.map(tab => {
+              const isSelected = selectedLeague === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => handleLeagueTabChange(tab.id)}
+                  className="hover-lift"
+                  style={{
+                    background: isSelected ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                    border: isSelected ? '1px solid rgba(0, 229, 255, 0.3)' : '1px solid var(--glass-border)',
+                    padding: '10px 18px',
+                    borderRadius: '20px',
+                    fontSize: '0.85rem',
+                    fontWeight: isSelected ? 800 : 500,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    boxShadow: isSelected ? '0 0 15px rgba(0, 229, 255, 0.15)' : 'none',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  <span>{tab.emoji}</span>
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* VIEW SEGMENT SELECTOR (DESKTOP) */}
+          <div style={{ display: 'flex', gap: '12px', background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '12px', border: '1px solid var(--glass-border)', width: 'fit-content', marginBottom: '8px' }}>
+            <button 
+              onClick={() => setActiveView('live')}
               style={{
-                background: isSelected ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255, 255, 255, 0.02)',
-                color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
-                border: isSelected ? '1px solid rgba(0, 229, 255, 0.3)' : '1px solid var(--glass-border)',
-                padding: '10px 18px',
-                borderRadius: '20px',
+                background: activeView === 'live' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'transparent',
+                color: activeView === 'live' ? '#000' : 'var(--text-secondary)',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: '8px',
                 fontSize: '0.85rem',
-                fontWeight: isSelected ? 800 : 500,
+                fontWeight: '900',
                 cursor: 'pointer',
-                transition: 'all 0.2s',
+                transition: 'all 0.3s ease',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                boxShadow: isSelected ? '0 0 15px rgba(0, 229, 255, 0.15)' : 'none',
-                whiteSpace: 'nowrap'
+                boxShadow: activeView === 'live' ? '0 4px 12px rgba(0, 229, 255, 0.2)' : 'none'
               }}
             >
-              <span>{tab.emoji}</span>
-              <span>{tab.label}</span>
+              🔮 Live Predictor
             </button>
-          );
-        })}
-      </div>
-      {/* VIEW SEGMENT SELECTOR */}
-      <div style={{ display: 'flex', gap: '12px', background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '12px', border: '1px solid var(--glass-border)', width: 'fit-content', marginBottom: '8px' }}>
-        <button 
-          onClick={() => setActiveView('live')}
-          style={{
-            background: activeView === 'live' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'transparent',
-            color: activeView === 'live' ? '#000' : 'var(--text-secondary)',
-            border: 'none',
-            padding: '10px 20px',
-            borderRadius: '8px',
-            fontSize: '0.85rem',
-            fontWeight: '900',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            boxShadow: activeView === 'live' ? '0 4px 12px rgba(0, 229, 255, 0.2)' : 'none'
-          }}
-        >
-          🔮 Live Predictor
-        </button>
-        <button 
-          onClick={() => setActiveView('history')}
-          style={{
-            background: activeView === 'history' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'transparent',
-            color: activeView === 'history' ? '#000' : 'var(--text-secondary)',
-            border: 'none',
-            padding: '10px 20px',
-            borderRadius: '8px',
-            fontSize: '0.85rem',
-            fontWeight: '900',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            boxShadow: activeView === 'history' ? '0 4px 12px rgba(0, 229, 255, 0.2)' : 'none'
-          }}
-        >
-          📜 Prediction History
-        </button>
-      </div>
+            <button 
+              onClick={() => setActiveView('history')}
+              style={{
+                background: activeView === 'history' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'transparent',
+                color: activeView === 'history' ? '#000' : 'var(--text-secondary)',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                fontWeight: '900',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: activeView === 'history' ? '0 4px 12px rgba(0, 229, 255, 0.2)' : 'none'
+              }}
+            >
+              📜 Prediction History
+            </button>
+          </div>
+        </>
+      )}
 
             {activeView === 'live' && (
         <>
