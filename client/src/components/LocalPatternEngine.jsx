@@ -76,6 +76,27 @@ const getHighestBttsOutcome = (transRow) => {
   return 'NG';
 };
 
+// Find the highest Over 1.5 probability for visual highlighting
+const getHighestOver15Outcome = (transRow) => {
+  if (!transRow) return null;
+  const { O15, U15 } = transRow;
+  const maxVal = Math.max(O15 || 0, U15 || 0);
+  if (maxVal === 0) return null;
+  if (maxVal === O15) return 'O15';
+  return 'U15';
+};
+
+// Find the highest Over 2.5 probability for visual highlighting
+const getHighestOver25Outcome = (transRow) => {
+  if (!transRow) return null;
+  const { O25, U25 } = transRow;
+  const maxVal = Math.max(O25 || 0, U25 || 0);
+  if (maxVal === 0) return null;
+  if (maxVal === O25) return 'O25';
+  return 'U25';
+};
+
+
 export default function LocalPatternEngine() {
   const [loading, setLoading] = useState(false);
   const [scraping, setScraping] = useState(false);
@@ -122,11 +143,70 @@ export default function LocalPatternEngine() {
   const [historyList, setHistoryList] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState(null);
+  const [predictionCategoryTab, setPredictionCategoryTab] = useState('by-league'); // 'by-league' | 'best-picks' | 'best-single'
+
+  // League tabs list
+  const leagueTabs = [
+    { id: 'England League', label: 'England 🏴󠁧󠁢󠁥󠁮󠁧󠁿', emoji: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+    { id: 'Spain League', label: 'Spain 🇪🇸', emoji: '🇪🇸' },
+    { id: 'Italy League', label: 'Italy 🇮🇹', emoji: '🇮🇹' },
+    { id: 'Germany League', label: 'Germany 🇩🇪', emoji: '🇩🇪' },
+    { id: 'France League', label: 'France 🇫🇷', emoji: '🇫🇷' }
+  ];
+
+  // Local Wipe states
+  const [wipeConfirmVisible, setWipeConfirmVisible] = useState(false);
+  const [wipeScope, setWipeScope] = useState('all'); // 'all' | 'results' | 'history'
+  const [wipeScopeLeague, setWipeScopeLeague] = useState('current'); // 'current' | 'all'
+  const [wipeWroteConfirm, setWipeWroteConfirm] = useState('');
+  const [wiping, setWiping] = useState(false);
 
   // Helper to add console log with timestamp
   const logMessage = (msg) => {
     const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setConsoleLogs(prev => [...prev, `[${time}] ${msg}`]);
+  };
+
+  // Switch active league tab
+  const handleLeagueTabChange = (leagueId) => {
+    setSelectedLeague(leagueId);
+    logMessage(`🔌 Switched active league to: ${leagueId}`);
+    setPredictionResults(null);
+    setPredictionError(null);
+  };
+
+  // Wipe local results / history
+  const handleWipeData = async () => {
+    if (wipeWroteConfirm !== 'WIPE' || wiping) return;
+    const targetLeague = wipeScopeLeague === 'current' ? selectedLeague : 'all';
+    logMessage(`🗑️ Sending wipe request for target: ${targetLeague}, scope: ${wipeScope}...`);
+    setWiping(true);
+    try {
+      const response = await fetch('/api/local-vfootball/wipe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ league: targetLeague, scope: wipeScope })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        logMessage(`✅ PURGE SUCCESSFUL: ${data.message}`);
+        setWipeConfirmVisible(false);
+        setWipeWroteConfirm('');
+        // Refresh local views
+        await fetchPatterns(sortType, selectedLeague);
+        if (activeView === 'history') {
+          await fetchPredictionsHistory(selectedLeague);
+        }
+      } else {
+        throw new Error(data.message || 'Server rejected wipe request');
+      }
+    } catch (err) {
+      console.error('[Wipe Error]', err);
+      logMessage(`❌ PURGE FAILED: ${err.message}`);
+      alert(`Purge failed: ${err.message}`);
+    } finally {
+      setWiping(false);
+    }
   };
 
   // Scroll to bottom of terminal console
@@ -135,13 +215,13 @@ export default function LocalPatternEngine() {
   }, [consoleLogs]);
 
   // Fetch local patterns and results
-  const fetchPatterns = async (currentSort = sortType) => {
+  const fetchPatterns = async (currentSort = sortType, league = selectedLeague) => {
     setLoading(true);
     setError(null);
-    logMessage(`🔄 Querying patterns from local file storage (sortType: ${currentSort})...`);
+    logMessage(`🔄 Querying ${league} patterns from local file storage (sortType: ${currentSort})...`);
     
     try {
-      const response = await fetch(`/api/local-vfootball/patterns?sortType=${currentSort}`);
+      const response = await fetch(`/api/local-vfootball/patterns?sortType=${currentSort}&league=${encodeURIComponent(league)}`);
       const data = await response.json();
       
       if (data.success) {
@@ -163,20 +243,20 @@ export default function LocalPatternEngine() {
     }
   };
 
-  // Fetch patterns on mount
+  // Fetch patterns when sortType or selectedLeague changes
   useEffect(() => {
-    fetchPatterns(sortType);
+    fetchPatterns(sortType, selectedLeague);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sortType, selectedLeague]);
 
   // Fetch prediction history logs from backend
-  const fetchPredictionsHistory = async () => {
+  const fetchPredictionsHistory = async (league = selectedLeague) => {
     setLoadingHistory(true);
     setHistoryError(null);
-    logMessage('📜 Querying predictions history logs from backend database...');
+    logMessage(`📜 Querying predictions history logs for ${league} from backend database...`);
     
     try {
-      const response = await fetch('/api/local-vfootball/predictions-history');
+      const response = await fetch(`/api/local-vfootball/predictions-history?league=${encodeURIComponent(league)}`);
       const data = await response.json();
       
       if (data.success) {
@@ -194,13 +274,13 @@ export default function LocalPatternEngine() {
     }
   };
 
-  // Fetch history when view is toggled to history
+  // Fetch history when view is toggled to history or league changes
   useEffect(() => {
     if (activeView === 'history') {
-      fetchPredictionsHistory();
+      fetchPredictionsHistory(selectedLeague);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView]);
+  }, [activeView, selectedLeague]);
 
   // Polling / Auto-Update Effect
   useEffect(() => {
@@ -213,7 +293,7 @@ export default function LocalPatternEngine() {
       setCountdown(prev => {
         if (prev <= 1) {
           // Trigger automatic fetch
-          fetchPatterns(sortType);
+          fetchPatterns(sortType, selectedLeague);
           return autoRefreshInterval;
         }
         return prev - 1;
@@ -222,7 +302,7 @@ export default function LocalPatternEngine() {
 
     return () => clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, autoRefreshInterval, sortType]);
+  }, [autoRefresh, autoRefreshInterval, sortType, selectedLeague]);
 
   // Handle manual background scraper trigger
   const handleForceBackgroundScrape = async () => {
@@ -401,25 +481,29 @@ export default function LocalPatternEngine() {
   };
 
   // Trigger DeepSeek live list predictions
-  const handlePredictLiveList = async () => {
+  // Trigger DeepSeek live list predictions
+  const handlePredictLiveList = async (predictAll = false) => {
     if (predicting) return;
     setPredicting(true);
     setPredictionError(null);
     setPredictionResults(null);
-    logMessage('🔮 Initiating DeepSeek Live List AI Predictor...');
-    logMessage('🌐 Scraping real-time vFootball live list on SportyBet...');
+    
+    const targetQuery = predictAll ? 'all' : selectedLeague;
+    logMessage(`🔮 Initiating DeepSeek Live List AI Predictor for ${predictAll ? 'ALL LEAGUES' : selectedLeague}...`);
+    logMessage(`🌐 Scraping real-time ${predictAll ? 'all active' : selectedLeague} live list on SportyBet...`);
     
     try {
-      const response = await fetch('/api/local-vfootball/predict-live');
+      const response = await fetch(`/api/local-vfootball/predict-live?league=${encodeURIComponent(targetQuery)}`);
       const data = await response.json();
       
       if (data.success) {
         if (data.predictions && data.predictions.length > 0) {
           setPredictionResults(data);
-          logMessage(`🎯 DeepSeek generated predictions for round: ${data.league}`);
+          logMessage(`🎯 DeepSeek generated predictions for ${predictAll ? 'ALL active leagues' : 'round: ' + data.league}`);
           logMessage('🔮 Predictions successfully processed and mapped to visual positions!');
+          setPredictionCategoryTab('by-league'); // Reset to default view tab
         } else {
-          setPredictionError(data.message || 'No England League live matches found.');
+          setPredictionError(data.message || `No ${predictAll ? 'active' : selectedLeague} live matches found.`);
           logMessage(`⚠️ PREDICTION WARNING: ${data.message || 'No matches found.'}`);
         }
       } else {
@@ -474,6 +558,214 @@ export default function LocalPatternEngine() {
     return '#FFD700'; // gold
   };
 
+  const getLeagueBadge = (lg) => {
+    if (!lg) return null;
+    const lower = lg.toLowerCase();
+    if (lower.includes('england')) return '🏴󠁧󠁢󠁥󠁮󠁧󠁿 ENG';
+    if (lower.includes('spain')) return '🇪🇸 ESP';
+    if (lower.includes('italy')) return '🇮🇹 ITA';
+    if (lower.includes('germany')) return '🇩🇪 GER';
+    if (lower.includes('france')) return '🇫🇷 FRA';
+    return lg.replace(' League', '').substring(0, 3).toUpperCase();
+  };
+
+  const renderPredictionCard = (pred, isBestSingle = false) => {
+    const matchStatus = pred.status || 'UPCOMING';
+    const cardLeague = pred.league || predictionResults?.league || '';
+    
+    return (
+      <div 
+        key={`${cardLeague}_${pred.position}`} 
+        className="glass-panel hover-lift" 
+        style={{ 
+          padding: isBestSingle ? '20px' : '16px', 
+          border: isBestSingle ? '2px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.06)',
+          borderLeft: isBestSingle ? '8px solid var(--accent-gold)' : `4px solid ${pred.color || 'var(--accent-neon)'}`,
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: '10px',
+          background: 'rgba(0,0,0,0.15)',
+          boxShadow: isBestSingle ? '0 10px 30px rgba(255,215,0,0.15)' : '0 4px 10px rgba(0,0,0,0.3)',
+          width: '100%'
+        }}
+      >
+        {/* Card Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ 
+              background: isBestSingle ? 'rgba(255, 215, 0, 0.15)' : `${pred.color || 'var(--accent-neon)'}15`, 
+              color: isBestSingle ? 'var(--accent-gold)' : (pred.color || 'var(--accent-neon)'), 
+              width: '24px', 
+              height: '24px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              borderRadius: '50%', 
+              fontWeight: 800, 
+              border: `1px solid ${isBestSingle ? 'var(--accent-gold)' : (pred.color || 'var(--accent-neon)')}30`,
+              fontSize: '0.74rem'
+            }}>
+              {pred.position + 1}
+            </span>
+            
+            {/* League Badge */}
+            {cardLeague && (
+              <span style={{
+                fontSize: '0.62rem',
+                background: 'rgba(255, 255, 255, 0.05)',
+                color: 'white',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                border: '1px solid rgba(255,255,255,0.1)',
+                fontWeight: 'bold'
+              }}>
+                {getLeagueBadge(cardLeague)}
+              </span>
+            )}
+
+            <span style={{ 
+              fontSize: '0.62rem', 
+              background: matchStatus === 'IN-PLAY' ? 'rgba(255, 51, 85, 0.15)' : 'rgba(255, 255, 255, 0.05)', 
+              color: matchStatus === 'IN-PLAY' ? 'var(--accent-live)' : 'var(--text-secondary)',
+              padding: '2px 6px', 
+              borderRadius: '4px',
+              fontWeight: 'bold',
+              border: matchStatus === 'IN-PLAY' ? '1px solid rgba(255, 51, 85, 0.2)' : '1px solid rgba(255,255,255,0.05)'
+            }}>
+              {matchStatus}
+            </span>
+            {pred.time && (
+              <span style={{
+                fontSize: '0.62rem',
+                background: 'rgba(255, 255, 255, 0.04)',
+                color: 'var(--accent-neon)',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                border: '1px solid rgba(0, 229, 255, 0.2)',
+                fontFamily: 'monospace',
+                fontWeight: 'bold'
+              }}>
+                🕒 {pred.time}
+              </span>
+            )}
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Confidence:</span>
+            <strong style={{ 
+              fontSize: '0.85rem', 
+              color: pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA',
+              textShadow: `0 0 6px ${pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA'}40`
+            }}>{pred.confidence}%</strong>
+          </div>
+        </div>
+
+        {/* Match Name */}
+        <strong style={{ color: 'white', fontSize: '0.94rem' }}>
+          {pred.match}
+        </strong>
+
+        {/* DeepSeek Prediction Badges */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {/* Prediction Outcome */}
+          <div style={{ 
+            background: `${pred.color || 'var(--accent-neon)'}10`,
+            border: `1px solid ${pred.color || 'var(--accent-neon)'}40`,
+            color: pred.color || 'var(--accent-neon)',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '0.8rem',
+            fontWeight: 'bold',
+            boxShadow: `0 0 8px ${pred.color || 'var(--accent-neon)'}10`
+          }}>
+            <span>Outcome:</span>
+            <span style={{ fontSize: '0.8rem' }}>
+              {pred.predictedOutcome === 'H' ? '🏠 Home Win (H)' : pred.predictedOutcome === 'A' ? '✈️ Away Win (A)' : '🤝 Draw (D)'}
+            </span>
+          </div>
+
+          {/* Prediction BTTS */}
+          <div style={{ 
+            background: pred.predictedBtts === 'GG' ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+            border: pred.predictedBtts === 'GG' ? '1px solid #00FF88' : '1px solid rgba(255,255,255,0.08)',
+            color: pred.predictedBtts === 'GG' ? '#00FF88' : 'white',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '0.8rem',
+            fontWeight: 'bold'
+          }}>
+            <span>BTTS:</span>
+            <span>
+              {pred.predictedBtts === 'GG' ? '⚽ GG (Yes)' : '🚫 NG (No)'}
+            </span>
+          </div>
+
+          {/* Prediction Over 1.5 */}
+          {pred.predictedOver15 && (
+            <div style={{ 
+              background: pred.predictedOver15 === 'Over' ? 'rgba(0, 229, 255, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+              border: pred.predictedOver15 === 'Over' ? '1px solid #00E5FF' : '1px solid rgba(255,255,255,0.08)',
+              color: pred.predictedOver15 === 'Over' ? '#00E5FF' : 'white',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold'
+            }}>
+              <span>O/U 1.5:</span>
+              <span>
+                {pred.predictedOver15 === 'Over' ? '⚽ Over 1.5' : '🚫 Under 1.5'}
+              </span>
+            </div>
+          )}
+
+          {/* Prediction Over 2.5 */}
+          {pred.predictedOver25 && (
+            <div style={{ 
+              background: pred.predictedOver25 === 'Over' ? 'rgba(167, 139, 250, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+              border: pred.predictedOver25 === 'Over' ? '1px solid #A78BFA' : '1px solid rgba(255,255,255,0.08)',
+              color: pred.predictedOver25 === 'Over' ? '#A78BFA' : 'white',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold'
+            }}>
+              <span>O/U 2.5:</span>
+              <span>
+                {pred.predictedOver25 === 'Over' ? '⚽ Over 2.5' : '🚫 Under 2.5'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* DeepSeek Reasoning */}
+        <div style={{ 
+          background: 'rgba(255,255,255,0.02)', 
+          padding: '10px 12px', 
+          borderRadius: '6px', 
+          fontSize: '0.74rem', 
+          color: 'var(--text-secondary)',
+          lineHeight: '1.4',
+          border: '1px solid rgba(255,255,255,0.03)',
+          fontStyle: 'italic'
+        }}>
+          🧠 <strong style={{ color: 'var(--accent-neon)' }}>DeepSeek AI Analysis:</strong> "{pred.reasoning}"
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="pattern-engine-root">
       
@@ -482,7 +774,7 @@ export default function LocalPatternEngine() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>💾 Local Storage Store</span>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
-          <span style={{ color: 'var(--accent-neon)', fontSize: '0.8rem', fontWeight: 700 }}>🧬 England Row Patterns</span>
+          <span style={{ color: 'var(--accent-neon)', fontSize: '0.8rem', fontWeight: 700 }}>🧬 {selectedLeague} Row Patterns</span>
         </div>
 
         <h1 className="pattern-engine-title" style={{ margin: '0 0 10px 0', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -494,10 +786,43 @@ export default function LocalPatternEngine() {
             💾 NO CLOUD MONGODB
           </span>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-            Full-width chronological backward trace mapping • 10 matches per round alignment
+            Full-width chronological backward trace mapping for {selectedLeague} • 10 matches per round alignment
           </span>
         </p>
       </header>
+
+      {/* LEAGUE TAB SELECTOR */}
+      <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '4px 0 16px 0', borderBottom: '1px solid var(--glass-border)', marginBottom: '16px' }}>
+        {leagueTabs.map(tab => {
+          const isSelected = selectedLeague === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => handleLeagueTabChange(tab.id)}
+              className="hover-lift"
+              style={{
+                background: isSelected ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                border: isSelected ? '1px solid rgba(0, 229, 255, 0.3)' : '1px solid var(--glass-border)',
+                padding: '10px 18px',
+                borderRadius: '20px',
+                fontSize: '0.85rem',
+                fontWeight: isSelected ? 800 : 500,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: isSelected ? '0 0 15px rgba(0, 229, 255, 0.15)' : 'none',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <span>{tab.emoji}</span>
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
       {/* VIEW SEGMENT SELECTOR */}
       <div style={{ display: 'flex', gap: '12px', background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '12px', border: '1px solid var(--glass-border)', width: 'fit-content', marginBottom: '8px' }}>
         <button 
@@ -547,10 +872,10 @@ export default function LocalPatternEngine() {
           {/* DETAILED "HOW IT WORKS" GUIDELINES SECTION */}
       <section className="glass-panel ultra-glass hud-panel" style={{ padding: '24px', borderLeft: '4px solid var(--accent-neon)' }}>
         <h3 style={{ margin: '0 0 12px 0', color: 'var(--accent-neon)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          📖 How Positional England League Pattern Trace Works
+          📖 How Positional {selectedLeague} Pattern Trace Works
         </h3>
         <p style={{ fontSize: '0.88rem', lineHeight: '1.6', color: 'var(--text-secondary)', margin: '0 0 14px 0' }}>
-          Virtual Football (vFootball) England matches operate in fixed chronological rounds. Each round triggers exactly <strong>10 matches</strong> simultaneously.
+          Virtual Football (vFootball) matches operate in fixed chronological rounds. Each round triggers exactly <strong>10 matches</strong> simultaneously.
           Instead of analyzing general team records, this engine aligns matches based on their exact <strong>visual row/position (0 to 9)</strong> as listed on the platform's result board.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', fontSize: '0.82rem' }}>
@@ -653,16 +978,29 @@ export default function LocalPatternEngine() {
             </div>
           </div>
           
-          <button 
-            onClick={() => fetchPatterns(sortType)}
+          <button
+            onClick={() => fetchPatterns(sortType, selectedLeague)}
             disabled={loading || scraping}
             style={{
               width: '100%', background: 'rgba(255,255,255,0.03)', color: 'white',
               border: '1px solid var(--glass-border)', padding: '10px', borderRadius: '8px',
-              cursor: 'pointer', fontSize: '0.82rem', fontWeight: 'bold', transition: 'all 0.2s', marginTop: 'auto'
+              cursor: loading || scraping ? 'not-allowed' : 'pointer', fontSize: '0.82rem', fontWeight: 'bold', transition: 'all 0.2s', marginTop: 'auto'
             }}
+            className="hover-lift"
           >
             {loading ? '🔄 Querying...' : '🔄 Refresh File Dashboard'}
+          </button>
+ 
+          <button 
+            onClick={() => setWipeConfirmVisible(true)}
+            style={{
+              width: '100%', background: 'rgba(255,51,85,0.08)', color: 'var(--accent-live)',
+              border: '1px solid rgba(255,51,85,0.3)', padding: '10px', borderRadius: '8px',
+              cursor: 'pointer', fontSize: '0.82rem', fontWeight: 'bold', transition: 'all 0.2s', marginTop: '10px'
+            }}
+            className="hover-lift"
+          >
+            🗑️ Wipe Local Store
           </button>
         </div>
 
@@ -691,6 +1029,7 @@ export default function LocalPatternEngine() {
                   <option value="Spain League">Spain League</option>
                   <option value="Italy League">Italy League</option>
                   <option value="Germany League">Germany League</option>
+                  <option value="France League">France League</option>
                 </select>
               </div>
               
@@ -897,36 +1236,70 @@ export default function LocalPatternEngine() {
               </p>
             </div>
             
-            <button
-              onClick={handlePredictLiveList}
-              disabled={predicting}
-              style={{
-                background: predicting ? 'rgba(0, 229, 255, 0.2)' : 'linear-gradient(135deg, #00E5FF, #00FF88)',
-                color: '#000',
-                border: 'none',
-                padding: '12px 24px',
-                borderRadius: '8px',
-                cursor: predicting ? 'not-allowed' : 'pointer',
-                fontWeight: '900',
-                fontSize: '0.88rem',
-                boxShadow: predicting ? 'none' : '0 4px 15px rgba(0, 229, 255, 0.25)',
-                transition: 'all 0.2s',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-            >
-              {predicting ? (
-                <>
-                  <span className="spinner spinner-small" style={{ display: 'inline-block', borderColor: '#000', borderTopColor: 'transparent' }} />
-                  Analyzing Active Live Matches...
-                </>
-              ) : (
-                <>
-                  🤖 Predict Active Live List Matches
-                </>
-              )}
-            </button>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => handlePredictLiveList(false)}
+                disabled={predicting}
+                style={{
+                  background: predicting ? 'rgba(0, 229, 255, 0.2)' : 'rgba(255,255,255,0.03)',
+                  color: 'white',
+                  border: '1px solid var(--glass-border)',
+                  padding: '12px 20px',
+                  borderRadius: '8px',
+                  cursor: predicting ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '0.85rem',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
+                className="hover-lift"
+              >
+                {predicting ? (
+                  <>
+                    <span className="spinner spinner-small" style={{ display: 'inline-block', borderColor: '#fff', borderTopColor: 'transparent' }} />
+                    Analyzing {selectedLeague.replace(' League', '')}...
+                  </>
+                ) : (
+                  <>
+                    🤖 Predict {selectedLeague.replace(' League', '')}
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => handlePredictLiveList(true)}
+                disabled={predicting}
+                style={{
+                  background: predicting ? 'rgba(0, 229, 255, 0.2)' : 'linear-gradient(135deg, #00E5FF, #00FF88)',
+                  color: '#000',
+                  border: 'none',
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  cursor: predicting ? 'not-allowed' : 'pointer',
+                  fontWeight: '900',
+                  fontSize: '0.88rem',
+                  boxShadow: predicting ? 'none' : '0 4px 15px rgba(0, 229, 255, 0.25)',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
+                className="hover-lift"
+              >
+                {predicting ? (
+                  <>
+                    <span className="spinner spinner-small" style={{ display: 'inline-block', borderColor: '#000', borderTopColor: 'transparent' }} />
+                    Predicting All Leagues...
+                  </>
+                ) : (
+                  <>
+                    🔮 Predict All 5 Leagues
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* PREDICTOR ERROR / FALLBACK */}
@@ -944,7 +1317,7 @@ export default function LocalPatternEngine() {
             <div ref={predictionsRef} style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px', background: 'rgba(10,15,30,0.6)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.02)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px', flexWrap: 'wrap', gap: '12px' }}>
                 <span style={{ fontSize: '0.78rem', color: 'var(--accent-neon)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  🎯 Predictions for Round: {predictionResults.league}
+                  🎯 Predictions for Round: {predictionResults.isAll ? 'ALL ACTIVE LEAGUES' : predictionResults.league}
                 </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <button
@@ -974,143 +1347,104 @@ export default function LocalPatternEngine() {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                {predictionResults.predictions.map((pred) => {
-                  const matchStatus = pred.status || 'UPCOMING';
+              {/* Category Tab Row */}
+              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', marginBottom: '8px', overflowX: 'auto' }}>
+                {[
+                  { id: 'by-league', label: 'League View 📁', count: predictionResults.predictions.length },
+                  { id: 'best-picks', label: 'Best Picks ⭐ (70%+ Conf)', count: predictionResults.predictions.filter(p => p.confidence >= 70).length },
+                  { id: 'best-single', label: 'Best Single Option 🎯', count: 1 }
+                ].map(tab => {
+                  const isSelected = predictionCategoryTab === tab.id;
                   return (
-                    <div 
-                      key={pred.position} 
-                      className="glass-panel hover-lift" 
-                      style={{ 
-                        padding: '16px', 
-                        border: '1px solid rgba(255,255,255,0.06)',
-                        borderLeft: `4px solid ${pred.color || 'var(--accent-neon)'}`,
-                        display: 'flex', 
-                        flexDirection: 'column', 
-                        gap: '10px',
-                        background: 'rgba(0,0,0,0.15)',
-                        boxShadow: `0 4px 10px rgba(0,0,0,0.3)`
+                    <button
+                      key={tab.id}
+                      onClick={() => setPredictionCategoryTab(tab.id)}
+                      style={{
+                        background: isSelected ? 'rgba(0, 229, 255, 0.1)' : 'transparent',
+                        color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                        border: isSelected ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid transparent',
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        fontSize: '0.78rem',
+                        fontWeight: isSelected ? 800 : 500,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        whiteSpace: 'nowrap'
                       }}
+                      className="hover-lift"
                     >
-                      {/* Card Header */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ 
-                            background: `${pred.color || 'var(--accent-neon)'}15`, 
-                            color: pred.color || 'var(--accent-neon)', 
-                            width: '24px', 
-                            height: '24px', 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'center', 
-                            borderRadius: '50%', 
-                            fontWeight: 800, 
-                            border: `1px solid ${pred.color || 'var(--accent-neon)'}30`,
-                            fontSize: '0.74rem'
-                          }}>
-                            {pred.position + 1}
-                          </span>
-                          <span style={{ 
-                            fontSize: '0.62rem', 
-                            background: matchStatus === 'IN-PLAY' ? 'rgba(255, 51, 85, 0.15)' : 'rgba(255, 255, 255, 0.05)', 
-                            color: matchStatus === 'IN-PLAY' ? 'var(--accent-live)' : 'var(--text-secondary)',
-                            padding: '2px 6px', 
-                            borderRadius: '4px',
-                            fontWeight: 'bold',
-                            border: matchStatus === 'IN-PLAY' ? '1px solid rgba(255, 51, 85, 0.2)' : '1px solid rgba(255,255,255,0.05)'
-                          }}>
-                            {matchStatus}
-                          </span>
-                          {pred.time && (
-                            <span style={{
-                              fontSize: '0.62rem',
-                              background: 'rgba(255, 255, 255, 0.04)',
-                              color: 'var(--accent-neon)',
-                              padding: '2px 6px',
-                              borderRadius: '4px',
-                              border: '1px solid rgba(0, 229, 255, 0.2)',
-                              fontFamily: 'monospace',
-                              fontWeight: 'bold'
-                            }}>
-                              🕒 {pred.time}
-                            </span>
-                          )}
-                        </div>
-                        
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Confidence:</span>
-                          <strong style={{ 
-                            fontSize: '0.85rem', 
-                            color: pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA',
-                            textShadow: `0 0 6px ${pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA'}40`
-                          }}>{pred.confidence}%</strong>
-                        </div>
-                      </div>
-
-                      {/* Match Name */}
-                      <strong style={{ color: 'white', fontSize: '0.94rem' }}>
-                        {pred.match}
-                      </strong>
-
-                      {/* DeepSeek Prediction Badges */}
-                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        {/* Prediction Outcome */}
-                        <div style={{ 
-                          background: `${pred.color || 'var(--accent-neon)'}10`,
-                          border: `1px solid ${pred.color || 'var(--accent-neon)'}40`,
-                          color: pred.color || 'var(--accent-neon)',
-                          padding: '6px 12px',
-                          borderRadius: '6px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '0.8rem',
-                          fontWeight: 'bold',
-                          boxShadow: `0 0 8px ${pred.color || 'var(--accent-neon)'}10`
-                        }}>
-                          <span>Outcome:</span>
-                          <span style={{ fontSize: '0.8rem' }}>
-                            {pred.predictedOutcome === 'H' ? '🏠 Home Win (H)' : pred.predictedOutcome === 'A' ? '✈️ Away Win (A)' : '🤝 Draw (D)'}
-                          </span>
-                        </div>
-
-                        {/* Prediction BTTS */}
-                        <div style={{ 
-                          background: pred.predictedBtts === 'GG' ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-                          border: pred.predictedBtts === 'GG' ? '1px solid #00FF88' : '1px solid rgba(255,255,255,0.08)',
-                          color: pred.predictedBtts === 'GG' ? '#00FF88' : 'white',
-                          padding: '6px 12px',
-                          borderRadius: '6px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '0.8rem',
-                          fontWeight: 'bold'
-                        }}>
-                          <span>BTTS:</span>
-                          <span>
-                            {pred.predictedBtts === 'GG' ? '⚽ GG (Yes)' : '🚫 NG (No)'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* DeepSeek Reasoning */}
-                      <div style={{ 
-                        background: 'rgba(255,255,255,0.02)', 
-                        padding: '10px 12px', 
-                        borderRadius: '6px', 
-                        fontSize: '0.74rem', 
-                        color: 'var(--text-secondary)',
-                        lineHeight: '1.4',
-                        border: '1px solid rgba(255,255,255,0.03)',
-                        fontStyle: 'italic'
-                      }}>
-                        🧠 <strong style={{ color: 'var(--accent-neon)' }}>DeepSeek AI Analysis:</strong> "{pred.reasoning}"
-                      </div>
-                    </div>
+                      <span>{tab.label}</span>
+                      <span style={{ fontSize: '0.68rem', opacity: 0.6, background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: '4px' }}>
+                        {tab.count}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
+
+              {/* Categorized Displays */}
+              {predictionCategoryTab === 'by-league' && (() => {
+                const grouped = {};
+                predictionResults.predictions.forEach(pred => {
+                  const l = pred.league || predictionResults.league || 'Unknown League';
+                  if (!grouped[l]) grouped[l] = [];
+                  grouped[l].push(pred);
+                });
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {Object.entries(grouped).map(([leagueName, preds]) => (
+                      <div key={leagueName} style={{ display: 'flex', flexDirection: 'column', gap: '12px', border: '1px solid rgba(255,255,255,0.03)', padding: '16px', borderRadius: '10px', background: 'rgba(255,255,255,0.01)' }}>
+                        <h4 style={{ margin: '0 0 4px 0', color: 'white', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem' }}>
+                          <span>⚽</span> {leagueName} Round Predictions
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                          {preds.map(pred => renderPredictionCard(pred))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {predictionCategoryTab === 'best-picks' && (() => {
+                const bestPicks = predictionResults.predictions
+                  .filter(pred => pred.confidence >= 70)
+                  .sort((a, b) => b.confidence - a.confidence);
+                if (bestPicks.length === 0) {
+                  return (
+                    <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      No matches met the 70% confidence threshold in this round.
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                    {bestPicks.map(pred => renderPredictionCard(pred))}
+                  </div>
+                );
+              })()}
+
+              {predictionCategoryTab === 'best-single' && (() => {
+                const bestSingle = predictionResults.predictions.reduce((prev, current) => 
+                  (prev && prev.confidence > current.confidence) ? prev : current, null
+                );
+                if (!bestSingle) return null;
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', gap: '16px', padding: '10px 0' }}>
+                    <div style={{ background: 'linear-gradient(135deg, rgba(255,215,0,0.08), rgba(0,229,255,0.08))', border: '1px solid var(--accent-gold)', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '550px', position: 'relative', overflow: 'hidden', boxShadow: '0 10px 35px rgba(255, 215, 0, 0.15)' }}>
+                      <div style={{ position: 'absolute', top: '-10px', right: '-10px', fontSize: '5rem', opacity: 0.05 }}>🎯</div>
+                      <div style={{ background: 'var(--accent-gold)', color: 'black', fontWeight: 900, fontSize: '0.7rem', padding: '3px 8px', borderRadius: '4px', width: 'fit-content', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '14px' }}>
+                        🏆 SINGLE BEST TIP
+                      </div>
+                      {renderPredictionCard(bestSingle, true)}
+                    </div>
+                  </div>
+                );
+              })()}
+
             </div>
           )}
         </section>
@@ -1118,7 +1452,7 @@ export default function LocalPatternEngine() {
         {/* POSITION CARDS LIST (FULL PAGE WIDTH CHASSIS) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
           <h2 style={{ fontSize: '1.4rem', margin: 0, color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            📊 England Positional Trace Dashboard {loading && <span className="spinner spinner-small" style={{ display: 'inline-block' }}></span>}
+            📊 {selectedLeague} Positional Trace Dashboard {loading && <span className="spinner spinner-small" style={{ display: 'inline-block' }}></span>}
           </h2>
           
           {results && results.positionPatterns && results.positionPatterns.length > 0 ? (
@@ -1135,6 +1469,14 @@ export default function LocalPatternEngine() {
                 GG: { GG: 0, NG: 0, totalCount: 0 },
                 NG: { GG: 0, NG: 0, totalCount: 0 }
               };
+              const over15Transitions = posData.over15TransitionProbabilities || {
+                O15: { O15: 0, U15: 0, totalCount: 0 },
+                U15: { O15: 0, U15: 0, totalCount: 0 }
+              };
+              const over25Transitions = posData.over25TransitionProbabilities || {
+                O25: { O25: 0, U25: 0, totalCount: 0 },
+                U25: { O25: 0, U25: 0, totalCount: 0 }
+              };
               
               const currentFilter = traceFilters[posData.position] || 'all';
               
@@ -1148,6 +1490,14 @@ export default function LocalPatternEngine() {
                 if (currentFilter === 'NG') {
                   const parts = h.score.split(':').map(Number);
                   return parts[0] === 0 || parts[1] === 0;
+                }
+                if (currentFilter === 'O15') {
+                  const parts = h.score.split(':').map(Number);
+                  return (parts[0] + parts[1]) >= 2;
+                }
+                if (currentFilter === 'O25') {
+                  const parts = h.score.split(':').map(Number);
+                  return (parts[0] + parts[1]) >= 3;
                 }
                 return h.outcome === currentFilter;
               });
@@ -1193,11 +1543,13 @@ export default function LocalPatternEngine() {
                       <div style={{ display: 'flex', gap: '6px', background: 'rgba(0,0,0,0.3)', padding: '3px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap' }}>
                         {[
                           { val: 'all', label: 'All' },
-                          { val: 'H', label: '🏠 Home Wins' },
-                          { val: 'A', label: '✈️ Away Wins' },
-                          { val: 'D', label: '🤝 Draws' },
-                          { val: 'GG', label: '⚽ GG (Both Score)' },
-                          { val: 'NG', label: '🚫 NG (One/None)' }
+                          { val: 'H', label: '🏠 Home' },
+                          { val: 'A', label: '✈️ Away' },
+                          { val: 'D', label: '🤝 Draw' },
+                          { val: 'GG', label: '⚽ GG' },
+                          { val: 'NG', label: '🚫 NG' },
+                          { val: 'O15', label: '⚽ O1.5' },
+                          { val: 'O25', label: '⚽ O2.5' }
                         ].map((btn) => (
                           <button
                             key={btn.val}
@@ -1226,10 +1578,13 @@ export default function LocalPatternEngine() {
                         filteredHistory.map((h, index) => {
                           const parts = h.score.split(':').map(Number);
                           const isGG = parts[0] > 0 && parts[1] > 0;
+                          const goals = parts[0] + parts[1];
+                          const isO15 = goals >= 2;
+                          const isO25 = goals >= 3;
                           return (
                             <div 
                               key={index} 
-                              title={`${h.date} ${h.time} | ${h.homeTeam} ${h.score} ${h.awayTeam} | BTTS: ${isGG ? 'Yes (GG)' : 'No (NG)'}`}
+                              title={`${h.date} ${h.time} | ${h.homeTeam} ${h.score} ${h.awayTeam} | BTTS: ${isGG ? 'Yes (GG)' : 'No (NG)'} | Goals: ${goals} (O1.5: ${isO15 ? 'Yes' : 'No'}, O2.5: ${isO25 ? 'Yes' : 'No'})`}
                               style={{
                                 padding: '8px 12px', borderRadius: '8px',
                                 background: `${getOutcomeColor(h.outcome)}10`,
@@ -1253,18 +1608,41 @@ export default function LocalPatternEngine() {
                               <span style={{ fontSize: '0.68rem', fontWeight: 700, opacity: 0.9, fontFamily: 'monospace', marginTop: '2px', color: '#FFF' }}>
                                 {h.score}
                               </span>
-                              <span style={{ 
-                                fontSize: '0.55rem', 
-                                fontWeight: 700, 
-                                background: isGG ? 'rgba(0, 255, 136, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
-                                color: isGG ? '#00FF88' : '#888',
-                                padding: '1px 4px', 
-                                borderRadius: '3px',
-                                marginTop: '4px',
-                                border: isGG ? '1px solid rgba(0, 255, 136, 0.2)' : '1px solid rgba(255,255,255,0.05)'
-                              }}>
-                                {isGG ? 'GG' : 'NG'}
-                              </span>
+                              <div style={{ display: 'flex', gap: '3px', marginTop: '4px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                <span style={{ 
+                                  fontSize: '0.55rem', 
+                                  fontWeight: 700, 
+                                  background: isGG ? 'rgba(0, 255, 136, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
+                                  color: isGG ? '#00FF88' : '#888',
+                                  padding: '1px 4px', 
+                                  borderRadius: '3px',
+                                  border: isGG ? '1px solid rgba(0, 255, 136, 0.2)' : '1px solid rgba(255,255,255,0.05)'
+                                }}>
+                                  {isGG ? 'GG' : 'NG'}
+                                </span>
+                                <span style={{ 
+                                  fontSize: '0.55rem', 
+                                  fontWeight: 700, 
+                                  background: isO15 ? 'rgba(0, 229, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
+                                  color: isO15 ? '#00E5FF' : '#888',
+                                  padding: '1px 4px', 
+                                  borderRadius: '3px',
+                                  border: isO15 ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid rgba(255,255,255,0.05)'
+                                }}>
+                                  {isO15 ? 'O1.5' : 'U1.5'}
+                                </span>
+                                <span style={{ 
+                                  fontSize: '0.55rem', 
+                                  fontWeight: 700, 
+                                  background: isO25 ? 'rgba(167, 139, 250, 0.12)' : 'rgba(255, 255, 255, 0.05)', 
+                                  color: isO25 ? '#A78BFA' : '#888',
+                                  padding: '1px 4px', 
+                                  borderRadius: '3px',
+                                  border: isO25 ? '1px solid rgba(167, 139, 250, 0.2)' : '1px solid rgba(255,255,255,0.05)'
+                                }}>
+                                  {isO25 ? 'O2.5' : 'U2.5'}
+                                </span>
+                              </div>
                             </div>
                           );
                         })
@@ -1329,6 +1707,19 @@ export default function LocalPatternEngine() {
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: '#888' }}>🚫 NG (No)</span>
                           <strong>{stats.bttsNo || 0} ({stats.bttsNoPercent || 0}%)</strong>
+                        </div>
+                      </div>
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '8px', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.78rem' }}>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 'bold' }}>
+                          ⚽ Goals Consideration
+                        </span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#00E5FF' }}>⚽ Over 1.5</span>
+                          <strong>{stats.over15Percent || 0}%</strong>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#A78BFA' }}>⚽ Over 2.5</span>
+                          <strong>{stats.over25Percent || 0}%</strong>
                         </div>
                       </div>
                     </div>
@@ -1534,6 +1925,136 @@ export default function LocalPatternEngine() {
                             </div>
                           </div>
 
+                        </div>
+
+                        {/* 3. OVER 1.5 TRANSITIONS */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px', marginTop: '4px' }}>
+                          <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 'bold' }}>
+                            ⚽ Over 1.5 Next State
+                          </span>
+
+                          {/* After Over 1.5 */}
+                          <div>
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                              ⚽ After <strong>Over 1.5 (O15)</strong>:
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              {(() => {
+                                const prob = over15Transitions.O15 || { O15: 0, U15: 0 };
+                                const highest = getHighestOver15Outcome(prob);
+                                return (
+                                  <>
+                                    <span style={{
+                                      background: highest === 'O15' ? 'rgba(0, 229, 255, 0.15)' : 'transparent',
+                                      border: highest === 'O15' ? '1px solid #00E5FF' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'O15' ? '0 0 6px rgba(0, 229, 255, 0.2)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#00E5FF', fontWeight: highest === 'O15' ? 'bold' : 'normal'
+                                    }}>O1.5: {prob.O15}%</span>
+                                    <span style={{
+                                      background: highest === 'U15' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                                      border: highest === 'U15' ? '1px solid rgba(255,255,255,0.3)' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'U15' ? '0 0 6px rgba(255, 255, 255, 0.1)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#FFF', fontWeight: highest === 'U15' ? 'bold' : 'normal'
+                                    }}>U1.5: {prob.U15}%</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* After Under 1.5 */}
+                          <div>
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                              🚫 After <strong>Under 1.5 (U15)</strong>:
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              {(() => {
+                                const prob = over15Transitions.U15 || { O15: 0, U15: 0 };
+                                const highest = getHighestOver15Outcome(prob);
+                                return (
+                                  <>
+                                    <span style={{
+                                      background: highest === 'O15' ? 'rgba(0, 229, 255, 0.15)' : 'transparent',
+                                      border: highest === 'O15' ? '1px solid #00E5FF' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'O15' ? '0 0 6px rgba(0, 229, 255, 0.2)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#00E5FF', fontWeight: highest === 'O15' ? 'bold' : 'normal'
+                                    }}>O1.5: {prob.O15}%</span>
+                                    <span style={{
+                                      background: highest === 'U15' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                                      border: highest === 'U15' ? '1px solid rgba(255,255,255,0.3)' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'U15' ? '0 0 6px rgba(255, 255, 255, 0.1)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#FFF', fontWeight: highest === 'U15' ? 'bold' : 'normal'
+                                    }}>U1.5: {prob.U15}%</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 4. OVER 2.5 TRANSITIONS */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px', marginTop: '4px' }}>
+                          <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 'bold' }}>
+                            ⚽ Over 2.5 Next State
+                          </span>
+
+                          {/* After Over 2.5 */}
+                          <div>
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                              ⚽ After <strong>Over 2.5 (O25)</strong>:
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              {(() => {
+                                const prob = over25Transitions.O25 || { O25: 0, U25: 0 };
+                                const highest = getHighestOver25Outcome(prob);
+                                return (
+                                  <>
+                                    <span style={{
+                                      background: highest === 'O25' ? 'rgba(167, 139, 250, 0.15)' : 'transparent',
+                                      border: highest === 'O25' ? '1px solid #A78BFA' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'O25' ? '0 0 6px rgba(167, 139, 250, 0.2)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#A78BFA', fontWeight: highest === 'O25' ? 'bold' : 'normal'
+                                    }}>O2.5: {prob.O25}%</span>
+                                    <span style={{
+                                      background: highest === 'U25' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                                      border: highest === 'U25' ? '1px solid rgba(255,255,255,0.3)' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'U25' ? '0 0 6px rgba(255, 255, 255, 0.1)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#FFF', fontWeight: highest === 'U25' ? 'bold' : 'normal'
+                                    }}>U2.5: {prob.U25}%</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* After Under 2.5 */}
+                          <div>
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '3px' }}>
+                              🚫 After <strong>Under 2.5 (U25)</strong>:
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              {(() => {
+                                const prob = over25Transitions.U25 || { O25: 0, U25: 0 };
+                                const highest = getHighestOver25Outcome(prob);
+                                return (
+                                  <>
+                                    <span style={{
+                                      background: highest === 'O25' ? 'rgba(167, 139, 250, 0.15)' : 'transparent',
+                                      border: highest === 'O25' ? '1px solid #A78BFA' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'O25' ? '0 0 6px rgba(167, 139, 250, 0.2)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#A78BFA', fontWeight: highest === 'O25' ? 'bold' : 'normal'
+                                    }}>O2.5: {prob.O25}%</span>
+                                    <span style={{
+                                      background: highest === 'U25' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                                      border: highest === 'U25' ? '1px solid rgba(255,255,255,0.3)' : '1px solid rgba(255,255,255,0.08)',
+                                      boxShadow: highest === 'U25' ? '0 0 6px rgba(255, 255, 255, 0.1)' : 'none',
+                                      padding: '2px 6px', borderRadius: '4px', color: '#FFF', fontWeight: highest === 'U25' ? 'bold' : 'normal'
+                                    }}>U2.5: {prob.U25}%</span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
                         </div>
 
                       </div>
@@ -1801,7 +2322,200 @@ export default function LocalPatternEngine() {
         </div>
       )}
 
-      
+      {wipeConfirmVisible && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(8, 11, 17, 0.85)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          padding: '20px'
+        }}>
+          <div 
+            className="glass-panel"
+            style={{
+              width: '100%',
+              maxWidth: '480px',
+              border: '1px solid rgba(255, 51, 85, 0.4)',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.5), 0 0 30px rgba(255, 51, 85, 0.15)',
+              padding: '30px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+              background: 'rgba(14, 20, 32, 0.95)',
+              position: 'relative'
+            }}
+          >
+            {/* Header / Warning Title */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,51,85,0.2)', paddingBottom: '14px' }}>
+              <span style={{ fontSize: '2rem' }}>🚨</span>
+              <div>
+                <h3 style={{ margin: 0, color: 'var(--accent-live)', fontSize: '1.2rem', fontWeight: 800, letterSpacing: '0.05em' }}>
+                  DANGER ZONE: LOCAL PURGE
+                </h3>
+                <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                  This action is permanent and cannot be undone.
+                </span>
+              </div>
+            </div>
+
+            {/* Warning Message Box */}
+            <div style={{ background: 'rgba(255, 51, 85, 0.05)', border: '1px solid rgba(255, 51, 85, 0.15)', borderRadius: '8px', padding: '14px', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
+                Wipe Action Scope:
+              </span>
+              You are about to delete Virtual Football database records stored locally on the server. Please select which records and leagues you want to purge:
+            </div>
+
+            {/* Inputs Selection */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              
+              {/* Target League select */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  Select League Target:
+                </label>
+                <select 
+                  value={wipeScopeLeague} 
+                  onChange={(e) => setWipeScopeLeague(e.target.value)}
+                  style={{
+                    background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'white',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    width: '100%'
+                  }}
+                >
+                  <option value="current">Only {selectedLeague} ({selectedLeague === 'England League' ? 'England - Virtual' : selectedLeague === 'Spain League' ? 'Spain - Virtual' : selectedLeague === 'Italy League' ? 'Italy - Virtual' : selectedLeague === 'Germany League' ? 'Germany - Virtual' : 'France - Virtual'})</option>
+                  <option value="all">ALL LEAGUES (England, Spain, Italy, Germany, France)</option>
+                </select>
+              </div>
+
+              {/* Scope select */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  Select Data Type Scope:
+                </label>
+                <select 
+                  value={wipeScope} 
+                  onChange={(e) => setWipeScope(e.target.value)}
+                  style={{
+                    background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'white',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    width: '100%'
+                  }}
+                >
+                  <option value="all">Everything (Results & AI Predictions History)</option>
+                  <option value="results">Scraped Results Only (local_results.json)</option>
+                  <option value="history">AI Predictions History Only (local_predictions_history.json)</option>
+                </select>
+              </div>
+
+              {/* Write confirm text */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  To confirm, type <strong style={{ color: 'var(--accent-live)' }}>WIPE</strong> below:
+                </label>
+                <input 
+                  type="text" 
+                  value={wipeWroteConfirm} 
+                  onChange={(e) => setWipeWroteConfirm(e.target.value)}
+                  placeholder="WIPE"
+                  style={{
+                    background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid rgba(255, 51, 85, 0.3)',
+                    color: 'white',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                    textAlign: 'center',
+                    fontFamily: 'monospace',
+                    fontWeight: 'bold',
+                    letterSpacing: '0.2em'
+                  }}
+                />
+              </div>
+
+            </div>
+
+            {/* Actions Button */}
+            <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+              <button 
+                onClick={handleWipeData}
+                disabled={wipeWroteConfirm !== 'WIPE' || wiping}
+                style={{
+                  flex: 1,
+                  background: 'var(--accent-live)',
+                  color: 'white',
+                  border: 'none',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  cursor: (wipeWroteConfirm !== 'WIPE' || wiping) ? 'not-allowed' : 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: 'bold',
+                  opacity: (wipeWroteConfirm !== 'WIPE' || wiping) ? 0.5 : 1,
+                  boxShadow: (wipeWroteConfirm !== 'WIPE' || wiping) ? 'none' : '0 4px 15px rgba(255, 51, 85, 0.25)',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                {wiping ? (
+                  <>
+                    <span className="spinner spinner-small" style={{ borderColor: '#fff', borderTopColor: 'transparent', display: 'inline-block' }} />
+                    Wiping Data...
+                  </>
+                ) : (
+                  'Confirm Purge'
+                )}
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setWipeConfirmVisible(false);
+                  setWipeWroteConfirm('');
+                }}
+                disabled={wiping}
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--glass-border)',
+                  padding: '12px 18px',
+                  borderRadius: '8px',
+                  fontSize: '0.85rem',
+                  fontWeight: 'bold',
+                  cursor: wiping ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                className="hover-lift"
+              >
+                Cancel
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

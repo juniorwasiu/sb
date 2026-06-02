@@ -4486,15 +4486,18 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
         
         const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
         
-        // Filter England - Virtual matches
-        const englandMatches = allMatches.filter(m => 
-            (m.league === 'England - Virtual' || m.league === 'England League') && 
+        const leagueQuery = req.query.league || 'England League';
+        const targetDbLeague = toDbLeague(leagueQuery);
+        
+        // Filter league matches
+        const leagueMatches = allMatches.filter(m => 
+            (toDbLeague(m.league) === targetDbLeague) && 
             m.date && m.time && m.score
         );
         
         // Step 1: Group matches by round key (date + time)
         const roundGroups = {};
-        englandMatches.forEach(m => {
+        leagueMatches.forEach(m => {
             const key = `${m.date}_${m.time}`;
             if (!roundGroups[key]) {
                 roundGroups[key] = {
@@ -4509,7 +4512,7 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
         
         // Step 2: Only analyze rounds with EXACTLY 10 matches (aligned kickoff)
         const validRounds = Object.values(roundGroups).filter(r => r.matches.length === 10);
-        console.log(`[DEBUG] [Patterns] Total England rounds: ${Object.keys(roundGroups).length}. Aligned rounds (10 matches): ${validRounds.length}`);
+        console.log(`[DEBUG] [Patterns] Total ${leagueQuery} rounds: ${Object.keys(roundGroups).length}. Aligned rounds (10 matches): ${validRounds.length}`);
         
         // Step 3: Sort rounds chronologically (oldest to newest)
         const parseDateTime = (dStr, tStr) => {
@@ -4615,6 +4618,16 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
                 NG: { GG: 0, NG: 0, total: 0 }
             };
             
+            const over15Transitions = {
+                O15: { O15: 0, U15: 0, total: 0 },
+                U15: { O15: 0, U15: 0, total: 0 }
+            };
+            
+            const over25Transitions = {
+                O25: { O25: 0, U25: 0, total: 0 },
+                U25: { O25: 0, U25: 0, total: 0 }
+            };
+            
             for (let i = 0; i < totalCount - 1; i++) {
                 // Outcome transitions
                 const cur = history[i].outcome;
@@ -4633,6 +4646,25 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
                 
                 bttsTransitions[curKey][nxtKey]++;
                 bttsTransitions[curKey].total++;
+
+                // Over 1.5 & Over 2.5 transitions
+                const curGoals = curParts[0] + curParts[1];
+                const curIsOver15 = curGoals >= 2;
+                const curIsOver25 = curGoals >= 3;
+                
+                const nxtGoals = nxtParts[0] + nxtParts[1];
+                const nxtIsOver15 = nxtGoals >= 2;
+                const nxtIsOver25 = nxtGoals >= 3;
+                
+                const cur15Key = curIsOver15 ? 'O15' : 'U15';
+                const nxt15Key = nxtIsOver15 ? 'O15' : 'U15';
+                over15Transitions[cur15Key][nxt15Key]++;
+                over15Transitions[cur15Key].total++;
+                
+                const cur25Key = curIsOver25 ? 'O25' : 'U25';
+                const nxt25Key = nxtIsOver25 ? 'O25' : 'U25';
+                over25Transitions[cur25Key][nxt25Key]++;
+                over25Transitions[cur25Key].total++;
             }
             
             // Convert transitions to percentages
@@ -4653,6 +4685,26 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
                 bttsTransitionPct[key] = {
                     GG: data.total > 0 ? Math.round((data.GG / data.total) * 100) : 0,
                     NG: data.total > 0 ? Math.round((data.NG / data.total) * 100) : 0,
+                    totalCount: data.total
+                };
+            });
+
+            const over15TransitionPct = {};
+            Object.keys(over15Transitions).forEach(key => {
+                const data = over15Transitions[key];
+                over15TransitionPct[key] = {
+                    O15: data.total > 0 ? Math.round((data.O15 / data.total) * 100) : 0,
+                    U15: data.total > 0 ? Math.round((data.U15 / data.total) * 100) : 0,
+                    totalCount: data.total
+                };
+            });
+            
+            const over25TransitionPct = {};
+            Object.keys(over25Transitions).forEach(key => {
+                const data = over25Transitions[key];
+                over25TransitionPct[key] = {
+                    O25: data.total > 0 ? Math.round((data.O25 / data.total) * 100) : 0,
+                    U25: data.total > 0 ? Math.round((data.U25 / data.total) * 100) : 0,
                     totalCount: data.total
                 };
             });
@@ -4682,6 +4734,16 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
                 return parts[0] > 0 && parts[1] > 0;
             }).length;
             const bttsNo = totalCount - bttsYes;
+
+            // Over 1.5 & Over 2.5 counts
+            const over15Count = history.filter(h => {
+                const parts = h.score.split(':').map(Number);
+                return (parts[0] + parts[1]) >= 2;
+            }).length;
+            const over25Count = history.filter(h => {
+                const parts = h.score.split(':').map(Number);
+                return (parts[0] + parts[1]) >= 3;
+            }).length;
             
             // Next prediction based on transition probabilities of current outcome
             const nextPredicted = { ...transitionPct[currentOutcome] };
@@ -4711,6 +4773,8 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
                 longestStreaks: { H: maxHStreak, A: maxAStreak, D: maxDStreak },
                 transitionProbabilities: transitionPct,
                 bttsTransitionProbabilities: bttsTransitionPct,
+                over15TransitionProbabilities: over15TransitionPct,
+                over25TransitionProbabilities: over25TransitionPct,
                 topScores,
                 winLossDrawStats: {
                     homeWins: hWins,
@@ -4723,6 +4787,8 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
                     bttsYesPercent: Math.round((bttsYes / totalCount) * 100),
                     bttsNo,
                     bttsNoPercent: Math.round((bttsNo / totalCount) * 100),
+                    over15Percent: Math.round((over15Count / totalCount) * 100),
+                    over25Percent: Math.round((over25Count / totalCount) * 100),
                     totalMatches: totalCount
                 },
                 nextPrediction: {
@@ -4759,18 +4825,19 @@ app.get('/api/local-vfootball/patterns', (req, res) => {
     }
 });
 
-// Local helper to compute England positional row patterns
-function computeLocalPatterns(sortType = 'scraped') {
+// Local helper to compute positional row patterns
+function computeLocalPatterns(sortType = 'scraped', league = 'England League') {
     if (!fs.existsSync(LOCAL_DB_PATH)) {
         return { count: 0, totalRounds: 0, positionPatterns: [] };
     }
+    const targetDbLeague = toDbLeague(league);
     const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
-    const englandMatches = allMatches.filter(m => 
-        (m.league === 'England - Virtual' || m.league === 'England League') && 
+    const leagueMatches = allMatches.filter(m => 
+        (toDbLeague(m.league) === targetDbLeague) && 
         m.date && m.time && m.score
     );
     const roundGroups = {};
-    englandMatches.forEach(m => {
+    leagueMatches.forEach(m => {
         const key = `${m.date}_${m.time}`;
         if (!roundGroups[key]) {
             roundGroups[key] = { key, date: m.date, time: m.time, matches: [] };
@@ -4834,19 +4901,46 @@ function computeLocalPatterns(sortType = 'scraped') {
             GG: { GG: 0, NG: 0, total: 0 },
             NG: { GG: 0, NG: 0, total: 0 }
         };
+        const over15Transitions = {
+            O15: { O15: 0, U15: 0, total: 0 },
+            U15: { O15: 0, U15: 0, total: 0 }
+        };
+        const over25Transitions = {
+            O25: { O25: 0, U25: 0, total: 0 },
+            U25: { O25: 0, U25: 0, total: 0 }
+        };
         for (let i = 0; i < totalCount - 1; i++) {
             const cur = history[i].outcome;
             const nxt = history[i + 1].outcome;
             transitions[cur][nxt]++;
             transitions[cur].total++;
+            
             const curParts = history[i].score.split(':').map(Number);
             const curIsGG = curParts[0] > 0 && curParts[1] > 0;
             const curKey = curIsGG ? 'GG' : 'NG';
+            const curGoals = curParts[0] + curParts[1];
+            const curIsOver15 = curGoals >= 2;
+            const curIsOver25 = curGoals >= 3;
+            
             const nxtParts = history[i + 1].score.split(':').map(Number);
             const nxtIsGG = nxtParts[0] > 0 && nxtParts[1] > 0;
             const nxtKey = nxtIsGG ? 'GG' : 'NG';
+            const nxtGoals = nxtParts[0] + nxtParts[1];
+            const nxtIsOver15 = nxtGoals >= 2;
+            const nxtIsOver25 = nxtGoals >= 3;
+            
             bttsTransitions[curKey][nxtKey]++;
             bttsTransitions[curKey].total++;
+            
+            const cur15Key = curIsOver15 ? 'O15' : 'U15';
+            const nxt15Key = nxtIsOver15 ? 'O15' : 'U15';
+            over15Transitions[cur15Key][nxt15Key]++;
+            over15Transitions[cur15Key].total++;
+            
+            const cur25Key = curIsOver25 ? 'O25' : 'U25';
+            const nxt25Key = nxtIsOver25 ? 'O25' : 'U25';
+            over25Transitions[cur25Key][nxt25Key]++;
+            over25Transitions[cur25Key].total++;
         }
         const transitionPct = {};
         Object.keys(transitions).forEach(outcome => {
@@ -4865,6 +4959,23 @@ function computeLocalPatterns(sortType = 'scraped') {
                 NG: data.total > 0 ? Math.round((data.NG / data.total) * 100) : 0,
             };
         });
+        const over15TransitionPct = {};
+        Object.keys(over15Transitions).forEach(key => {
+            const data = over15Transitions[key];
+            over15TransitionPct[key] = {
+                O15: data.total > 0 ? Math.round((data.O15 / data.total) * 100) : 0,
+                U15: data.total > 0 ? Math.round((data.U15 / data.total) * 100) : 0,
+            };
+        });
+        const over25TransitionPct = {};
+        Object.keys(over25Transitions).forEach(key => {
+            const data = over25Transitions[key];
+            over25TransitionPct[key] = {
+                O25: data.total > 0 ? Math.round((data.O25 / data.total) * 100) : 0,
+                U25: data.total > 0 ? Math.round((data.U25 / data.total) * 100) : 0,
+            };
+        });
+        
         const hWins = history.filter(h => h.outcome === 'H').length;
         const aWins = history.filter(h => h.outcome === 'A').length;
         const draws = history.filter(h => h.outcome === 'D').length;
@@ -4873,27 +4984,42 @@ function computeLocalPatterns(sortType = 'scraped') {
             return parts[0] > 0 && parts[1] > 0;
         }).length;
         const bttsNo = totalCount - bttsYes;
+        const over15Count = history.filter(h => {
+            const parts = h.score.split(':').map(Number);
+            return (parts[0] + parts[1]) >= 2;
+        }).length;
+        const over25Count = history.filter(h => {
+            const parts = h.score.split(':').map(Number);
+            return (parts[0] + parts[1]) >= 3;
+        }).length;
+        
         positionPatterns.push({
             position: pos,
             currentStreak: { outcome: currentOutcome, streak: currentStreak },
             transitionProbabilities: transitionPct,
             bttsTransitionProbabilities: bttsTransitionPct,
+            over15TransitionProbabilities: over15TransitionPct,
+            over25TransitionProbabilities: over25TransitionPct,
             winLossDrawStats: {
                 homeWinPercent: Math.round((hWins / totalCount) * 100),
                 awayWinPercent: Math.round((aWins / totalCount) * 100),
                 drawPercent: Math.round((draws / totalCount) * 100),
                 bttsYesPercent: Math.round((bttsYes / totalCount) * 100),
                 bttsNoPercent: Math.round((bttsNo / totalCount) * 100),
+                over15Percent: Math.round((over15Count / totalCount) * 100),
+                over25Percent: Math.round((over25Count / totalCount) * 100),
                 totalMatches: totalCount
             }
         });
     }
-    return { count: englandMatches.length, totalRounds: validRounds.length, positionPatterns };
+    return { count: leagueMatches.length, totalRounds: validRounds.length, positionPatterns };
 }
 
 // 5. GET DeepSeek Live List Predictions using local England visual patterns
 app.get('/api/local-vfootball/predict-live', async (req, res) => {
     console.log('[DEBUG] [Local API] GET /api/local-vfootball/predict-live requested');
+    const requestedLeague = req.query.league || 'England League';
+    
     try {
         // Step 1: Scrape real-time live list vFootball games on SportyBet
         const { scrapeLiveListOnDemand } = require('./scraper');
@@ -4910,92 +5036,91 @@ app.get('/api/local-vfootball/predict-live', async (req, res) => {
             });
         }
 
-        // Step 2: Look for England League groups (both in-play and upcoming)
-        const englandGroup = liveListGames.find(g => 
-            g.league && g.league.toLowerCase().includes('england') && !g.league.toLowerCase().includes('upcoming')
-        );
-        const upcomingGroup = liveListGames.find(g => 
-            g.league && g.league.toLowerCase().includes('england') && g.league.toLowerCase().includes('upcoming')
-        );
-        
-        let targetGroup = null;
-        if (englandGroup && englandGroup.matches && englandGroup.matches.length > 0) {
-            targetGroup = englandGroup;
-            console.log(`[DEBUG] [Local API] England group has ${englandGroup.matches.length} active in-play matches. Selected IN-PLAY mode.`);
-        } else if (upcomingGroup && upcomingGroup.matches && upcomingGroup.matches.length > 0) {
-            targetGroup = upcomingGroup;
-            console.log(`[DEBUG] [Local API] No active in-play England matches found. Selected UPCOMING fallback mode with ${upcomingGroup.matches.length} matches.`);
-        }
-        
-        if (!targetGroup || !targetGroup.matches || targetGroup.matches.length === 0) {
-            console.warn('[DEBUG] [Local API] No England League matches found in scraped data.');
-            return res.json({
-                success: true,
-                message: 'Active England League matches are not in play or upcoming on SportyBet right now. Current live leagues: ' + liveListGames.map(g => g.league).join(', '),
-                predictions: [],
-                fixtures: null,
-                allLeagues: liveListGames
-            });
-        }
-        
-        // Sort matches alphabetically by home team to match the visual row positions (0 to 9)
-        console.log(`[DEBUG] [Local API] Sorting ${targetGroup.matches.length} matches alphabetically by home team for correct positional alignment...`);
-        const sortedMatches = [...targetGroup.matches].sort((a, b) => {
-            const nameA = (a.home || '').toLowerCase();
-            const nameB = (b.home || '').toLowerCase();
-            return nameA.localeCompare(nameB);
-        });
-        
-        sortedMatches.forEach((m, idx) => {
-            console.log(`  [Match Sorted] Position #${idx + 1}: ${m.home} vs ${m.away} (${m.time || 'N/A'})`);
-        });
+        const predictLeague = async (leagueName) => {
+            const cleanName = leagueName.replace(' League', '').replace(' - Virtual', '').toLowerCase(); // e.g. "england", "spain", etc.
 
-        // Step 3: Compute the latest visual positional patterns from the database (force homeTeam sorting)
-        console.log('[DEBUG] [Local API] Computing local database pattern profiles with alphabetical sorting...');
-        const patternsData = computeLocalPatterns('homeTeam');
-        const posPatterns = patternsData.positionPatterns || [];
-
-        if (posPatterns.length === 0) {
-            console.error('[DEBUG] [Local API] Failed to compute local patterns: positionPatterns array is empty.');
-            return res.json({
-                success: false,
-                error: 'Positional database patterns are empty. Scrape some historic England League rounds first.'
-            });
-        }
-
-        // Step 4: Build cross-reference fixture data string for DeepSeek analysis
-        console.log('[DEBUG] [Local API] Step 4: Building cross-reference fixture data list for AI analyzer...');
-        const fixturesDataList = [];
-        sortedMatches.forEach((match, index) => {
-            if (index >= 10) return; // vFootball has exactly 10 matches
-            const pattern = posPatterns[index] || {
-                winLossDrawStats: { homeWinPercent: 0, drawPercent: 0, awayWinPercent: 0, bttsYesPercent: 0, bttsNoPercent: 0, totalMatches: 0 },
-                currentStreak: { outcome: 'D', streak: 0 },
-                transitionProbabilities: { D: { H: 0, D: 0, A: 0 }, H: { H: 0, D: 0, A: 0 }, A: { H: 0, D: 0, A: 0 } },
-                bttsTransitionProbabilities: { GG: { GG: 0, NG: 0 }, NG: { GG: 0, NG: 0 } }
-            };
+            // Look for targeted League groups (both in-play and upcoming)
+            const inPlayGroup = liveListGames.find(g => 
+                g.league && g.league.toLowerCase().includes(cleanName) && !g.league.toLowerCase().includes('upcoming')
+            );
+            const upcomingGroup = liveListGames.find(g => 
+                g.league && g.league.toLowerCase().includes(cleanName) && g.league.toLowerCase().includes('upcoming')
+            );
             
-            fixturesDataList.push({
-                position: index,
-                home: match.home,
-                away: match.away,
-                status: match.status || (targetGroup.league.toLowerCase().includes('upcoming') ? 'UPCOMING' : 'IN-PLAY'),
-                time: match.time || '',
-                odds: match.score || '', // Odds are stored in the score field for live list
-                stats: pattern.winLossDrawStats,
-                streak: pattern.currentStreak,
-                transitions: pattern.transitionProbabilities,
-                bttsTransitions: pattern.bttsTransitionProbabilities
+            let targetGroup = null;
+            if (inPlayGroup && inPlayGroup.matches && inPlayGroup.matches.length > 0) {
+                targetGroup = inPlayGroup;
+                console.log(`[DEBUG] [Local API] ${leagueName} group has ${inPlayGroup.matches.length} active in-play matches. Selected IN-PLAY mode.`);
+            } else if (upcomingGroup && upcomingGroup.matches && upcomingGroup.matches.length > 0) {
+                targetGroup = upcomingGroup;
+                console.log(`[DEBUG] [Local API] No active in-play ${leagueName} matches found. Selected UPCOMING fallback mode with ${upcomingGroup.matches.length} matches.`);
+            }
+            
+            if (!targetGroup || !targetGroup.matches || targetGroup.matches.length === 0) {
+                console.warn(`[DEBUG] [Local API] No ${leagueName} matches found in scraped data.`);
+                return { 
+                    success: false, 
+                    error: `Active ${leagueName} matches are not in play or upcoming on SportyBet right now.`
+                };
+            }
+            
+            // Sort matches alphabetically by home team to match the visual row positions (0 to 9)
+            console.log(`[DEBUG] [Local API] Sorting ${targetGroup.matches.length} matches alphabetically by home team for correct positional alignment...`);
+            const sortedMatches = [...targetGroup.matches].sort((a, b) => {
+                const nameA = (a.home || '').toLowerCase();
+                const nameB = (b.home || '').toLowerCase();
+                return nameA.localeCompare(nameB);
             });
-        });
+            
+            // Compute patterns
+            console.log(`[DEBUG] [Local API] Computing local database pattern profiles for ${leagueName} with alphabetical sorting...`);
+            const patternsData = computeLocalPatterns('homeTeam', leagueName);
+            const posPatterns = patternsData.positionPatterns || [];
 
-        const fixturesDataStr = fixturesDataList.map((f, i) => `
+            if (posPatterns.length === 0) {
+                return {
+                    success: false,
+                    error: `Positional database patterns are empty. Scrape some historic ${leagueName} rounds first.`
+                };
+            }
+
+            const fixturesDataList = [];
+            sortedMatches.forEach((match, index) => {
+                if (index >= 10) return; // vFootball has exactly 10 matches
+                const pattern = posPatterns[index] || {
+                    winLossDrawStats: { homeWinPercent: 0, drawPercent: 0, awayWinPercent: 0, bttsYesPercent: 0, bttsNoPercent: 0, over15Percent: 0, over25Percent: 0, totalMatches: 0 },
+                    currentStreak: { outcome: 'D', streak: 0 },
+                    transitionProbabilities: { D: { H: 0, D: 0, A: 0 }, H: { H: 0, D: 0, A: 0 }, A: { H: 0, D: 0, A: 0 } },
+                    bttsTransitionProbabilities: { GG: { GG: 0, NG: 0 }, NG: { GG: 0, NG: 0 } },
+                    over15TransitionProbabilities: { O15: { O15: 0, U15: 0 }, U15: { O15: 0, U15: 0 } },
+                    over25TransitionProbabilities: { O25: { O25: 0, U25: 0 }, U25: { O25: 0, U25: 0 } }
+                };
+                
+                fixturesDataList.push({
+                    position: index,
+                    home: match.home,
+                    away: match.away,
+                    status: match.status || (targetGroup.league.toLowerCase().includes('upcoming') ? 'UPCOMING' : 'IN-PLAY'),
+                    time: match.time || '',
+                    odds: match.score || '', // Odds are stored in the score field for live list
+                    stats: pattern.winLossDrawStats,
+                    streak: pattern.currentStreak,
+                    transitions: pattern.transitionProbabilities,
+                    bttsTransitions: pattern.bttsTransitionProbabilities,
+                    over15Transitions: pattern.over15TransitionProbabilities,
+                    over25Transitions: pattern.over25TransitionProbabilities
+                });
+            });
+
+            const fixturesDataStr = fixturesDataList.map((f, i) => `
 POSITION #${i+1}:
 Matchup: ${f.home} vs ${f.away} (Status: ${f.status}, Kickoff Time/Min: ${f.time || 'N/A'})
 Live odds string: ${f.odds}
 Visual Row Position Historical Win Stats (Over ${f.stats.totalMatches} matches):
 - Home Win: ${f.stats.homeWinPercent}% | Draw: ${f.stats.drawPercent}% | Away Win: ${f.stats.awayWinPercent}%
 - BTTS GG (Both Score): ${f.stats.bttsYesPercent}% | BTTS NG (One/None): ${f.stats.bttsNoPercent}%
+- Over 1.5 Goals: ${f.stats.over15Percent}% | Under 1.5 Goals: ${100 - f.stats.over15Percent}%
+- Over 2.5 Goals: ${f.stats.over25Percent}% | Under 2.5 Goals: ${100 - f.stats.over25Percent}%
 Visual Row Position Current Streaks:
 - Position Row currently on a ${f.streak.streak}x ${f.streak.outcome === 'H' ? 'Home Win' : f.streak.outcome === 'A' ? 'Away Win' : 'Draw'} streak.
 Visual Row Position Markov Next-Outcome Transition Probabilities:
@@ -5005,14 +5130,20 @@ Visual Row Position Markov Next-Outcome Transition Probabilities:
 Visual Row Position Markov BTTS Transition Probabilities:
 - After Both Score (GG) transitions to → GG:${f.bttsTransitions.GG?.GG || 0}% | NG:${f.bttsTransitions.GG?.NG || 0}%
 - After One/None (NG) transitions to → GG:${f.bttsTransitions.NG?.GG || 0}% | NG:${f.bttsTransitions.NG?.NG || 0}%
+Visual Row Position Markov Over 1.5 Transition Probabilities:
+- After Over 1.5 Goals (O15) transitions to → Over 1.5:${f.over15Transitions?.O15?.O15 || 0}% | Under 1.5:${f.over15Transitions?.O15?.U15 || 0}%
+- After Under 1.5 Goals (U15) transitions to → Over 1.5:${f.over15Transitions?.U15?.O15 || 0}% | Under 1.5:${f.over15Transitions?.U15?.U15 || 0}%
+Visual Row Position Markov Over 2.5 Transition Probabilities:
+- After Over 2.5 Goals (O25) transitions to → Over 2.5:${f.over25Transitions?.O25?.O25 || 0}% | Under 2.5:${f.over25Transitions?.O25?.U25 || 0}%
+- After Under 2.5 Goals (U25) transitions to → Over 2.5:${f.over25Transitions?.U25?.O25 || 0}% | Under 2.5:${f.over25Transitions?.U25?.U25 || 0}%
 `).join('\n');
 
-        // Step 5: Send structured prompt to DeepSeek
-        const { callPredictionAI, parseAIJson } = require('./prediction_ai');
-        
-        const prompt = `
+            // Send structured prompt to DeepSeek
+            const { callPredictionAI, parseAIJson } = require('./prediction_ai');
+            
+            const prompt = `
 You are DeepSeek Chat, an elite sports betting Virtual Football prediction model. 
-Your task is to analyze the 10 virtual matches starting in the next England League round using historical visual row position statistics.
+Your task is to analyze the 10 virtual matches starting in the next ${leagueName} round using historical visual row position statistics.
 
 INSTRUCTIONS:
 1. Review the historical win rates, streaks, and Markov transitions for each visual row position.
@@ -5026,6 +5157,8 @@ Each object must contain the following keys:
 - "status": string ("IN-PLAY" or "UPCOMING")
 - "predictedOutcome": string ("H" or "D" or "A")
 - "predictedBtts": string ("GG" or "NG")
+- "predictedOver15": string ("Over" or "Under")
+- "predictedOver25": string ("Over" or "Under")
 - "confidence": number (0 to 100 representing confidence score)
 - "reasoning": string (Brief 1-sentence expert prediction reasoning combining matchup, row statistics, and Markov transitions)
 - "color": string (hex color representing predicted outcome: H=#00FF88, D=#FFD700, A=#A78BFA)
@@ -5034,42 +5167,85 @@ FIXTURES AND PATTERNS DATA:
 ${fixturesDataStr}
 `;
 
-        console.log('[DEBUG] [Predict Live] 📡 Dispatching structured prompt to DeepSeek Chat API...');
-        const aiResponse = await callPredictionAI(prompt, 'deepseek', { temperature: 0.2 });
-        let predictions = parseAIJson(aiResponse.content);
-        
-        if (Array.isArray(predictions) && predictions.length > 0) {
-            // Sort predictions chronologically by position (0 to 9) to ensure correct visual order
-            predictions.sort((a, b) => (a.position || 0) - (b.position || 0));
-            // Attach match times from the sortedMatches array for direct access on the frontend
-            predictions.forEach((pred) => {
-                const match = sortedMatches[pred.position];
-                if (match) {
-                    pred.time = match.time || '';
+            console.log(`[DEBUG] [Predict Live] [${leagueName}] Dispatching prompt to DeepSeek Chat API...`);
+            const aiResponse = await callPredictionAI(prompt, 'deepseek', { temperature: 0.2 });
+            let predictions = parseAIJson(aiResponse.content);
+            
+            if (Array.isArray(predictions) && predictions.length > 0) {
+                predictions.sort((a, b) => (a.position || 0) - (b.position || 0));
+                predictions.forEach((pred) => {
+                    const match = sortedMatches[pred.position];
+                    if (match) {
+                        pred.time = match.time || '';
+                    }
+                    pred.league = leagueName;
+                });
+                
+                try {
+                    savePredictionsToHistory(targetGroup.league, sortedMatches, predictions);
+                } catch (saveErr) {
+                    console.error(`[DEBUG] [Predict Live] [${leagueName}] Failed to save predictions to history (non-fatal):`, saveErr.message);
+                }
+                
+                return {
+                    success: true,
+                    leagueName,
+                    leagueDb: targetGroup.league,
+                    matches: sortedMatches,
+                    predictions
+                };
+            } else {
+                console.warn(`[DEBUG] [Predict Live] [${leagueName}] AI did not return a valid predictions array.`);
+                return {
+                    success: false,
+                    error: 'AI did not return a valid predictions array.'
+                };
+            }
+        };
+
+        if (requestedLeague === 'all') {
+            const leaguesToPredict = ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League'];
+            console.log(`[DEBUG] [Predict Live] Predicting ALL ${leaguesToPredict.length} leagues in parallel...`);
+            const promises = leaguesToPredict.map(l => predictLeague(l).catch(err => ({ success: false, error: err.message, leagueName: l })));
+            const results = await Promise.all(promises);
+            
+            const allPredictions = [];
+            const failedLeagues = [];
+            
+            results.forEach((res, i) => {
+                const lName = leaguesToPredict[i];
+                if (res.success) {
+                    allPredictions.push(...res.predictions);
+                } else {
+                    failedLeagues.push({ league: lName, error: res.error });
                 }
             });
-            console.log(`[DEBUG] [Predict Live] Sorted ${predictions.length} AI predictions and attached match times.`);
             
-            // Save to local JSON history file
-            try {
-                savePredictionsToHistory(targetGroup.league, sortedMatches, predictions);
-            } catch (saveErr) {
-                console.error('[DEBUG] [Predict Live] Failed to save predictions to history (non-fatal):', saveErr.message);
-            }
+            return res.json({
+                success: true,
+                provider: 'deepseek',
+                isAll: true,
+                predictions: allPredictions,
+                failedLeagues
+            });
         } else {
-            console.warn('[DEBUG] [Predict Live] AI did not return a valid predictions array. Initializing empty.');
-            predictions = [];
+            // Single league predict
+            const result = await predictLeague(requestedLeague);
+            if (result.success) {
+                return res.json({
+                    success: true,
+                    provider: 'deepseek',
+                    league: result.leagueDb,
+                    matches: result.matches,
+                    predictions: result.predictions
+                });
+            } else {
+                return res.json({
+                    success: false,
+                    error: result.error
+                });
+            }
         }
-        
-        console.log(`[DEBUG] [Predict Live] ✅ Successfully parsed and sorted ${predictions.length} DeepSeek predictions for England League.`);
-        res.json({
-            success: true,
-            provider: 'deepseek',
-            league: targetGroup.league,
-            matches: sortedMatches,
-            predictions
-        });
-
     } catch (err) {
         console.error('[DEBUG] [Local API] predict-live failed:', err.message);
         res.status(500).json({ success: false, error: err.message });
@@ -5193,13 +5369,21 @@ function resolvePredictionOutcomes(predictions, date) {
             const isGG = hg > 0 && ag > 0;
             const actualBtts = isGG ? 'GG' : 'NG';
             
+            const goals = hg + ag;
+            const actualOver15 = goals >= 2 ? 'Over' : 'Under';
+            const actualOver25 = goals >= 3 ? 'Over' : 'Under';
+            
             return {
                 ...pred,
                 actualScore: score,
                 actualOutcome,
                 actualBtts,
+                actualOver15,
+                actualOver25,
                 outcomeCorrect: pred.predictedOutcome === actualOutcome,
                 bttsCorrect: pred.predictedBtts === actualBtts,
+                over15Correct: pred.predictedOver15 === actualOver15,
+                over25Correct: pred.predictedOver25 === actualOver25,
                 resolved: true
             };
         }
@@ -5214,13 +5398,18 @@ function resolvePredictionOutcomes(predictions, date) {
 // 6. GET predictions history resolved against completed scores
 app.get('/api/local-vfootball/predictions-history', (req, res) => {
     console.log('[DEBUG] [Local API] GET /api/local-vfootball/predictions-history requested');
+    const leagueQuery = req.query.league || 'England League';
+    const targetDbLeague = toDbLeague(leagueQuery);
+    
     try {
         if (!fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
             return res.json({ success: true, history: [] });
         }
         
         const history = JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
-        const resolvedHistory = history.map(round => {
+        const filteredHistory = history.filter(h => toDbLeague(h.league) === targetDbLeague);
+        
+        const resolvedHistory = filteredHistory.map(round => {
             return {
                 ...round,
                 predictions: resolvePredictionOutcomes(round.predictions, round.date)
@@ -5230,7 +5419,7 @@ app.get('/api/local-vfootball/predictions-history', (req, res) => {
         // Return reverse chronological order (newest first)
         resolvedHistory.reverse();
         
-        console.log(`[DEBUG] [Local API] Returning ${resolvedHistory.length} rounds of prediction history.`);
+        console.log(`[DEBUG] [Local API] Returning ${resolvedHistory.length} rounds of prediction history for ${leagueQuery}.`);
         res.json({ success: true, history: resolvedHistory });
     } catch (err) {
         console.error('[DEBUG] [Local API] Failed to fetch predictions history:', err.message);
@@ -5238,7 +5427,65 @@ app.get('/api/local-vfootball/predictions-history', (req, res) => {
     }
 });
 
+// 7. POST wipe local results/predictions data (with optional league filter)
+app.post('/api/local-vfootball/wipe', express.json(), (req, res) => {
+    console.log('[DEBUG] [Local API] POST /api/local-vfootball/wipe requested');
+    const { league, scope } = req.body; // league: e.g. "England League" or "all", scope: "all" | "results" | "history"
+    
+    try {
+        const targetDbLeague = league && league !== 'all' ? toDbLeague(league) : null;
+        let wipedResults = 0;
+        let wipedHistory = 0;
+
+        // Wipe local results
+        if (!scope || scope === 'all' || scope === 'results') {
+            if (fs.existsSync(LOCAL_DB_PATH)) {
+                const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+                if (targetDbLeague) {
+                    const filteredMatches = allMatches.filter(m => toDbLeague(m.league) !== targetDbLeague);
+                    wipedResults = allMatches.length - filteredMatches.length;
+                    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(filteredMatches, null, 2), 'utf8');
+                    console.log(`[LocalDB] 🗑️ Wiped ${wipedResults} local results for league: ${targetDbLeague}`);
+                } else {
+                    wipedResults = allMatches.length;
+                    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify([], null, 2), 'utf8');
+                    console.log(`[LocalDB] 🗑️ Wiped all local results`);
+                }
+            }
+        }
+
+        // Wipe prediction history
+        if (!scope || scope === 'all' || scope === 'history') {
+            if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
+                const history = JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
+                if (targetDbLeague) {
+                    const filteredHistory = history.filter(h => toDbLeague(h.league) !== targetDbLeague);
+                    wipedHistory = history.length - filteredHistory.length;
+                    fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify(filteredHistory, null, 2), 'utf8');
+                    console.log(`[LocalDB] 🗑️ Wiped ${wipedHistory} prediction history entries for league: ${targetDbLeague}`);
+                } else {
+                    wipedHistory = history.length;
+                    fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify([], null, 2), 'utf8');
+                    console.log(`[LocalDB] 🗑️ Wiped all prediction history`);
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `Successfully wiped ${wipedResults} matches and ${wipedHistory} prediction history entries for ${league === 'all' ? 'All Leagues' : league}.`,
+            wipedResults,
+            wipedHistory
+        });
+    } catch (err) {
+        console.error('[DEBUG] [Local API] Failed to wipe local storage:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ── Automatic Background Results Scraper (Every 90 Seconds) ──────────────────
+const LEAGUES_TO_SCRAPE = ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League'];
+let currentScrapeLeagueIndex = 0;
 
 async function runAutoScrapeResults() {
     if (isAutoScrapingActive) {
@@ -5248,13 +5495,15 @@ async function runAutoScrapeResults() {
     
     isAutoScrapingActive = true;
     const today = new Date().toISOString().split('T')[0];
-    console.log(`[Auto Scrape] 🔄 Starting automatic results scraper for "England League" on ${today}...`);
+    const targetLeague = LEAGUES_TO_SCRAPE[currentScrapeLeagueIndex];
+    currentScrapeLeagueIndex = (currentScrapeLeagueIndex + 1) % LEAGUES_TO_SCRAPE.length;
+    console.log(`[Auto Scrape] 🔄 Starting automatic results scraper for "${targetLeague}" on ${today}...`);
     
     try {
         const { nativeCaptureLeagueResults } = require('./native_scraper');
         
         let consecutiveDupesCount = 0;
-        const result = await nativeCaptureLeagueResults('England League', today, {
+        const result = await nativeCaptureLeagueResults(targetLeague, today, {
             onPageCaptured: async (err, matchRows, pageNum) => {
                 if (err) {
                     console.error(`[Auto Scrape Page Error] Page ${pageNum}: ${err.message}`);
@@ -5299,6 +5548,27 @@ setTimeout(() => {
 setInterval(() => {
     runAutoScrapeResults();
 }, 90 * 1000); // 90 seconds (1.5 minutes)
+
+// Expose dedicated Positional Trace Dashboard APIs
+app.get('/api/positional-trace/patterns', (req, res) => {
+    console.log('[DEBUG] [Positional Trace API] GET /api/positional-trace/patterns requested');
+    res.redirect(307, `/api/local-vfootball/patterns?${new URLSearchParams(req.query).toString()}`);
+});
+
+app.get('/api/positional-trace/predict', (req, res) => {
+    console.log('[DEBUG] [Positional Trace API] GET /api/positional-trace/predict requested');
+    res.redirect(307, `/api/local-vfootball/predict-live?${new URLSearchParams(req.query).toString()}`);
+});
+
+app.get('/api/positional-trace/predictions-history', (req, res) => {
+    console.log('[DEBUG] [Positional Trace API] GET /api/positional-trace/predictions-history requested');
+    res.redirect(307, `/api/local-vfootball/predictions-history?${new URLSearchParams(req.query).toString()}`);
+});
+
+app.get('/api/positional-trace/results', (req, res) => {
+    console.log('[DEBUG] [Positional Trace API] GET /api/positional-trace/results requested');
+    res.redirect(307, `/api/local-vfootball/results?${new URLSearchParams(req.query).toString()}`);
+});
 
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, '0.0.0.0', () => {

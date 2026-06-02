@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 
 const CATEGORIES = {
   PREDICTIONS: '🔮 Predictions & Analysis',
+  POSITIONAL_TRACE: '📊 Positional Trace Dashboard',
   SCRAPER: '📥 Scraper & Results Sync',
   AI_SYSTEM: '🧠 AI Memory & Strategy',
   SYSTEM: '⚙️ Diagnostics & Logs'
@@ -156,6 +157,53 @@ const ENDPOINTS = [
     path: '/api/scraper-diag',
     description: 'Retrieves Puppeteer crawler diagnostic statistics and screenshots archive list.',
     howItWorks: 'Checks directory listing for generated snapshots, memory utilization, and active chromedriver instances.',
+    defaultParams: {},
+    requiresParams: false
+  },
+  {
+    id: 'pt-patterns',
+    category: CATEGORIES.POSITIONAL_TRACE,
+    method: 'GET',
+    path: '/api/positional-trace/patterns',
+    description: 'Fetches position patterns, streaks, transition probabilities, and top recurring scores for Positional Trace Dashboard.',
+    howItWorks: '1. Group matches by round key.\n2. Iterates through positions 0-9.\n3. Calculates outcome patterns, streaks, and Markov chain transition rates for Match Results, BTTS, Over 1.5, and Over 2.5.',
+    defaultParams: {
+      league: 'England League',
+      sortType: 'homeTeam'
+    },
+    requiresParams: true
+  },
+  {
+    id: 'pt-predict',
+    category: CATEGORIES.POSITIONAL_TRACE,
+    method: 'GET',
+    path: '/api/positional-trace/predict',
+    description: 'Runs real-time AI predictions for all matches of the target league or all 5 leagues using visual patterns.',
+    howItWorks: '1. Scrapes active/upcoming live list vFootball games.\n2. Compiles historical position win rates and Markov transition matrices.\n3. Dispatches prompt to DeepSeek AI and parses predictions output.\n4. Saves prediction documents to predictions history log.',
+    defaultParams: {
+      league: 'England League'
+    },
+    requiresParams: true
+  },
+  {
+    id: 'pt-predictions-history',
+    category: CATEGORIES.POSITIONAL_TRACE,
+    method: 'GET',
+    path: '/api/positional-trace/predictions-history',
+    description: 'Retrieves predictions history resolved against actual scores from local results.',
+    howItWorks: '1. Scans `local_predictions_history.json` local store.\n2. Filters history records matching query league.\n3. Correlates outcome correctness metrics against completed match results in `local_results.json`.',
+    defaultParams: {
+      league: 'England League'
+    },
+    requiresParams: true
+  },
+  {
+    id: 'pt-results',
+    category: CATEGORIES.POSITIONAL_TRACE,
+    method: 'GET',
+    path: '/api/positional-trace/results',
+    description: 'Retrieves finished historical results dataset directly from local results storage.',
+    howItWorks: '1. Reads `local_results.json` local database.\n2. Returns count and array of all match result objects.',
     defaultParams: {},
     requiresParams: false
   }
