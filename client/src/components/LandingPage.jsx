@@ -918,7 +918,13 @@ function AnalysisPanel({ id, analysis, date, matches }) {
 
 // ── Live Prediction Hub ──────────────────────────────────────────────────────
 function LivePredictionHub() {
-  const LEAGUES = ['England - Virtual', 'Germany - Virtual', 'Italy - Virtual', 'Spain - Virtual'];
+  const LEAGUES = [
+    'England - Virtual',
+    'Spain - Virtual',
+    'Italy - Virtual',
+    'Germany - Virtual',
+    'France - Virtual'
+  ];
   const [league, setLeague] = useState(LEAGUES[0]);
   const [homeTeam, setHomeTeam] = useState('');
   const [awayTeam, setAwayTeam] = useState('');

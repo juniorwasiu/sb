@@ -33,7 +33,14 @@ function FormBadges({ form }) {
 }
 
 export default function DailyTips() {
-    const LEAGUES = ['England - Virtual', 'Germany - Virtual', 'Italy - Virtual', 'Spain - Virtual'];
+    const LEAGUES = [
+        'All Leagues',
+        'England - Virtual',
+        'Spain - Virtual',
+        'Italy - Virtual',
+        'Germany - Virtual',
+        'France - Virtual'
+    ];
     const [league, setLeague] = useState(LEAGUES[0]);
     
     // Default date is today at YYYY-MM-DD
@@ -96,6 +103,12 @@ export default function DailyTips() {
             const dataStrat = await resStrat.json();
             if (dataStrat.success) setStrategyData(dataStrat.strategy);
 
+            if (league === 'All Leagues') {
+                setIntelligenceData(null);
+                setLeagueDNA(null);
+                return;
+            }
+
             const resIntel = await fetch(`/api/vfootball/league-intelligence/${encodeURIComponent(league)}`);
             const dataIntel = await resIntel.json();
             if (dataIntel.success) setIntelligenceData(dataIntel.data);
@@ -140,7 +153,16 @@ export default function DailyTips() {
         const forms = {};
         await Promise.all([...teams].map(async (team) => {
             try {
-                const res = await fetch(`/api/vfootball/team-form?league=${encodeURIComponent(currentLeague)}&team=${encodeURIComponent(team)}&limit=5`);
+                let resolveLeague = currentLeague;
+                if (currentLeague === 'All Leagues') {
+                    const matchedMatch = matches.find(m => 
+                        m.fixture && m.fixture.includes(team)
+                    );
+                    if (matchedMatch && matchedMatch.league) {
+                        resolveLeague = matchedMatch.league;
+                    }
+                }
+                const res = await fetch(`/api/vfootball/team-form?league=${encodeURIComponent(resolveLeague)}&team=${encodeURIComponent(team)}&limit=5`);
                 const data = await res.json();
                 if (data.success) forms[team] = data.form;
             } catch (e) {
@@ -548,6 +570,24 @@ export default function DailyTips() {
                                             const awayForm = teamForms[awayTeam];
                                             return (
                                             <div key={idx} className="ultra-glass hover-lift" style={{ padding: '24px', borderRadius: 'var(--radius-lg)', borderTop: `4px solid ${GREEN}` }}>
+                                                {/* League Badge */}
+                                                {match.league && (
+                                                    <div style={{
+                                                        display: 'inline-block',
+                                                        fontSize: '0.68rem',
+                                                        fontWeight: 900,
+                                                        background: `${NEON}15`,
+                                                        color: NEON,
+                                                        padding: '4px 10px',
+                                                        borderRadius: '12px',
+                                                        border: `1px solid ${NEON}30`,
+                                                        marginBottom: '12px',
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.05em'
+                                                    }}>
+                                                        🏆 {match.league.replace(' - Virtual', '')}
+                                                    </div>
+                                                )}
                                                 {/* Fixture Header with Form Badges */}
                                                 <div style={{ marginBottom: '16px' }}>
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, background: 'rgba(255,255,255,0.05)', padding: '10px 14px', borderRadius: '8px' }}>
@@ -724,7 +764,11 @@ export default function DailyTips() {
                             </div>
                         </div>
 
-                        {intelligenceData ? (
+                        {league === 'All Leagues' ? (
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.6 }}>
+                                All Leagues view is active. Individual league profiles can be viewed by selecting the respective league from the dropdown.
+                            </div>
+                        ) : intelligenceData ? (
                             <div>
                                 <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 16px' }}>
                                     {typeof intelligenceData.profile === 'string' ? intelligenceData.profile : intelligenceData.profile?.leagueVibe || "No formal intelligence report exists for this league yet."}
@@ -758,7 +802,11 @@ export default function DailyTips() {
                             </div>
                         </div>
 
-                        {leagueDNA?.stats ? (() => {
+                        {league === 'All Leagues' ? (
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.6 }}>
+                                DNA baselines are calculated per-league. Select a specific league to view its statistical priors.
+                            </div>
+                        ) : leagueDNA?.stats ? (() => {
                             const s  = leagueDNA.stats;
                             const gc = (v, hi, mi) => v >= hi ? GREEN : v >= mi ? GOLD : RED;
                             const stats = [

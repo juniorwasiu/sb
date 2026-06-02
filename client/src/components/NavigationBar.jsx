@@ -11,6 +11,7 @@ export default function NavigationBar() {
     { path: '/behaviour', label: 'Behaviour', icon: '🧬' },
     { path: '/results', label: 'Dashboard', icon: '📋' },
     { path: '/local-engine', label: 'Local Store', icon: '💾' },
+    { path: '/api-console', label: 'API Console', icon: '💻' },
     { path: '/admin', label: 'Admin', icon: '⚙️' }
   ];
 

@@ -23,3 +23,7 @@ testdownloadpage/
 # Logs
 *.log
 ocr_output.txt
+
+# Local Database Folder
+data/
+

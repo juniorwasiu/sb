@@ -1815,17 +1815,81 @@ Return ONLY valid JSON.`;
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/vfootball/daily-tips
 // Fetches daily tips from Database for a given date and league.
+// Supports "All Leagues" by dynamically consolidating predictions from all active virtual leagues.
 // ─────────────────────────────────────────────────────────────────────────────
 app.get('/api/vfootball/daily-tips', async (req, res) => {
     try {
         const { date, league } = req.query;
         if (!date || !league) return res.status(400).json({ success: false, error: 'date and league are required' });
 
-        const tip = await getDailyTip(date, league);
-        if (tip) {
-            return res.json({ success: true, tipData: tip.tipData, cached: true });
+        const isAll = league === 'All Leagues' || league === 'all' || league === 'All';
+        if (isAll) {
+            console.log(`[daily-tips GET] 🔄 Loading all leagues for ${date}...`);
+            // First check if there is a consolidated tip saved under 'All Leagues'
+            const existingAllTip = await getDailyTip(date, 'All Leagues');
+            if (existingAllTip && existingAllTip.tipData) {
+                return res.json({ success: true, tipData: existingAllTip.tipData, cached: true });
+            }
+
+            // Otherwise, fetch tips for each individual league and merge them
+            const targetLeagues = SUPPORTED_LEAGUES.map(l => toDbLeague(l));
+            const consolidatedMatches = [];
+            const contexts = [];
+            const evaluations = [];
+            let anyCached = false;
+
+            for (const targetLeague of targetLeagues) {
+                const tip = await getDailyTip(date, targetLeague);
+                if (tip && tip.tipData) {
+                    anyCached = true;
+                    const matchesKey = tip.tipData.upcoming_matches ? 'upcoming_matches' : 'predictions';
+                    const matches = (tip.tipData[matchesKey] || []).map(m => ({
+                        ...m,
+                        league: targetLeague
+                    }));
+                    consolidatedMatches.push(...matches);
+                    if (tip.tipData.context) contexts.push(`${targetLeague}: ${tip.tipData.context}`);
+                    if (tip.tipData.Self_Evaluation) evaluations.push(tip.tipData.Self_Evaluation);
+                }
+            }
+
+            if (anyCached) {
+                const consolidatedTipData = {
+                    context: contexts.join(' | '),
+                    upcoming_matches: consolidatedMatches,
+                    Self_Evaluation: {
+                        score: `${Math.round(evaluations.reduce((acc, curr) => {
+                            const val = parseInt(curr.score || '0');
+                            return acc + (isNaN(val) ? 0 : val);
+                        }, 0) / Math.max(evaluations.length, 1))}/10`,
+                        emoji: '🎯',
+                        review: evaluations.map(e => e.review).filter(Boolean).join('\n'),
+                        wrong_draws_count: evaluations.reduce((acc, curr) => acc + (curr.wrong_draws_count || 0), 0)
+                    },
+                    analysisMode: 'consolidated'
+                };
+                return res.json({ success: true, tipData: consolidatedTipData, cached: true });
+            } else {
+                return res.json({ success: true, tipData: null, cached: false });
+            }
         } else {
-            return res.json({ success: true, tipData: null, cached: false });
+            const dbLeague = toDbLeague(league);
+            const tip = await getDailyTip(date, dbLeague);
+            if (tip) {
+                // Ensure matches are stamped with their league name for UI consistency
+                if (tip.tipData) {
+                    const matchesKey = tip.tipData.upcoming_matches ? 'upcoming_matches' : 'predictions';
+                    if (tip.tipData[matchesKey]) {
+                        tip.tipData[matchesKey] = tip.tipData[matchesKey].map(m => ({
+                            ...m,
+                            league: dbLeague
+                        }));
+                    }
+                }
+                return res.json({ success: true, tipData: tip.tipData, cached: true });
+            } else {
+                return res.json({ success: true, tipData: null, cached: false });
+            }
         }
     } catch (err) {
         console.error('[/api/vfootball/daily-tips]', err);
@@ -1993,216 +2057,210 @@ app.get('/api/vfootball/daily-tips/history', async (req, res) => {
 // Uses AI to analyze the matches up to the current date and provides tips.
 // It explicitly looks for patterns after 0:0, 1:1, 2:2.
 // ─────────────────────────────────────────────────────────────────────────────
-app.post('/api/vfootball/daily-tips/analyze', async (req, res) => {
-    try {
-        let { date, league, provider: reqProvider } = req.body;
-        const provider = reqProvider || getActivePredictionProvider();
-        console.log(`[daily-tips/analyze] 🤖 AI Provider: ${provider.toUpperCase()} (${PREDICTION_PROVIDERS[provider]?.label || provider})`);
-        let bSignalsToReturn = [];
-        const forceRerun = req.query.force === 'true' || req.body.force === true;
-        if (!date || !league) return res.status(400).json({ success: false, error: 'date and league required' });
-
-        // Prevent duplicate AI runs if already analyzed (skip if force=true)
-        broadcastAiStatus('start', `Starting analysis for ${league} on ${date}. Checking cache...`);
-        if (!forceRerun) {
-            const existingTip = await getDailyTip(date, league);
-            if (existingTip && existingTip.tipData) {
-                console.log(`[DEBUG] [/api/vfootball/daily-tips/analyze] Found cached tip for ${date} ${league}.`);
-                broadcastAiStatus('success', 'Found existing cached analysis. Skipping AI inference.');
-                return res.json({ success: true, tipData: existingTip.tipData, cached: true });
-            }
-        } else {
-            console.log(`[DEBUG] [/api/vfootball/daily-tips/analyze] Force re-run requested for ${date} ${league} — bypassing cache.`);
-            broadcastAiStatus('info', 'Force re-run requested — bypassing cache.');
+async function generateDailyTipsForLeague(date, league, provider, forceRerun) {
+    let bSignalsToReturn = [];
+    
+    // Prevent duplicate AI runs if already analyzed (skip if force=true)
+    broadcastAiStatus('start', `Starting analysis for ${league} on ${date}. Checking cache...`);
+    if (!forceRerun) {
+        const existingTip = await getDailyTip(date, league);
+        if (existingTip && existingTip.tipData) {
+            console.log(`[DEBUG] [generateDailyTipsForLeague] Found cached tip for ${date} ${league}.`);
+            broadcastAiStatus('success', `Found existing cached analysis for ${league}. Skipping AI inference.`);
+            return { success: true, tipData: existingTip.tipData, cached: true, matchesAnalyzed: 0 };
         }
+    } else {
+        console.log(`[DEBUG] [generateDailyTipsForLeague] Force re-run requested for ${date} ${league} — bypassing cache.`);
+        broadcastAiStatus('info', 'Force re-run requested — bypassing cache.');
+    }
 
-        // Fetch matches. If today, fetch today's results. Else, fetch historical results.
-        let matches = [];
-        broadcastAiStatus('fetching', 'Fetching historical match results from Database database...');
-        if (date === todayDDMMYYYY()) {
-            matches = await fetchTodayResultsFromDatabase(league);
-        } else {
-            const result = await fetchResultsFromDatabase({ league, dateFrom: date, dateTo: date, page: 1, pageSize: 100 });
-            matches = result.dates.flatMap(d => Object.values(d.leagues).flat());
-        }
+    // Fetch matches. If today, fetch today's results. Else, fetch historical results.
+    let matches = [];
+    broadcastAiStatus('fetching', `Fetching historical match results for ${league} from Database...`);
+    if (date === todayDDMMYYYY()) {
+        matches = await fetchTodayResultsFromDatabase(league);
+    } else {
+        const result = await fetchResultsFromDatabase({ league, dateFrom: date, dateTo: date, page: 1, pageSize: 100 });
+        matches = result.dates.flatMap(d => Object.values(d.leagues).flat());
+    }
 
-        // ── PRE-TIPS LEARNING GUARDIAN ────────────────────────────────────────
-        // Ensure league intelligence is trained BEFORE tips generation.
-        // This saves tokens — the AI tip prompt includes league profile context.
-        {
-            const intel = await getLeagueIntelligence(league);
-            const dateKey = date.replace(/\//g, '-');
-            if (!intel?.history?.[dateKey]) {
-                console.log(`[Pre-Tips Guard] 🧠 No learning found for ${league} on ${date} — auto-running before tips...`);
-                broadcastAiStatus('learning', `🧠 Auto-training ${league} (${date}) before generating tips...`);
-                const learnResult = await runLearningForLeagueDate(league, date, { force: false });
-                if (learnResult.success) {
-                    console.log(`[Pre-Tips Guard] ✅ Auto-learning done (${learnResult.matchesAnalyzed} matches). Generating tips...`);
-                    broadcastAiStatus('learned', `✅ Auto-learned ${league} — generating tips now.`);
-                } else {
-                    console.warn(`[Pre-Tips Guard] ⚠️ Auto-learning failed: ${learnResult.error} — proceeding anyway.`);
-                }
+    // ── PRE-TIPS LEARNING GUARDIAN ────────────────────────────────────────
+    // Ensure league intelligence is trained BEFORE tips generation.
+    // This saves tokens — the AI tip prompt includes league profile context.
+    {
+        const intel = await getLeagueIntelligence(league);
+        const dateKey = date.replace(/\//g, '-');
+        if (!intel?.history?.[dateKey]) {
+            console.log(`[Pre-Tips Guard] 🧠 No learning found for ${league} on ${date} — auto-running before tips...`);
+            broadcastAiStatus('learning', `🧠 Auto-training ${league} (${date}) before generating tips...`);
+            const learnResult = await runLearningForLeagueDate(league, date, { force: false });
+            if (learnResult.success) {
+                console.log(`[Pre-Tips Guard] ✅ Auto-learning done (${learnResult.matchesAnalyzed} matches). Generating tips...`);
+                broadcastAiStatus('learned', `✅ Auto-learned ${league} — generating tips now.`);
             } else {
-                console.log(`[Pre-Tips Guard] ✅ League intel already cached for ${league} on ${date}.`);
-            }
-        }
-
-        // ─── Detect whether we have real live upcoming matches for this league ───
-        let upcomingMatchesTxt = null;
-        let hasLiveMatches = false;
-
-        if (typeof globalData !== 'undefined' && globalData && globalData.length > 0) {
-            broadcastAiStatus('tool', 'Using live scraper state to find active upcoming matches...');
-            
-            const reqLeaguePrefix = league.split(' ')[0]; // e.g. "England"
-            // Match against identical league name, generic name, or prefix
-            const liveLeagueData = globalData.find(g => 
-                g.league === league || 
-                g.league === 'vFootball Live Odds' || 
-                g.league.includes(reqLeaguePrefix)
-            );
-            
-            if (liveLeagueData && liveLeagueData.matches && liveLeagueData.matches.length > 0) {
-                hasLiveMatches = true;
-
-                const rawData = await getCachedDocs();
-                let validMatches = liveLeagueData.matches;
-                
-                // If it's a mixed batch from the Live Odds scraper, map teams to their real league
-                if (liveLeagueData.league === 'vFootball Live Odds') {
-                    validMatches = liveLeagueData.matches.filter(m => {
-                        const realMatch = rawData.find(d => d.homeTeam === m.home);
-                        const mLeague = realMatch ? realMatch.league : 'Unknown';
-                        // If user specifically requested 'vFootball Live Odds' (ScoreBoard), allow all.
-                        // If user requested 'England - Virtual' (DailyTips), ONLY keep England matches!
-                        if (league === 'vFootball Live Odds') return true; 
-                        return mLeague === league || mLeague.includes(reqLeaguePrefix);
-                    });
-                }
-
-                // Cap at 20 matches to prevent DeepSeek output token overflow
-                const matchesToAnalyze = validMatches.slice(0, 20);
-                console.log(`[DEBUG] [analyze] Sliced from ${liveLeagueData.matches.length} to ${matchesToAnalyze.length} matches — building venue-aware match lines (ODDS EXCLUDED).`);
-                
-                const firstMatch = matchesToAnalyze[0];
-                if (firstMatch) {
-                    console.log(`[DEBUG] [analyze] Scraper match shape: home="${firstMatch.home}" away="${firstMatch.away}" time="${firstMatch.time}" score(=odds)="${firstMatch.score}" — ODDS ARE EXCLUDED FROM AI PROMPT (unreliable predictor in vFootball)`);
-                }
-
-                // Compute league-wide venue baseline ONCE (cached) to avoid redundant reads
-                const leagueBaseline = await computeVenueAdvantage(league);
-
-                // 🧬 Fetch full League DNA Baseline (BTTS%, O1.5%, O2.5%, top scorelines, directives)
-                // This is Tier-1 context — the AI cannot override these statistical priors without explicit reasoning
-                const fullBaselineDNAForTips = await getLeagueBaseline(league);
-                const leagueTipsDNAInjection = fullBaselineDNAForTips
-                    ? buildLeagueBaselinePromptInjection(fullBaselineDNAForTips)
-                    : '';
-                console.log(`[daily-tips] 🧬 League DNA: ${fullBaselineDNAForTips
-                    ? `O1.5=${fullBaselineDNAForTips.stats?.over1_5Percent}% BTTS=${fullBaselineDNAForTips.stats?.bttsPercent}% O2.5=${fullBaselineDNAForTips.stats?.over2_5Percent}% Draw=${fullBaselineDNAForTips.stats?.drawPercent}% (${fullBaselineDNAForTips.matchCount} matches)`
-                    : 'No cached DNA baseline — using venue advantage only'}`);
-
-                if (league !== 'vFootball Live Odds') {
-                    console.log(`[DEBUG] [analyze] League baseline: Home=${leagueBaseline.homeWinPercent}% Away=${leagueBaseline.awayWinPercent}% Draw=${leagueBaseline.drawPercent}%`);
-                }
-
-                const matchLines = await Promise.all(matchesToAnalyze.map(async m => {
-                    let matchLeague = league;
-                    
-                    // Resolve strictly for mixed batches
-                    if (league === 'vFootball Live Odds') {
-                         const mDoc = rawData.find(d => d.homeTeam === m.home);
-                         if (mDoc) matchLeague = mDoc.league || league;
-                    }
-
-                    const [hForm, aForm, h2hForm, matchLeagueBaseline] = await Promise.all([
-                        computeTeamForm(matchLeague, m.home, 8),
-                        computeTeamForm(matchLeague, m.away, 8),
-                        computeH2HForm(matchLeague, m.home, m.away, 10),
-                        (league === 'vFootball Live Odds') ? computeVenueAdvantage(matchLeague) : Promise.resolve(leagueBaseline)
-                    ]);
-                    // NOTE: Odds (m.score) are intentionally excluded — they are unreliable in vFootball
-                    return [
-                        `[${m.time || '?'}] ${m.home} (HOME) vs ${m.away} (AWAY)`,
-                        `  HOME: HomeWin%=${hForm.homeWinPercent}% | Form(home)=${hForm.homeForm} | Goals/homeGame=${hForm.homeGoalsScored} | DrawRate=${hForm.drawPercent}% | Streak=${hForm.streak}`,
-                        `  AWAY: AwayWin%=${aForm.awayWinPercent}% | Form(away)=${aForm.awayForm} | Goals/awayGame=${aForm.awayGoalsScored} | DrawRate=${aForm.drawPercent}% | Streak=${aForm.streak}`,
-                        `  H2H (${h2hForm.matchesAnalysed} games): O2.5=${h2hForm.over2_5_percent}% | GG=${h2hForm.btts_percent}% | HomeWins=${h2hForm.homeWinsInH2H} AwayWins=${h2hForm.awayWinsInH2H} Draws=${h2hForm.drawsInH2H} | Bias=${h2hForm.homeAdvantageH2H}`,
-                    ].join('\n');
-                }));
-
-                // Inject league baseline as a header line so AI knows the prior probability
-                const leagueBaselineLine = `\nLEAGUE VENUE BASELINE (${leagueBaseline.matchesAnalysed} total games): Home wins ${leagueBaseline.homeWinPercent}% | Away wins ${leagueBaseline.awayWinPercent}% | Draws ${leagueBaseline.drawPercent}%\n`;
-                
-                // Fetch the merged Deep Learning profile for this league
-                const intelDoc = await getLeagueIntelligence(league);
-                const intelStr = intelDoc ? JSON.stringify(intelDoc.merged || intelDoc.profile || intelDoc) : 'No deep learning profile available yet.';
-                
-                // ── Behaviour Pattern Analysis ────────────────────────────────────────
-                // Win streak fatigue, big team clashes, loss reversal signals
-                let dailyBehaviourInjection = '';
-                try {
-                    const dailyFixtures = matchesToAnalyze.map(m => ({ homeTeam: m.home, awayTeam: m.away, gameTime: m.time }));
-                    const resolvedLeagueForBeh = liveLeagueData.league === 'vFootball Live Odds' ? league : liveLeagueData.league;
-                    console.log(`[DEBUG] [analyze] 🔬 Running behaviour pattern analysis on ${dailyFixtures.length} upcoming fixtures...`);
-                    const bSignals = await detectBehaviourPatterns(dailyFixtures, resolvedLeagueForBeh);
-                    bSignalsToReturn = bSignals;
-                    dailyBehaviourInjection = buildBehaviourPromptInjection(bSignals);
-                    if (bSignals.length > 0) {
-                        console.log(`[DEBUG] [analyze] ✅ ${bSignals.length} behaviour signals found — injecting into daily-tips prompt.`);
-                        // Save signals for dashboard history
-                        await saveBehaviourSignals(bSignals, resolvedLeagueForBeh, date).catch(e =>
-                            console.error('[analyze] Behaviour save error (non-fatal):', e.message)
-                        );
-                    } else {
-                        console.log('[DEBUG] [analyze] ✅ No anomalous behaviour signals for today\'s fixtures.');
-                    }
-                } catch (bErr) {
-                    console.error('[DEBUG] [analyze] ⚠️ Behaviour pattern analysis error (non-fatal):', bErr.message);
-                }
-
-                upcomingMatchesTxt = `=== DEEP LEARNING LEAGUE PROFILE ===\n${intelStr}\n====================================\n\n` +
-                    leagueBaselineLine +
-                    (leagueTipsDNAInjection ? `\n${leagueTipsDNAInjection}\n` : '') +
-                    matchLines.join('\n\n') +
-                    (dailyBehaviourInjection ? `\n\n${dailyBehaviourInjection}` : '');
-                console.log(`[DEBUG] [analyze] ✅ Live matches injected: ${matchesToAnalyze.length} (ODDS EXCLUDED — form+H2H+League DNA+behaviour signals)`);
-                broadcastAiStatus('success', `Injected ${matchesToAnalyze.length} fixtures with form, H2H, League DNA 🧬, and behaviour signals.`);
-            } else {
-                console.log(`[DEBUG] [analyze] ⚠️ globalData present but no matches matched league "${league}". Skipping live fixture injection.`);
+                console.warn(`[Pre-Tips Guard] ⚠️ Auto-learning failed: ${learnResult.error} — proceeding anyway.`);
             }
         } else {
-            console.log('[DEBUG] [analyze] ⚠️ globalData is null/empty — live scraper may not have data yet. Predictions will be pattern-based only.');
+            console.log(`[Pre-Tips Guard] ✅ League intel already cached for ${league} on ${date}.`);
         }
+    }
 
-        if ((!matches || matches.length === 0) && !hasLiveMatches) {
-            broadcastAiStatus('error', 'No match data found to analyze for this date and league.');
-            return res.status(400).json({ success: false, error: 'No match data found to analyze for this date and league.' });
-        }
+    // ─── Detect whether we have real live upcoming matches for this league ───
+    let upcomingMatchesTxt = null;
+    let hasLiveMatches = false;
 
-        // Calculate yesterday's date to fetch past tips for Self Evaluation
-        const reqDateObj = new Date(date.split('/').reverse().join('-'));
-        reqDateObj.setDate(reqDateObj.getDate() - 1);
-        const yDayStr = reqDateObj.toISOString().split('T')[0];
-        const yDayApi = `${yDayStr.split('-')[2]}/${yDayStr.split('-')[1]}/${yDayStr.split('-')[0]}`;
+    if (typeof globalData !== 'undefined' && globalData && globalData.length > 0) {
+        broadcastAiStatus('tool', 'Using live scraper state to find active upcoming matches...');
         
-        const pastTip = await getDailyTip(yDayApi, league);
-        let pastTipContext = '';
-        if (pastTip && pastTip.tipData) {
-            pastTipContext = `
+        const reqLeaguePrefix = league.split(' ')[0]; // e.g. "England"
+        // Match against identical league name, generic name, or prefix
+        const liveLeagueData = globalData.find(g => 
+            g.league === league || 
+            g.league === 'vFootball Live Odds' || 
+            g.league.includes(reqLeaguePrefix)
+        );
+        
+        if (liveLeagueData && liveLeagueData.matches && liveLeagueData.matches.length > 0) {
+            hasLiveMatches = true;
+
+            const rawData = await getCachedDocs();
+            let validMatches = liveLeagueData.matches;
+            
+            // If it's a mixed batch from the Live Odds scraper, map teams to their real league
+            if (liveLeagueData.league === 'vFootball Live Odds') {
+                validMatches = liveLeagueData.matches.filter(m => {
+                    const realMatch = rawData.find(d => d.homeTeam === m.home);
+                    const mLeague = realMatch ? realMatch.league : 'Unknown';
+                    // If user specifically requested 'vFootball Live Odds' (ScoreBoard), allow all.
+                    // If user requested 'England - Virtual' (DailyTips), ONLY keep England matches!
+                    if (league === 'vFootball Live Odds') return true; 
+                    return mLeague === league || mLeague.includes(reqLeaguePrefix);
+                });
+            }
+
+            // Cap at 20 matches to prevent DeepSeek output token overflow
+            const matchesToAnalyze = validMatches.slice(0, 20);
+            console.log(`[DEBUG] [analyze] Sliced from ${liveLeagueData.matches.length} to ${matchesToAnalyze.length} matches — building venue-aware match lines (ODDS EXCLUDED).`);
+            
+            const firstMatch = matchesToAnalyze[0];
+            if (firstMatch) {
+                console.log(`[DEBUG] [analyze] Scraper match shape: home="${firstMatch.home}" away="${firstMatch.away}" time="${firstMatch.time}" score(=odds)="${firstMatch.score}" — ODDS ARE EXCLUDED FROM AI PROMPT (unreliable predictor in vFootball)`);
+            }
+
+            // Compute league-wide venue baseline ONCE (cached) to avoid redundant reads
+            const leagueBaseline = await computeVenueAdvantage(league);
+
+            // 🧬 Fetch full League DNA Baseline (BTTS%, O1.5%, O2.5%, top scorelines, directives)
+            // This is Tier-1 context — the AI cannot override these statistical priors without explicit reasoning
+            const fullBaselineDNAForTips = await getLeagueBaseline(league);
+            const leagueTipsDNAInjection = fullBaselineDNAForTips
+                ? buildLeagueBaselinePromptInjection(fullBaselineDNAForTips)
+                : '';
+            console.log(`[daily-tips] 🧬 League DNA for ${league}: ${fullBaselineDNAForTips
+                ? `O1.5=${fullBaselineDNAForTips.stats?.over1_5Percent}% BTTS=${fullBaselineDNAForTips.stats?.bttsPercent}% O2.5=${fullBaselineDNAForTips.stats?.over2_5Percent}% Draw=${fullBaselineDNAForTips.stats?.drawPercent}% (${fullBaselineDNAForTips.matchCount} matches)`
+                : 'No cached DNA baseline — using venue advantage only'}`);
+
+            if (league !== 'vFootball Live Odds') {
+                console.log(`[DEBUG] [analyze] League baseline: Home=${leagueBaseline.homeWinPercent}% Away=${leagueBaseline.awayWinPercent}% Draw=${leagueBaseline.drawPercent}%`);
+            }
+
+            const matchLines = await Promise.all(matchesToAnalyze.map(async m => {
+                let matchLeague = league;
+                
+                // Resolve strictly for mixed batches
+                if (league === 'vFootball Live Odds') {
+                     const mDoc = rawData.find(d => d.homeTeam === m.home);
+                     if (mDoc) matchLeague = mDoc.league || league;
+                }
+
+                const [hForm, aForm, h2hForm, matchLeagueBaseline] = await Promise.all([
+                    computeTeamForm(matchLeague, m.home, 8),
+                    computeTeamForm(matchLeague, m.away, 8),
+                    computeH2HForm(matchLeague, m.home, m.away, 10),
+                    (league === 'vFootball Live Odds') ? computeVenueAdvantage(matchLeague) : Promise.resolve(leagueBaseline)
+                ]);
+                // NOTE: Odds (m.score) are intentionally excluded — they are unreliable in vFootball
+                return [
+                    `[${m.time || '?'}] ${m.home} (HOME) vs ${m.away} (AWAY)`,
+                    `  HOME: HomeWin%=${hForm.homeWinPercent}% | Form(home)=${hForm.homeForm} | Goals/homeGame=${hForm.homeGoalsScored} | DrawRate=${hForm.drawPercent}% | Streak=${hForm.streak}`,
+                    `  AWAY: AwayWin%=${aForm.awayWinPercent}% | Form(away)=${aForm.awayForm} | Goals/awayGame=${aForm.awayGoalsScored} | DrawRate=${aForm.drawPercent}% | Streak=${aForm.streak}`,
+                    `  H2H (${h2hForm.matchesAnalysed} games): O2.5=${h2hForm.over2_5_percent}% | GG=${h2hForm.btts_percent}% | HomeWins=${h2hForm.homeWinsInH2H} AwayWins=${h2hForm.awayWinsInH2H} Draws=${h2hForm.drawsInH2H} | Bias=${h2hForm.homeAdvantageH2H}`,
+                ].join('\n');
+            }));
+
+            // Inject league baseline as a header line so AI knows the prior probability
+            const leagueBaselineLine = `\nLEAGUE VENUE BASELINE (${leagueBaseline.matchesAnalysed} total games): Home wins ${leagueBaseline.homeWinPercent}% | Away wins ${leagueBaseline.awayWinPercent}% | Draws ${leagueBaseline.drawPercent}%\n`;
+            
+            // Fetch the merged Deep Learning profile for this league
+            const intelDoc = await getLeagueIntelligence(league);
+            const intelStr = intelDoc ? JSON.stringify(intelDoc.merged || intelDoc.profile || intelDoc) : 'No deep learning profile available yet.';
+            
+            // ── Behaviour Pattern Analysis ────────────────────────────────────────
+            // Win streak fatigue, big team clashes, loss reversal signals
+            let dailyBehaviourInjection = '';
+            try {
+                const dailyFixtures = matchesToAnalyze.map(m => ({ homeTeam: m.home, awayTeam: m.away, gameTime: m.time }));
+                const resolvedLeagueForBeh = liveLeagueData.league === 'vFootball Live Odds' ? league : liveLeagueData.league;
+                console.log(`[DEBUG] [analyze] 🔬 Running behaviour pattern analysis on ${dailyFixtures.length} upcoming fixtures...`);
+                const bSignals = await detectBehaviourPatterns(dailyFixtures, resolvedLeagueForBeh);
+                bSignalsToReturn = bSignals;
+                dailyBehaviourInjection = buildBehaviourPromptInjection(bSignals);
+                if (bSignals.length > 0) {
+                    console.log(`[DEBUG] [analyze] ✅ ${bSignals.length} behaviour signals found — injecting into daily-tips prompt.`);
+                    // Save signals for dashboard history
+                    await saveBehaviourSignals(bSignals, resolvedLeagueForBeh, date).catch(e =>
+                        console.error('[analyze] Behaviour save error (non-fatal):', e.message)
+                    );
+                } else {
+                    console.log('[DEBUG] [analyze] ✅ No anomalous behaviour signals for today\'s fixtures.');
+                }
+            } catch (bErr) {
+                console.error('[DEBUG] [analyze] ⚠️ Behaviour pattern analysis error (non-fatal):', bErr.message);
+            }
+
+            upcomingMatchesTxt = `=== DEEP LEARNING LEAGUE PROFILE ===\n${intelStr}\n====================================\n\n` +
+                leagueBaselineLine +
+                (leagueTipsDNAInjection ? `\n${leagueTipsDNAInjection}\n` : '') +
+                matchLines.join('\n\n') +
+                (dailyBehaviourInjection ? `\n\n${dailyBehaviourInjection}` : '');
+            console.log(`[DEBUG] [analyze] ✅ Live matches injected: ${matchesToAnalyze.length} (ODDS EXCLUDED — form+H2H+League DNA+behaviour signals)`);
+            broadcastAiStatus('success', `Injected ${matchesToAnalyze.length} fixtures with form, H2H, League DNA 🧬, and behaviour signals.`);
+        } else {
+            console.log(`[DEBUG] [analyze] ⚠️ globalData present but no matches matched league "${league}". Skipping live fixture injection.`);
+        }
+    } else {
+        console.log('[DEBUG] [analyze] ⚠️ globalData is null/empty — live scraper may not have data yet. Predictions will be pattern-based only.');
+    }
+
+    if ((!matches || matches.length === 0) && !hasLiveMatches) {
+        broadcastAiStatus('error', `No match data found to analyze for ${league} on this date.`);
+        throw new Error(`No match data found to analyze for ${league} on this date.`);
+    }
+
+    // Calculate yesterday's date to fetch past tips for Self Evaluation
+    const reqDateObj = new Date(date.split('/').reverse().join('-'));
+    reqDateObj.setDate(reqDateObj.getDate() - 1);
+    const yDayStr = reqDateObj.toISOString().split('T')[0];
+    const yDayApi = `${yDayStr.split('-')[2]}/${yDayStr.split('-')[1]}/${yDayStr.split('-')[0]}`;
+    
+    const pastTip = await getDailyTip(yDayApi, league);
+    let pastTipContext = '';
+    if (pastTip && pastTip.tipData) {
+        pastTipContext = `
 LAST SESSION'S TIPS (Date: ${yDayApi}) TO SELF-EVALUATE AGAINST:
 ${JSON.stringify(pastTip.tipData.upcoming_matches || pastTip.tipData.predictions || [])}
 TASK: Compare the above predictions to the completed matches below.
 Specifically count: how many "Draw" predictions were WRONG (actual result was Home or Away win)?
 `;
-        }
+    }
 
-        // Strip down the matches to save tokens
-        const compressedMatches = (matches || []).map(m => `[${m.time}] ${m.homeTeam} ${m.score} ${m.awayTeam}`);
+    // Strip down the matches to save tokens
+    const compressedMatches = (matches || []).map(m => `[${m.time}] ${m.homeTeam} ${m.score} ${m.awayTeam}`);
 
-        const strategy = await getStrategy();
+    const strategy = await getStrategy();
 
-        // ─── Build prompt with venue-aware directives ────────────────────────
-        const prompt = `You are an elite virtual football analyst providing "Upcoming Tips" for the league "${league}".
+    // ─── Build prompt with venue-aware directives ────────────────────────
+    const prompt = `You are an elite virtual football analyst providing "Upcoming Tips" for the league "${league}".
 I am providing you with complete home/away form statistics for every upcoming fixture.
 
 ${pastTipContext}
@@ -2268,83 +2326,184 @@ FIELD NOTES:
 
 Return ONLY valid JSON. No markdown. No code blocks. No extra text.`;
 
-        broadcastAiStatus('analyzing', `Prompting ${provider.toUpperCase()} AI to synthesize match data and generate predictions...`);
-        const aiResult = await callPredictionAI(prompt, provider, { maxTokens: 8000 });
-        let tipData;
+    broadcastAiStatus('analyzing', `Prompting ${provider.toUpperCase()} AI to synthesize match data and generate predictions...`);
+    const aiResult = await callPredictionAI(prompt, provider, { maxTokens: 8000 });
+    let tipData;
+    try {
+        tipData = parseAIJson(aiResult.content);
+        console.log(`[DEBUG] [generateDailyTipsForLeague] ✅ JSON parsed from ${provider} (${aiResult.ms}ms, ${aiResult.tokensUsed} tokens).`);
+    } catch (e) {
+        console.error(`[generateDailyTipsForLeague] ❌ JSON parse failed from ${provider}. Raw output (first 1000 chars):`);
+        console.error('RAW CONTENT >>>', aiResult.content?.slice(0, 1000));
+        throw new Error(`${provider} returned invalid JSON: ${e.message}`);
+    }
+
+    // Stamp analysis metadata for frontend display
+    tipData.analysisMode     = hasLiveMatches ? 'live' : 'historical';
+    tipData.behaviourSignals = bSignalsToReturn;
+    tipData.aiProvider       = provider;
+    tipData.aiModel          = aiResult.model;
+    tipData.aiMs             = aiResult.ms;
+    console.log(`[DEBUG] [generateDailyTipsForLeague] ✅ Complete. Provider: ${provider} | Model: ${aiResult.model} | Mode: ${tipData.analysisMode} | Matches: ${matches.length}`);
+
+    // ── Process Brain Updates ──────────────────────────────────────────────
+    const brainUpdates = tipData.Self_Evaluation?.Brain_Updates;
+    if (brainUpdates && (
+        (brainUpdates.new_rules_to_add && brainUpdates.new_rules_to_add.length > 0) || 
+        (brainUpdates.failed_rules_to_remove && brainUpdates.failed_rules_to_remove.length > 0) ||
+        (brainUpdates.unused_rules_to_monitor && brainUpdates.unused_rules_to_monitor.length > 0)
+    )) {
+        console.log('[DEBUG] [generateDailyTipsForLeague] 🧠 AI requested autonomous Brain Updates. Executing...');
+        await updateStrategy({
+            action: 'update_rules',
+            add_rules: brainUpdates.new_rules_to_add || [],
+            remove_rules: brainUpdates.failed_rules_to_remove || [],
+            monitor_rules: brainUpdates.unused_rules_to_monitor || []
+        });
+    }
+
+    // ── AI TOOL CALLING: Handle Tool_Requests from the AI ────────────────
+    const toolRequests = tipData.Tool_Requests || {};
+    let toolCallResult = null;
+
+    if (toolRequests.capture_league === true) {
+        console.log(`[AI Tool Call] 🤖 AI requested a sync for league: ${league}. Triggering native capture...`);
+        broadcastAiStatus('tool', `🤖 AI Tool Call: Triggering native sync for ${league}...`);
         try {
-            tipData = parseAIJson(aiResult.content);
-            console.log(`[DEBUG] [daily-tips/analyze] ✅ JSON parsed from ${provider} (${aiResult.ms}ms, ${aiResult.tokensUsed} tokens).`);
-        } catch (e) {
-            console.error(`[daily-tips/analyze] ❌ JSON parse failed from ${provider}. Raw output (first 1000 chars):`);
-            console.error('RAW CONTENT >>>', aiResult.content?.slice(0, 1000));
-            return res.status(500).json({ success: false, error: `${provider} returned invalid JSON: ${e.message}. Check server logs for raw output.` });
-        }
-
-        // Stamp analysis metadata for frontend display
-        tipData.analysisMode     = hasLiveMatches ? 'live' : 'historical';
-        tipData.behaviourSignals = bSignalsToReturn;
-        tipData.aiProvider       = provider;
-        tipData.aiModel          = aiResult.model;
-        tipData.aiMs             = aiResult.ms;
-        console.log(`[DEBUG] [daily-tips/analyze] ✅ Complete. Provider: ${provider} | Model: ${aiResult.model} | Mode: ${tipData.analysisMode} | Matches: ${matches.length}`);
-
-        // ── Process Brain Updates ──────────────────────────────────────────────
-        const brainUpdates = tipData.Self_Evaluation?.Brain_Updates;
-        if (brainUpdates && (
-            (brainUpdates.new_rules_to_add && brainUpdates.new_rules_to_add.length > 0) || 
-            (brainUpdates.failed_rules_to_remove && brainUpdates.failed_rules_to_remove.length > 0) ||
-            (brainUpdates.unused_rules_to_monitor && brainUpdates.unused_rules_to_monitor.length > 0)
-        )) {
-            console.log('[DEBUG] [daily-tips/analyze] 🧠 AI requested autonomous Brain Updates. Executing...');
-            await updateStrategy({
-                action: 'update_rules',
-                add_rules: brainUpdates.new_rules_to_add || [],
-                remove_rules: brainUpdates.failed_rules_to_remove || [],
-                monitor_rules: brainUpdates.unused_rules_to_monitor || []
-            });
-        }
-
-        // ── AI TOOL CALLING: Handle Tool_Requests from the AI ────────────────
-        const toolRequests = tipData.Tool_Requests || {};
-        let toolCallResult = null;
-
-        if (toolRequests.capture_league === true) {
-            console.log(`[AI Tool Call] 🤖 AI requested a sync for league: ${league}. Triggering native capture...`);
-            broadcastAiStatus('tool', `🤖 AI Tool Call: Triggering native sync for ${league}...`);
-            try {
-                await nativeCaptureLeagueResults(league, date, {
-                    onPageCaptured: async (unused, matchRows, pageNum) => {
-                        if (matchRows && matchRows.length > 0) {
-                            await uploadMatchesToDatabase(matchRows, (msg) => {
-                                broadcastAiStatus('tool', `[AI Sync ${league} P${pageNum}] ${msg}`);
-                            });
-                        }
+            await nativeCaptureLeagueResults(league, date, {
+                onPageCaptured: async (unused, matchRows, pageNum) => {
+                    if (matchRows && matchRows.length > 0) {
+                        await uploadMatchesToDatabase(matchRows, (msg) => {
+                            broadcastAiStatus('tool', `[AI Sync ${league} P${pageNum}] ${msg}`);
+                        });
                     }
-                });
-                toolCallResult = { capture_league: true, status: 'completed', league };
-                broadcastAiStatus('success', `🤖 AI-triggered sync for ${league} complete.`);
-                console.log(`[AI Tool Call] ✅ AI-triggered sync for ${league} completed successfully.`);
-            } catch (syncErr) {
-                console.error(`[AI Tool Call] ❌ AI sync failed for ${league}:`, syncErr.message);
-                toolCallResult = { capture_league: true, status: 'failed', error: syncErr.message };
+                }
+            });
+            toolCallResult = { capture_league: true, status: 'completed', league };
+            broadcastAiStatus('success', `🤖 AI-triggered sync for ${league} complete.`);
+            console.log(`[AI Tool Call] ✅ AI-triggered sync for ${league} completed successfully.`);
+        } catch (syncErr) {
+            console.error(`[AI Tool Call] ❌ AI sync failed for ${league}:`, syncErr.message);
+            toolCallResult = { capture_league: true, status: 'failed', error: syncErr.message };
+        }
+    }
+
+    let teamFormResult = null;
+    if (toolRequests.team_track_request && typeof toolRequests.team_track_request === 'string') {
+        const trackTeam = toolRequests.team_track_request;
+        console.log(`[AI Tool Call] 📊 AI requested team tracking for: ${trackTeam}`);
+        broadcastAiStatus('tool', `📊 Computing form for ${trackTeam} as requested by AI...`);
+        teamFormResult = await computeTeamForm(league, trackTeam, 10);
+    }
+
+    // Save tip (include tool call result metadata)
+    tipData._toolCallResult = toolCallResult;
+    tipData._teamFormResult = teamFormResult;
+    await saveDailyTip(date, league, tipData);
+
+    broadcastAiStatus('success', `Analysis complete and data saved to Database for ${league}.`);
+    return { success: true, tipData, cached: false, matchesAnalyzed: matches.length, toolCallResult, teamFormResult };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vfootball/daily-tips/analyze
+// Uses AI to analyze the matches up to the current date and provides tips.
+// Handles single leagues as well as "All Leagues" consolidated batch prediction.
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/vfootball/daily-tips/analyze', async (req, res) => {
+    try {
+        let { date, league, provider: reqProvider } = req.body;
+        const provider = reqProvider || getActivePredictionProvider();
+        console.log(`[daily-tips/analyze] 🤖 Request for league=${league} on ${date}. AI Provider: ${provider.toUpperCase()}`);
+        
+        const forceRerun = req.query.force === 'true' || req.body.force === true;
+        if (!date || !league) return res.status(400).json({ success: false, error: 'date and league required' });
+
+        const isAll = league === 'All Leagues' || league === 'all' || league === 'All';
+        const targetLeagues = isAll 
+            ? SUPPORTED_LEAGUES.map(l => toDbLeague(l))
+            : [toDbLeague(league)];
+
+        console.log(`[daily-tips/analyze] Target leagues: ${targetLeagues.join(', ')}`);
+
+        if (isAll) {
+            broadcastAiStatus('start', `Starting batch analysis for ALL 5 leagues on ${date}...`);
+            const consolidatedMatches = [];
+            const contexts = [];
+            let totalAnalyzed = 0;
+            const evaluations = [];
+
+            // Execute predictions sequentially for each league
+            for (const targetLeague of targetLeagues) {
+                console.log(`\n[daily-tips/analyze] 🔄 Batch analyzing league: ${targetLeague}...`);
+                broadcastAiStatus('info', `🔄 Starting analysis for ${targetLeague}...`);
+                try {
+                    const result = await generateDailyTipsForLeague(date, targetLeague, provider, forceRerun);
+                    if (result && result.success && result.tipData) {
+                        const tipData = result.tipData;
+                        const matchesKey = tipData.upcoming_matches ? 'upcoming_matches' : 'predictions';
+                        const matches = (tipData[matchesKey] || []).map(m => ({
+                            ...m,
+                            league: targetLeague
+                        }));
+                        consolidatedMatches.push(...matches);
+                        
+                        if (tipData.context) {
+                            contexts.push(`${targetLeague}: ${tipData.context}`);
+                        }
+                        if (tipData.Self_Evaluation) {
+                            evaluations.push(tipData.Self_Evaluation);
+                        }
+                        totalAnalyzed += result.matchesAnalyzed || 0;
+                    }
+                } catch (err) {
+                    console.error(`[daily-tips/analyze] ❌ Failed to analyze ${targetLeague}:`, err.message);
+                    broadcastAiStatus('error', `❌ Failed to analyze ${targetLeague}: ${err.message}`);
+                }
             }
+
+            // Create consolidated tipData
+            const consolidatedTipData = {
+                context: contexts.join(' | '),
+                upcoming_matches: consolidatedMatches,
+                Self_Evaluation: {
+                    score: `${Math.round(evaluations.reduce((acc, curr) => {
+                        const val = parseInt(curr.score || '0');
+                        return acc + (isNaN(val) ? 0 : val);
+                    }, 0) / Math.max(evaluations.length, 1))}/10`,
+                    emoji: '🎯',
+                    review: evaluations.map(e => e.review).filter(Boolean).join('\n'),
+                    wrong_draws_count: evaluations.reduce((acc, curr) => acc + (curr.wrong_draws_count || 0), 0)
+                },
+                analysisMode: 'consolidated',
+                aiProvider: provider
+            };
+
+            // Save the consolidated tips under the 'All Leagues' key in Database
+            await saveDailyTip(date, 'All Leagues', consolidatedTipData);
+
+            broadcastAiStatus('success', `✅ Batch analysis complete! Consolidated ${consolidatedMatches.length} matches.`);
+            return res.json({
+                success: true,
+                tipData: consolidatedTipData,
+                cached: false,
+                matchesAnalyzed: totalAnalyzed
+            });
+        } else {
+            const dbLeague = targetLeagues[0];
+            const result = await generateDailyTipsForLeague(date, dbLeague, provider, forceRerun);
+            // Ensure matches are stamped with their league name for consistency
+            if (result.tipData) {
+                const matchesKey = result.tipData.upcoming_matches ? 'upcoming_matches' : 'predictions';
+                if (result.tipData[matchesKey]) {
+                    result.tipData[matchesKey] = result.tipData[matchesKey].map(m => ({
+                        ...m,
+                        league: dbLeague
+                    }));
+                }
+            }
+            return res.json(result);
         }
-
-        let teamFormResult = null;
-        if (toolRequests.team_track_request && typeof toolRequests.team_track_request === 'string') {
-            const trackTeam = toolRequests.team_track_request;
-            console.log(`[AI Tool Call] 📊 AI requested team tracking for: ${trackTeam}`);
-            broadcastAiStatus('tool', `📊 Computing form for ${trackTeam} as requested by AI...`);
-            teamFormResult = await computeTeamForm(league, trackTeam, 10);
-        }
-
-        // Save tip (include tool call result metadata)
-        tipData._toolCallResult = toolCallResult;
-        tipData._teamFormResult = teamFormResult;
-        await saveDailyTip(date, league, tipData);
-
-        broadcastAiStatus('success', 'Analysis complete and data saved to Database.');
-        res.json({ success: true, tipData, cached: false, matchesAnalyzed: matches.length, toolCallResult, teamFormResult });
     } catch (err) {
         console.error('[/api/vfootball/daily-tips/analyze]', err.message);
         

@@ -13,6 +13,7 @@ import PatternIntelligence from './components/PatternIntelligence';
 import NavigationBar from './components/NavigationBar';
 import AdvancedPredictionEngine from './components/AdvancedPredictionEngine';
 import LocalPatternEngine from './components/LocalPatternEngine';
+import ApiConsole from './components/ApiConsole';
 import './index.css';
 
 // ── Live scores SSE hook ──────────────────────────────────────────────────────
@@ -427,6 +428,7 @@ export default function App() {
         <Route path="/behaviour" element={<BehaviourPatterns />} />
         <Route path="/results" element={<LandingPage />} />
         <Route path="/local-engine" element={<LocalPatternEngine />} />
+        <Route path="/api-console" element={<ApiConsole />} />
         <Route path="*"          element={<Navigate to="/" replace />} />
       </Routes>
     </div>
