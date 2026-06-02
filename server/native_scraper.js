@@ -150,223 +150,275 @@ async function extractMatchesFromDom(page, leagueName, targetDateISO = null) {
 /**
  * Orchestrates the full native scraping flow for a single league.
  */
+/**
+ * Orchestrates the full native scraping flow for a single league with robust retry logic.
+ */
 async function nativeCaptureLeagueResults(leagueName, targetDate = null, options = {}) {
     const onPageCaptured = options.onPageCaptured || (async () => {});
     const targetLeagueName = toDbLeague(leagueName);
     
     console.log(`[Native Scraper] 🚀 Starting native extraction for: ${targetLeagueName}`);
 
-    const browser = await puppeteer.launch({
-        executablePath: getChromePath(),
-        headless: 'new',
-        args: ['--start-maximized', '--no-sandbox', '--disable-setuid-sandbox']
-    });
+    const maxAttempts = (leagueName.toLowerCase().includes('germany') || leagueName.toLowerCase().includes('france')) ? 10 : 3;
+    let lastError = null;
 
-    try {
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1366, height: 768 });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] Initializing scraper browser for ${targetLeagueName}...`);
+        
+        let browser = null;
+        try {
+            browser = await puppeteer.launch({
+                executablePath: getChromePath(),
+                headless: 'new',
+                args: ['--start-maximized', '--no-sandbox', '--disable-setuid-sandbox']
+            });
 
-        console.log("[Native Scraper] 🌐 Navigating to results page...");
-        await page.goto('https://www.sportybet.com/ng/liveResult/', { 
-            waitUntil: 'networkidle2', 
-            timeout: 60000 
-        });
-        await new Promise(r => setTimeout(r, 4000));
+            const page = await browser.newPage();
+            await page.setViewport({ width: 1366, height: 768 });
 
-        // 1. Date Selection — port of the exact approach from screenshot_scraper.js
-        const resolvedDate = targetDate || new Date().toISOString().split('T')[0];
-        console.log(`[Native Scraper] 🎯 Selecting date: ${resolvedDate}`);
+            console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] 🌐 Navigating to results page...`);
+            await page.goto('https://www.sportybet.com/ng/liveResult/', { 
+                waitUntil: 'networkidle2', 
+                timeout: 60000 
+            });
+            await new Promise(r => setTimeout(r, 4000));
 
-        let tDateStr = null;
-        let tDayNum = null;
-        let targetYear = null;
-        let targetMonthIdx = null;
+            // 1. Date Selection
+            const resolvedDate = targetDate || new Date().toISOString().split('T')[0];
+            console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] 🎯 Selecting date: ${resolvedDate}`);
 
-        if (resolvedDate.includes('-')) {
-            const parts = resolvedDate.split('-');
-            if (parts.length === 3) {
-                targetYear = parseInt(parts[0], 10);
-                targetMonthIdx = parseInt(parts[1], 10) - 1; // 0-indexed month
-                tDayNum = parseInt(parts[2], 10).toString();
-                const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                tDateStr = `${shortMonths[targetMonthIdx]} ${targetYear}`;
-            }
-        }
+            let tDateStr = null;
+            let tDayNum = null;
+            let targetYear = null;
+            let targetMonthIdx = null;
 
-        if (targetYear !== null && targetMonthIdx !== null && tDayNum !== null) {
-            console.log(`[Native Scraper] 📅 Opening date picker → target: ${tDateStr} (Year: ${targetYear}, MonthIdx: ${targetMonthIdx}) Day ${tDayNum}`);
-            const clickedPicker = await clickDropdownIndex(page, 0, "Date Picker");
-            if (clickedPicker) {
-                await new Promise(r => setTimeout(r, 1500));
-
-                await page.evaluate(async (targetMonthIdx, targetYear, targetDayNum) => {
-                    const sleep = ms => new Promise(r => setTimeout(r, ms));
-                    const calendar = document.querySelector('.vdp-datepicker__calendar');
-                    if (!calendar) return;
-
-                    const monthAbbrevMap = {
-                        jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
-                    };
-                    const targetVal = targetYear * 12 + targetMonthIdx;
-
-                    let attempts = 0;
-                    while (attempts < 36) { // allow up to 3 years of navigation
-                        const headerSpans = Array.from(calendar.querySelectorAll('header span'));
-                        // Find the span containing a 4-digit year, which uniquely identifies the Month-Year title
-                        const titleSpan = headerSpans.find(span => span.textContent.match(/\d{4}/)) || 
-                                          (headerSpans.length >= 3 ? headerSpans[1] : headerSpans[0]);
-                        
-                        if (!titleSpan) {
-                            console.log('[Native Scraper Calendar Navigation] Could not locate calendar title span!');
-                            break;
-                        }
-
-                        const titleText = titleSpan.textContent.trim();
-                        const textLower = titleText.toLowerCase();
-                        let currentMonthIdx = -1;
-                        for (const [key, idx] of Object.entries(monthAbbrevMap)) {
-                            if (textLower.includes(key)) {
-                                currentMonthIdx = idx;
-                                break;
-                            }
-                        }
-                        
-                        const yearMatch = titleText.match(/\d{4}/);
-                        const currentYear = yearMatch ? parseInt(yearMatch[0], 10) : null;
-
-                        console.log(`[Native Scraper Calendar Navigation] Attempt ${attempts}: Current title = "${titleText}" (Year: ${currentYear}, MonthIdx: ${currentMonthIdx}). Target Year: ${targetYear}, MonthIdx: ${targetMonthIdx}`);
-
-                        if (currentMonthIdx !== -1 && currentYear !== null) {
-                            const currentVal = currentYear * 12 + currentMonthIdx;
-                            if (currentVal === targetVal) {
-                                console.log(`[Native Scraper Calendar Navigation] Correct month reached: "${titleText}"`);
-                                break;
-                            }
-
-                            if (currentVal > targetVal) {
-                                // Target is in the past, click prev
-                                const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
-                                if (prevBtn) {
-                                    console.log('[Native Scraper Calendar Navigation] Clicking PREV button...');
-                                    prevBtn.click();
-                                    await sleep(500);
-                                } else {
-                                    console.log('[Native Scraper Calendar Navigation] PREV button not found!');
-                                    break;
-                                }
-                            } else {
-                                // Target is in the future, click next
-                                const nextBtn = calendar.querySelector('header .next') || headerSpans[headerSpans.length - 1];
-                                if (nextBtn) {
-                                    console.log('[Native Scraper Calendar Navigation] Clicking NEXT button...');
-                                    nextBtn.click();
-                                    await sleep(500);
-                                } else {
-                                    console.log('[Native Scraper Calendar Navigation] NEXT button not found!');
-                                    break;
-                                }
-                            }
-                        } else {
-                            console.log(`[Native Scraper Calendar Navigation] Failed to parse month/year from title text: "${titleText}"`);
-                            // Fallback: click prev
-                            const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
-                            if (prevBtn) {
-                                prevBtn.click();
-                                await sleep(500);
-                            } else {
-                                break;
-                            }
-                        }
-                        attempts++;
-                    }
-                    await sleep(800);
-
-                    // Click the specific day cell
-                    const cells = Array.from(document.querySelectorAll('.vdp-datepicker__calendar .cell.day:not(.disabled):not(.blank)'));
-                    const cell = cells.find(c => c.textContent.trim() === targetDayNum);
-                    if (cell) {
-                        console.log(`[Native Scraper Calendar Navigation] Clicking day cell: "${targetDayNum}"`);
-                        cell.click();
-                    } else {
-                        console.log(`[Native Scraper Calendar Navigation] Day cell "${targetDayNum}" not found in available cells!`);
-                    }
-                }, targetMonthIdx, targetYear, tDayNum);
-
-                await new Promise(r => setTimeout(r, 6000)); // Match screenshot_scraper's wait for deep refresh
-            }
-        }
-
-        // 2. Sport Selection (vFootball)
-        await clickDropdownIndex(page, 1, "Sport Selection");
-        await new Promise(r => setTimeout(r, 1500));
-        await clickByText(page, ['vFootball'], 'vFootball');
-        await new Promise(r => setTimeout(r, 4000));
-
-        // 3. League Selection
-        await clickDropdownIndex(page, 2, "League Dropdown");
-        await new Promise(r => setTimeout(r, 1500));
-        const leagueShort = leagueName.replace(/ - Virtual$/i, '').replace(/ League$/i, '').trim();
-        await clickByText(page, [leagueShort, `${leagueShort} League`, `${leagueShort} - Virtual`], leagueName);
-        console.log(`[Native Scraper] Waiting for ${leagueName} data...`);
-        await new Promise(r => setTimeout(r, 6000));
-
-        // 3. Extraction Loop
-        let allMatches = [];
-        let hasNextPage = true;
-        let pageNum = 1;
-
-        while (hasNextPage) {
-            console.log(`[Native Scraper] Processing Page ${pageNum}...`);
-            const pageMatches = await extractMatchesFromDom(page, targetLeagueName, targetDate);
-            
-            if (pageMatches.length > 0) {
-                allMatches = allMatches.concat(pageMatches);
-                // Call the hook to handle files/upload/cleanup
-                const hookResult = await onPageCaptured(null, pageMatches, pageNum);
-                if (hookResult && hookResult.stop) {
-                    console.log(`[Native Scraper] 🛑 Hook requested termination (database is fully up-to-date). Halting page extraction early.`);
-                    hasNextPage = false;
-                    break;
+            if (resolvedDate.includes('-')) {
+                const parts = resolvedDate.split('-');
+                if (parts.length === 3) {
+                    targetYear = parseInt(parts[0], 10);
+                    targetMonthIdx = parseInt(parts[1], 10) - 1; // 0-indexed month
+                    tDayNum = parseInt(parts[2], 10).toString();
+                    const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    tDateStr = `${shortMonths[targetMonthIdx]} ${targetYear}`;
                 }
             }
 
-            // Pagination detection
-            const paginationInfo = await page.evaluate(() => {
-                const nextBtn = document.querySelector('div.pagination span.icon-next');
-                if (!nextBtn) return { exists: false };
-                const isDisabled = nextBtn.classList.contains('icon-disabled') || nextBtn.closest('.disabled') !== null;
-                return { exists: true, isDisabled };
-            });
+            if (targetYear !== null && targetMonthIdx !== null && tDayNum !== null) {
+                console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] 📅 Opening date picker → target: ${tDateStr} Day ${tDayNum}`);
+                const clickedPicker = await clickDropdownIndex(page, 0, "Date Picker");
+                if (clickedPicker) {
+                    await new Promise(r => setTimeout(r, 1500));
 
-            if (paginationInfo.exists && !paginationInfo.isDisabled) {
-                console.log(`[Native Scraper] ⏩ Clicking Next Page...`);
-                await page.evaluate(() => {
-                    const nextBtn = document.querySelector('div.pagination span.icon-next');
-                    if (nextBtn) nextBtn.click();
-                });
-                await new Promise(r => setTimeout(r, 4500)); 
-                pageNum++;
-            } else {
-                console.log(`[Native Scraper] ✅ End of results reached.`);
-                hasNextPage = false;
+                    await page.evaluate(async (targetMonthIdx, targetYear, targetDayNum) => {
+                        const sleep = ms => new Promise(r => setTimeout(r, ms));
+                        const calendar = document.querySelector('.vdp-datepicker__calendar');
+                        if (!calendar) return;
+
+                        const monthAbbrevMap = {
+                            jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+                        };
+                        const targetVal = targetYear * 12 + targetMonthIdx;
+
+                        let attempts = 0;
+                        while (attempts < 36) {
+                            const headerSpans = Array.from(calendar.querySelectorAll('header span'));
+                            const titleSpan = headerSpans.find(span => span.textContent.match(/\d{4}/)) || 
+                                              (headerSpans.length >= 3 ? headerSpans[1] : headerSpans[0]);
+                            
+                            if (!titleSpan) break;
+
+                            const titleText = titleSpan.textContent.trim();
+                            const textLower = titleText.toLowerCase();
+                            let currentMonthIdx = -1;
+                            for (const [key, idx] of Object.entries(monthAbbrevMap)) {
+                                if (textLower.includes(key)) {
+                                    currentMonthIdx = idx;
+                                    break;
+                                }
+                            }
+                            
+                            const yearMatch = titleText.match(/\d{4}/);
+                            const currentYear = yearMatch ? parseInt(yearMatch[0], 10) : null;
+
+                            if (currentMonthIdx !== -1 && currentYear !== null) {
+                                const currentVal = currentYear * 12 + currentMonthIdx;
+                                if (currentVal === targetVal) break;
+
+                                if (currentVal > targetVal) {
+                                    const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
+                                    if (prevBtn) {
+                                        prevBtn.click();
+                                        await sleep(500);
+                                    } else break;
+                                } else {
+                                    const nextBtn = calendar.querySelector('header .next') || headerSpans[headerSpans.length - 1];
+                                    if (nextBtn) {
+                                        nextBtn.click();
+                                        await sleep(500);
+                                    } else break;
+                                }
+                            } else {
+                                const prevBtn = calendar.querySelector('header .prev') || headerSpans[0];
+                                if (prevBtn) {
+                                    prevBtn.click();
+                                    await sleep(500);
+                                } else break;
+                            }
+                            attempts++;
+                        }
+                        await sleep(800);
+
+                        const cells = Array.from(document.querySelectorAll('.vdp-datepicker__calendar .cell.day:not(.disabled):not(.blank)'));
+                        const cell = cells.find(c => c.textContent.trim() === targetDayNum);
+                        if (cell) {
+                            cell.click();
+                        }
+                    }, targetMonthIdx, targetYear, tDayNum);
+
+                    await new Promise(r => setTimeout(r, 6000));
+                }
             }
 
-            if (pageNum > 20) break; // Hard limit
+            // 2. Sport Selection (vFootball)
+            const clickedSport = await clickDropdownIndex(page, 1, "Sport Selection");
+            if (!clickedSport) {
+                throw new Error("Failed to open Sport Selection dropdown");
+            }
+            await new Promise(r => setTimeout(r, 1500));
+            const selectedSport = await clickByText(page, ['vFootball'], 'vFootball');
+            if (!selectedSport) {
+                throw new Error("Failed to select vFootball sport option");
+            }
+            await new Promise(r => setTimeout(r, 4000));
+
+            // 3. League Selection
+            const clickedLeague = await clickDropdownIndex(page, 2, "League Dropdown");
+            if (!clickedLeague) {
+                throw new Error("Failed to open League Selection dropdown");
+            }
+            await new Promise(r => setTimeout(r, 1500));
+            const leagueShort = leagueName.replace(/ - Virtual$/i, '').replace(/ League$/i, '').trim();
+            const selectedLeague = await clickByText(page, [leagueShort, `${leagueShort} League`, `${leagueShort} - Virtual`], leagueName);
+            if (!selectedLeague) {
+                throw new Error(`Failed to select league option: ${leagueShort}`);
+            }
+            console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] Waiting for ${leagueName} data to load...`);
+            await new Promise(r => setTimeout(r, 6000));
+
+            // Verify League Selection dropdown text
+            const verifyText = await page.evaluate(() => {
+                const triggers = document.querySelectorAll('.select-index, .m-select-list .active, .m-select-wrapper span, .m-select');
+                if (triggers.length > 2) {
+                    return triggers[2].textContent.trim();
+                }
+                return '';
+            });
+            console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] Dropdown Category verified text: "${verifyText}"`);
+            if (verifyText && !verifyText.toLowerCase().includes(leagueShort.toLowerCase())) {
+                throw new Error(`Category selection verification mismatch. Dropdown shows "${verifyText}", expected matches for "${leagueShort}"`);
+            }
+
+            // 4. Extraction Loop
+            let allMatches = [];
+            let hasNextPage = true;
+            let pageNum = 1;
+
+            while (hasNextPage) {
+                console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] Processing Page ${pageNum}...`);
+                const pageMatches = await extractMatchesFromDom(page, targetLeagueName, targetDate);
+                
+                if (pageMatches.length > 0) {
+                    // Sanity check scraped matches team names for Germany and France
+                    const isGermany = targetLeagueName.toLowerCase().includes('germany');
+                    const isFrance = targetLeagueName.toLowerCase().includes('france');
+                    const m1 = pageMatches[0];
+                    const hTeam = (m1.homeTeam || '').toLowerCase();
+                    const aTeam = (m1.awayTeam || '').toLowerCase();
+
+                    if (isGermany) {
+                        const gerTeams = ['bmu', 'bvb', 'koe', 'lev', 'mai', 'rbl', 'stp', 'svw', 'uni', 'hsv', 'tsg', 'sge', 'bmg', 'hdh', 'scf', 'fca', 'wob', 'vfb'];
+                        const isValidGer = gerTeams.includes(hTeam) || gerTeams.includes(aTeam);
+                        if (!isValidGer) {
+                            throw new Error(`Germany league validation failed. First matchup: "${m1.homeTeam} vs ${m1.awayTeam}" has teams not matching Bundesliga database.`);
+                        }
+                    } else if (isFrance) {
+                        const fraTeams = ['b29', 'nan', 'lor', 'aux', 'met', 'len', 'olm', 'leh', 'pfc', 'amo', 'psg', 'nce', 'ren', 'lyo', 'str', 'lil', 'tou', 'ang'];
+                        const isValidFra = fraTeams.includes(hTeam) || fraTeams.includes(aTeam);
+                        if (!isValidFra) {
+                            throw new Error(`France league validation failed. First matchup: "${m1.homeTeam} vs ${m1.awayTeam}" has teams not matching Ligue 1 database.`);
+                        }
+                    }
+
+                    allMatches = allMatches.concat(pageMatches);
+                    
+                    // Call the page capture hook
+                    const hookResult = await onPageCaptured(null, pageMatches, pageNum);
+                    if (hookResult && hookResult.stop) {
+                        console.log(`[Native Scraper] 🛑 Hook requested termination (database is fully up-to-date). Halting page extraction early.`);
+                        hasNextPage = false;
+                        break;
+                    }
+                }
+
+                // Pagination detection
+                const paginationInfo = await page.evaluate(() => {
+                    const nextBtn = document.querySelector('div.pagination span.icon-next');
+                    if (!nextBtn) return { exists: false };
+                    const isDisabled = nextBtn.classList.contains('icon-disabled') || nextBtn.closest('.disabled') !== null;
+                    return { exists: true, isDisabled };
+                });
+
+                if (paginationInfo.exists && !paginationInfo.isDisabled) {
+                    console.log(`[Native Scraper] ⏩ Clicking Next Page...`);
+                    await page.evaluate(() => {
+                        const nextBtn = document.querySelector('div.pagination span.icon-next');
+                        if (nextBtn) nextBtn.click();
+                    });
+                    await new Promise(r => setTimeout(r, 4500)); 
+                    pageNum++;
+                } else {
+                    console.log(`[Native Scraper] ✅ End of results reached.`);
+                    hasNextPage = false;
+                }
+
+                if (pageNum > 20) break; // Hard limit
+            }
+
+            if (allMatches.length === 0) {
+                throw new Error("No matches found or extracted from SportyBet results page DOM.");
+            }
+
+            console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] ✅ Extraction complete! Successfully scraped ${allMatches.length} matches.`);
+            return {
+                success: true,
+                league: leagueName,
+                matchData: allMatches,
+                totalPages: pageNum
+            };
+
+        } catch (err) {
+            console.error(`[Native Scraper] ⚠️ Attempt ${attempt}/${maxAttempts} failed:`, err.message);
+            lastError = err;
+        } finally {
+            if (browser) {
+                try {
+                    await browser.close();
+                } catch (_) {}
+            }
         }
 
-        return {
-            success: true,
-            league: leagueName,
-            matchData: allMatches,
-            totalPages: pageNum
-        };
-
-    } catch (err) {
-        console.error(`[Native Scraper] ❌ Fatal Error:`, err.message);
-        return { success: false, error: err.message };
-    } finally {
-        await browser.close();
+        if (attempt < maxAttempts) {
+            const delay = attempt * 5000;
+            console.log(`[Native Scraper] Retrying in ${delay / 1000} seconds...`);
+            await new Promise(r => setTimeout(r, delay));
+        }
     }
+
+    console.error(`[Native Scraper] ❌ All ${maxAttempts} attempts to scrape ${targetLeagueName} failed.`);
+    return {
+        success: false,
+        error: lastError ? lastError.message : "Scraping failed after all retry attempts"
+    };
 }
 
 module.exports = { nativeCaptureLeagueResults };
