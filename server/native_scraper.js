@@ -78,6 +78,8 @@ async function extractMatchesFromDom(page, leagueName, targetDateISO = null) {
     console.log(`[Native Scraper] Waiting for match rows...`);
     try {
         await page.waitForSelector('ul.result-event', { timeout: 15000 });
+        // Allow brief moment for all lazy elements to fully populate
+        await new Promise(r => setTimeout(r, 1500));
     } catch (e) {
         console.log(`[Native Scraper] ⚠️ No matches found on this page.`);
         return [];
@@ -342,7 +344,7 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
                     const nextBtn = document.querySelector('div.pagination span.icon-next');
                     if (nextBtn) nextBtn.click();
                 });
-                await new Promise(r => setTimeout(r, 3500)); 
+                await new Promise(r => setTimeout(r, 4500)); 
                 pageNum++;
             } else {
                 console.log(`[Native Scraper] ✅ End of results reached.`);
