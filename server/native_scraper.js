@@ -164,15 +164,31 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
             browser = await puppeteer.launch({
                 executablePath: getChromePath(),
                 headless: 'new',
-                args: ['--start-maximized', '--no-sandbox', '--disable-setuid-sandbox']
+                args: [
+                    '--start-maximized',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-infobars',
+                    '--window-size=1366,768'
+                ]
             });
 
             const page = await browser.newPage();
             await page.setViewport({ width: 1366, height: 768 });
 
+            // Set User Agent and hide automation footprint to bypass WAF
+            await page.setUserAgent(
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            );
+            await page.evaluateOnNewDocument(() => {
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            });
+
             console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] 🌐 Navigating to results page...`);
             await page.goto('https://www.sportybet.com/ng/liveResult/', { 
-                waitUntil: 'networkidle2', 
+                waitUntil: 'domcontentloaded', 
                 timeout: 60000 
             });
             await new Promise(r => setTimeout(r, 4000));

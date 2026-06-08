@@ -17,6 +17,14 @@ const { nativeCaptureLeagueResults } = require('./native_scraper');
 const { uploadMatchesToDatabase, syncMatchesToDatabase, getDatabaseHistoryLog, setDatabaseHistoryLog, dbEvents } = require('./db_uploader');
 const { fetchResultsFromDatabase, fetchTodayResultsFromDatabase, todayDDMMYYYY, fetchFullDayRawResults, fetchTeamHistoryFromDatabase, fetchAvailableDates, fetchAvailableLeagues, fetchAllHistoryLogs, computeTeamForm, computeH2HForm, computeVenueAdvantage, computeAllLeagueBaselines, getLeagueBaseline, getCachedDocs } = require('./db_reader');
 const { toDbLeague, SUPPORTED_LEAGUES } = require('./constants');
+const {
+    getMatchesFromDb,
+    saveMatchesToDb,
+    getPredictionsHistoryFromDb,
+    savePredictionToDb,
+    resolvePredictionOutcomes,
+    wipeDbData
+} = require('./supabase');
 const { saveAnalysis, getRecentContext, getLog, deleteEntry, getEntryById, clearLog, getStrategy, updateStrategy, fetchStrategyHistory, getLeagueIntelligence, updateLeagueIntelligence, getAnalysisByScopeAndDate, saveDailyTip, getDailyTip, getAllDailyTips } = require('./ai_memory');
 const { deleteLeagueData } = require('./db_admin');
 const { connectDb, PatternSnapshot } = require('./db_init');
@@ -542,17 +550,18 @@ async function runDailyAutoSync() {
                 match.sourceTag   = 'auto-sync';
             });
 
-            const { inserted, updated, unchanged, skipped } = await syncMatchesToDatabase(
-                result.matchData,
-                (msg) => console.log(`[Auto-Sync]   📊 ${league}: ${msg}`)
-            );
+            const stats = await saveMatchesToDb(result.matchData);
+            const inserted = stats.added;
+            const updated = 0;
+            const unchanged = stats.dupes;
+            const skipped = 0;
 
             totalInserted  += inserted;
             totalUpdated   += updated;
             totalUnchanged += unchanged;
             totalSkipped   += skipped;
 
-            console.log(`[Auto-Sync]   ✅ ${league} done — +${inserted} new | ~${updated} updated | ${unchanged} unchanged`);
+            console.log(`[Auto-Sync]   ✅ ${league} done — +${inserted} new | ${unchanged} skipped/duplicates | Total DB: ${stats.total}`);
         } catch (err) {
             console.error(`[Auto-Sync]   ❌ Error syncing ${league}:`, err.message);
         }
@@ -4352,38 +4361,56 @@ function saveToLocalJson(newMatches) {
     return { added, dupes, total: current.length };
 }
 
-// 1. GET local results
-app.get('/api/local-vfootball/results', (req, res) => {
+// 1. GET results (routed through Supabase with JSON fallback)
+app.get('/api/local-vfootball/results', async (req, res) => {
     console.log('[DEBUG] [Local API] GET /api/local-vfootball/results requested');
     try {
-        if (!fs.existsSync(LOCAL_DB_PATH)) {
-            return res.json({ success: true, count: 0, matches: [] });
-        }
-        const data = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+        const data = await getMatchesFromDb();
         res.json({ success: true, count: data.length, matches: data });
     } catch (e) {
-        console.error('[DEBUG] [Local API] Failed to read local results:', e.message);
+        console.error('[DEBUG] [Local API] Failed to read results from database:', e.message);
         res.status(500).json({ success: false, error: e.message });
     }
 });
 
-// 2. POST upload local results
-app.post('/api/local-vfootball/upload', express.json(), (req, res) => {
+// 1.5. GET pattern engine (routed through Supabase with JSON fallback)
+app.get('/api/local-vfootball/patterns', async (req, res) => {
+    console.log('[DEBUG] [Local API] GET /api/local-vfootball/patterns requested');
+    const sortType = req.query.sortType || 'scraped'; // 'scraped' | 'homeTeam'
+    const leagueQuery = req.query.league || 'England League';
+    
+    try {
+        const patternsData = await computeLocalPatterns(sortType, leagueQuery);
+        res.json({
+            success: true,
+            totalRounds: patternsData.totalRounds,
+            sortType: patternsData.sortType,
+            rounds: patternsData.rounds,
+            positionPatterns: patternsData.positionPatterns
+        });
+    } catch (e) {
+        console.error('[DEBUG] [Local API] Pattern analysis failed:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 2. POST upload results (routed through Supabase with JSON fallback)
+app.post('/api/local-vfootball/upload', express.json(), async (req, res) => {
     console.log('[DEBUG] [Local API] POST /api/local-vfootball/upload requested');
     try {
         const matches = req.body;
         if (!Array.isArray(matches)) {
             return res.status(400).json({ success: false, error: 'Request body must be an array of matches' });
         }
-        const stats = saveToLocalJson(matches);
+        const stats = await saveMatchesToDb(matches);
         res.json({ success: true, ...stats });
     } catch (e) {
-        console.error('[DEBUG] [Local API] Failed to upload local results:', e.message);
+        console.error('[DEBUG] [Local API] Failed to upload results to database:', e.message);
         res.status(500).json({ success: false, error: e.message });
     }
 });
 
-// 3. POST scrape directly to local JSON
+// 3. POST scrape (saves to Supabase with JSON fallback)
 app.post('/api/local-vfootball/scrape', express.json(), async (req, res) => {
     console.log('[DEBUG] [Local API] POST /api/local-vfootball/scrape requested');
     const { league, date } = req.body;
@@ -4415,9 +4442,9 @@ app.post('/api/local-vfootball/scrape', express.json(), async (req, res) => {
                     return;
                 }
                 if (matchRows && matchRows.length > 0) {
-                    sendProgress('page_capture', `Captured page ${pageNum} with ${matchRows.length} matches. Deduplicating and writing to local JSON storage...`);
-                    const stats = saveToLocalJson(matchRows);
-                    sendProgress('page_saved', `Saved to local storage: +${stats.added} new matches, skipped ${stats.dupes} duplicates. Total file records: ${stats.total}.`);
+                    sendProgress('page_capture', `Captured page ${pageNum} with ${matchRows.length} matches. Deduplicating and writing to database storage...`);
+                    const stats = await saveMatchesToDb(matchRows);
+                    sendProgress('page_saved', `Saved to database storage: +${stats.added} new matches, skipped ${stats.dupes} duplicates. Total database records: ${stats.total}.`);
                     
                     if (stats.added === 0 && stats.dupes > 0) {
                         consecutiveDupesCount++;
@@ -4474,367 +4501,10 @@ app.post('/api/local-vfootball/trigger-background-scrape', (req, res) => {
     });
 });
 
-// 4. GET pattern engine on local JSON data
-app.get('/api/local-vfootball/patterns', (req, res) => {
-    console.log('[DEBUG] [Local API] GET /api/local-vfootball/patterns requested');
-    const sortType = req.query.sortType || 'scraped'; // 'scraped' | 'homeTeam'
-    
-    try {
-        if (!fs.existsSync(LOCAL_DB_PATH)) {
-            return res.json({ success: true, count: 0, totalRounds: 0, rounds: [], positionPatterns: [] });
-        }
-        
-        const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
-        
-        const leagueQuery = req.query.league || 'England League';
-        const targetDbLeague = toDbLeague(leagueQuery);
-        
-        // Filter league matches
-        const leagueMatches = allMatches.filter(m => 
-            (toDbLeague(m.league) === targetDbLeague) && 
-            m.date && m.time && m.score
-        );
-        
-        // Step 1: Group matches by round key (date + time)
-        const roundGroups = {};
-        leagueMatches.forEach(m => {
-            const key = `${m.date}_${m.time}`;
-            if (!roundGroups[key]) {
-                roundGroups[key] = {
-                    key,
-                    date: m.date,
-                    time: m.time,
-                    matches: []
-                };
-            }
-            roundGroups[key].matches.push(m);
-        });
-        
-        const isNineTeamsLeague = leagueQuery.toLowerCase().includes('france') || leagueQuery.toLowerCase().includes('germany');
-        const expectedMatchCount = isNineTeamsLeague ? 9 : 10;
-
-        // Step 2: Only analyze rounds with EXPECTED matches (aligned kickoff)
-        const validRounds = Object.values(roundGroups).filter(r => r.matches.length === expectedMatchCount);
-        console.log(`[DEBUG] [Patterns] Total ${leagueQuery} rounds: ${Object.keys(roundGroups).length}. Aligned rounds (${expectedMatchCount} matches): ${validRounds.length}`);
-        
-        // Step 3: Sort rounds chronologically (oldest to newest)
-        const parseDateTime = (dStr, tStr) => {
-            try {
-                const [d, m, y] = dStr.split('/').map(Number);
-                const [h, min] = tStr.split(':').map(Number);
-                return new Date(y, m - 1, d, h, min);
-            } catch (err) {
-                return new Date(0);
-            }
-        };
-        
-        validRounds.sort((a, b) => {
-            const dtA = parseDateTime(a.date, a.time);
-            const dtB = parseDateTime(b.date, b.time);
-            return dtA - dtB;
-        });
-        
-        // Step 4: Sort matches within each round to establish the fixed visual positions
-        validRounds.forEach(round => {
-            if (sortType === 'homeTeam') {
-                round.matches.sort((a, b) => {
-                    const nameA = (a.homeTeam || a.home || '').toLowerCase();
-                    const nameB = (b.homeTeam || b.home || '').toLowerCase();
-                    return nameA.localeCompare(nameB);
-                });
-            } else {
-                // 'scraped' order: keep original Visual Scraped order
-            }
-        });
-        
-        // Step 5: Perform row-by-row position analysis
-        const positionPatterns = [];
-        const numPositions = expectedMatchCount;
-        
-        for (let pos = 0; pos < numPositions; pos++) {
-            console.log(`[DEBUG] [Patterns] Analysing position ${pos + 1}/${numPositions}...`);
-            
-            // Build sequence of outcomes for this position across all sorted rounds
-            const history = [];
-            
-            validRounds.forEach(round => {
-                const match = round.matches[pos];
-                const score = match.score.replace('-', ':').trim();
-                const [hg, ag] = score.split(':').map(Number);
-                
-                let outcome = 'D';
-                if (hg > ag) outcome = 'H';
-                else if (hg < ag) outcome = 'A';
-                
-                history.push({
-                    date: match.date,
-                    time: match.time,
-                    gameId: match.gameId,
-                    homeTeam: match.homeTeam || match.home,
-                    awayTeam: match.awayTeam || match.away,
-                    score,
-                    outcome
-                });
-            });
-            
-            // Analyze statistics
-            const totalCount = history.length;
-            if (totalCount === 0) continue;
-            
-            // A. Streak analysis backwards from newest (index history.length - 1)
-            let currentOutcome = history[totalCount - 1].outcome;
-            let currentStreak = 0;
-            for (let i = totalCount - 1; i >= 0; i--) {
-                if (history[i].outcome === currentOutcome) {
-                    currentStreak++;
-                } else {
-                    break;
-                }
-            }
-            
-            // B. Historical longest streaks
-            let maxHStreak = 0, maxAStreak = 0, maxDStreak = 0;
-            let curH = 0, curA = 0, curD = 0;
-            
-            history.forEach(h => {
-                if (h.outcome === 'H') {
-                    curH++; maxHStreak = Math.max(maxHStreak, curH);
-                    curA = 0; curD = 0;
-                } else if (h.outcome === 'A') {
-                    curA++; maxAStreak = Math.max(maxAStreak, curA);
-                    curH = 0; curD = 0;
-                } else {
-                    curD++; maxDStreak = Math.max(maxDStreak, curD);
-                    curH = 0; curA = 0;
-                }
-            });
-            
-            // C. Transition probabilities (Given outcome at R_t, what is outcome at R_t+1?)
-            const transitions = {
-                H: { H: 0, A: 0, D: 0, total: 0 },
-                A: { H: 0, A: 0, D: 0, total: 0 },
-                D: { H: 0, A: 0, D: 0, total: 0 }
-            };
-            
-            const bttsTransitions = {
-                GG: { GG: 0, NG: 0, total: 0 },
-                NG: { GG: 0, NG: 0, total: 0 }
-            };
-            
-            const over15Transitions = {
-                O15: { O15: 0, U15: 0, total: 0 },
-                U15: { O15: 0, U15: 0, total: 0 }
-            };
-            
-            const over25Transitions = {
-                O25: { O25: 0, U25: 0, total: 0 },
-                U25: { O25: 0, U25: 0, total: 0 }
-            };
-            
-            for (let i = 0; i < totalCount - 1; i++) {
-                // Outcome transitions
-                const cur = history[i].outcome;
-                const nxt = history[i + 1].outcome;
-                transitions[cur][nxt]++;
-                transitions[cur].total++;
-                
-                // BTTS transitions
-                const curParts = history[i].score.split(':').map(Number);
-                const curIsGG = curParts[0] > 0 && curParts[1] > 0;
-                const curKey = curIsGG ? 'GG' : 'NG';
-                
-                const nxtParts = history[i + 1].score.split(':').map(Number);
-                const nxtIsGG = nxtParts[0] > 0 && nxtParts[1] > 0;
-                const nxtKey = nxtIsGG ? 'GG' : 'NG';
-                
-                bttsTransitions[curKey][nxtKey]++;
-                bttsTransitions[curKey].total++;
-
-                // Over 1.5 & Over 2.5 transitions
-                const curGoals = curParts[0] + curParts[1];
-                const curIsOver15 = curGoals >= 2;
-                const curIsOver25 = curGoals >= 3;
-                
-                const nxtGoals = nxtParts[0] + nxtParts[1];
-                const nxtIsOver15 = nxtGoals >= 2;
-                const nxtIsOver25 = nxtGoals >= 3;
-                
-                const cur15Key = curIsOver15 ? 'O15' : 'U15';
-                const nxt15Key = nxtIsOver15 ? 'O15' : 'U15';
-                over15Transitions[cur15Key][nxt15Key]++;
-                over15Transitions[cur15Key].total++;
-                
-                const cur25Key = curIsOver25 ? 'O25' : 'U25';
-                const nxt25Key = nxtIsOver25 ? 'O25' : 'U25';
-                over25Transitions[cur25Key][nxt25Key]++;
-                over25Transitions[cur25Key].total++;
-            }
-            
-            // Convert transitions to percentages
-            const transitionPct = {};
-            Object.keys(transitions).forEach(outcome => {
-                const data = transitions[outcome];
-                transitionPct[outcome] = {
-                    H: data.total > 0 ? Math.round((data.H / data.total) * 100) : 0,
-                    A: data.total > 0 ? Math.round((data.A / data.total) * 100) : 0,
-                    D: data.total > 0 ? Math.round((data.D / data.total) * 100) : 0,
-                    totalCount: data.total
-                };
-            });
-            
-            const bttsTransitionPct = {};
-            Object.keys(bttsTransitions).forEach(key => {
-                const data = bttsTransitions[key];
-                bttsTransitionPct[key] = {
-                    GG: data.total > 0 ? Math.round((data.GG / data.total) * 100) : 0,
-                    NG: data.total > 0 ? Math.round((data.NG / data.total) * 100) : 0,
-                    totalCount: data.total
-                };
-            });
-
-            const over15TransitionPct = {};
-            Object.keys(over15Transitions).forEach(key => {
-                const data = over15Transitions[key];
-                over15TransitionPct[key] = {
-                    O15: data.total > 0 ? Math.round((data.O15 / data.total) * 100) : 0,
-                    U15: data.total > 0 ? Math.round((data.U15 / data.total) * 100) : 0,
-                    totalCount: data.total
-                };
-            });
-            
-            const over25TransitionPct = {};
-            Object.keys(over25Transitions).forEach(key => {
-                const data = over25Transitions[key];
-                over25TransitionPct[key] = {
-                    O25: data.total > 0 ? Math.round((data.O25 / data.total) * 100) : 0,
-                    U25: data.total > 0 ? Math.round((data.U25 / data.total) * 100) : 0,
-                    totalCount: data.total
-                };
-            });
-            
-            // D. Top recurring scores
-            const scoreCounts = {};
-            history.forEach(h => {
-                scoreCounts[h.score] = (scoreCounts[h.score] || 0) + 1;
-            });
-            const topScores = Object.entries(scoreCounts)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 5)
-                .map(([score, count]) => ({
-                    score,
-                    count,
-                    percent: Math.round((count / totalCount) * 100)
-                }));
-                
-            // E. Basic home/away win & draw counts
-            const hWins = history.filter(h => h.outcome === 'H').length;
-            const aWins = history.filter(h => h.outcome === 'A').length;
-            const draws = history.filter(h => h.outcome === 'D').length;
-            
-            // Both Teams To Score (BTTS) calculation
-            const bttsYes = history.filter(h => {
-                const parts = h.score.split(':').map(Number);
-                return parts[0] > 0 && parts[1] > 0;
-            }).length;
-            const bttsNo = totalCount - bttsYes;
-
-            // Over 1.5 & Over 2.5 counts
-            const over15Count = history.filter(h => {
-                const parts = h.score.split(':').map(Number);
-                return (parts[0] + parts[1]) >= 2;
-            }).length;
-            const over25Count = history.filter(h => {
-                const parts = h.score.split(':').map(Number);
-                return (parts[0] + parts[1]) >= 3;
-            }).length;
-            
-            // Next prediction based on transition probabilities of current outcome
-            const nextPredicted = { ...transitionPct[currentOutcome] };
-            let predictedOutcome = 'Home Win';
-            let predictedSymbol = 'H';
-            let maxProb = nextPredicted.H;
-            
-            if (nextPredicted.A > maxProb) {
-                maxProb = nextPredicted.A;
-                predictedOutcome = 'Away Win';
-                predictedSymbol = 'A';
-            }
-            if (nextPredicted.D > maxProb) {
-                maxProb = nextPredicted.D;
-                predictedOutcome = 'Draw';
-                predictedSymbol = 'D';
-            }
-            
-            positionPatterns.push({
-                position: pos,
-                positionLabel: `Match Position #${pos + 1}`,
-                currentStreak: {
-                    outcome: currentOutcome,
-                    streak: currentStreak,
-                    label: currentOutcome === 'H' ? 'Home Win' : currentOutcome === 'A' ? 'Away Win' : 'Draw'
-                },
-                longestStreaks: { H: maxHStreak, A: maxAStreak, D: maxDStreak },
-                transitionProbabilities: transitionPct,
-                bttsTransitionProbabilities: bttsTransitionPct,
-                over15TransitionProbabilities: over15TransitionPct,
-                over25TransitionProbabilities: over25TransitionPct,
-                topScores,
-                winLossDrawStats: {
-                    homeWins: hWins,
-                    homeWinPercent: Math.round((hWins / totalCount) * 100),
-                    awayWins: aWins,
-                    awayWinPercent: Math.round((aWins / totalCount) * 100),
-                    draws,
-                    drawPercent: Math.round((draws / totalCount) * 100),
-                    bttsYes,
-                    bttsYesPercent: Math.round((bttsYes / totalCount) * 100),
-                    bttsNo,
-                    bttsNoPercent: Math.round((bttsNo / totalCount) * 100),
-                    over15Percent: Math.round((over15Count / totalCount) * 100),
-                    over25Percent: Math.round((over25Count / totalCount) * 100),
-                    totalMatches: totalCount
-                },
-                nextPrediction: {
-                    outcome: predictedOutcome,
-                    symbol: predictedSymbol,
-                    probability: maxProb,
-                    currentOutcome
-                },
-                recentHistory: history.slice(-30).reverse() // Return last 30, newest first
-            });
-        }
-        
-        console.log('[DEBUG] [Patterns] Position analysis completed successfully.');
-        res.json({
-            success: true,
-            totalRounds: validRounds.length,
-            sortType,
-            rounds: validRounds.slice(-10).reverse().map(r => ({
-                key: r.key,
-                date: r.date,
-                time: r.time,
-                matches: r.matches.map(m => ({
-                    homeTeam: m.homeTeam || m.home,
-                    awayTeam: m.awayTeam || m.away,
-                    score: m.score
-                }))
-            })),
-            positionPatterns
-        });
-        
-    } catch (e) {
-        console.error('[DEBUG] [Local API] Pattern analysis failed:', e.message);
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
 // Local helper to compute positional row patterns
-function computeLocalPatterns(sortType = 'scraped', league = 'England League') {
-    if (!fs.existsSync(LOCAL_DB_PATH)) {
-        return { count: 0, totalRounds: 0, positionPatterns: [] };
-    }
+async function computeLocalPatterns(sortType = 'scraped', league = 'England League') {
     const targetDbLeague = toDbLeague(league);
-    const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+    const allMatches = await getMatchesFromDb();
     const leagueMatches = allMatches.filter(m => 
         (toDbLeague(m.league) === targetDbLeague) && 
         m.date && m.time && m.score
@@ -4999,6 +4669,40 @@ function computeLocalPatterns(sortType = 'scraped', league = 'England League') {
             return (parts[0] + parts[1]) >= 3;
         }).length;
         
+        const currentOutcomeTrans = transitionPct[currentOutcome] || { H: 33, D: 33, A: 33 };
+        let predictedOutcome = 'H';
+        let maxProb = currentOutcomeTrans.H || 0;
+        
+        if ((currentOutcomeTrans.D || 0) > maxProb) {
+            predictedOutcome = 'D';
+            maxProb = currentOutcomeTrans.D;
+        }
+        if ((currentOutcomeTrans.A || 0) > maxProb) {
+            predictedOutcome = 'A';
+            maxProb = currentOutcomeTrans.A;
+        }
+        
+        const nextPrediction = {
+            outcome: predictedOutcome,
+            symbol: predictedOutcome,
+            probability: maxProb,
+            currentOutcome
+        };
+        
+        const scoreCounts = {};
+        history.forEach(h => {
+            if (h.score) {
+                scoreCounts[h.score] = (scoreCounts[h.score] || 0) + 1;
+            }
+        });
+        const topScores = Object.entries(scoreCounts)
+            .map(([score, count]) => ({
+                score,
+                count,
+                percent: totalCount > 0 ? Math.round((count / totalCount) * 100) : 0
+            }))
+            .sort((a, b) => b.count - a.count);
+        
         positionPatterns.push({
             position: pos,
             currentStreak: { outcome: currentOutcome, streak: currentStreak },
@@ -5015,7 +4719,10 @@ function computeLocalPatterns(sortType = 'scraped', league = 'England League') {
                 over15Percent: Math.round((over15Count / totalCount) * 100),
                 over25Percent: Math.round((over25Count / totalCount) * 100),
                 totalMatches: totalCount
-            }
+            },
+            nextPrediction,
+            topScores,
+            recentHistory: history.slice(-30).reverse()
         });
     }
     return { count: leagueMatches.length, totalRounds: validRounds.length, positionPatterns };
@@ -5211,7 +4918,7 @@ ${fixturesDataStr}
                 });
                 
                 try {
-                    savePredictionsToHistory(targetGroup.league, sortedMatches, predictions);
+                    await savePredictionsToHistory(targetGroup.league, sortedMatches, predictions);
                 } catch (saveErr) {
                     console.error(`[DEBUG] [Predict Live] [${leagueName}] Failed to save predictions to history (non-fatal):`, saveErr.message);
                 }
@@ -5286,30 +4993,7 @@ ${fixturesDataStr}
 // ─────────────────────────────────────────────────────────────────────────────
 const PREDICTIONS_HISTORY_PATH = path.join(__dirname, 'local_predictions_history.json');
 
-const abbreviateTeamBackend = (name) => {
-  if (!name) return '???';
-  const clean = name.trim();
-  const lower = clean.toLowerCase();
-  const teamMap = {
-    'arsenal': 'ARS', 'aston villa': 'AVL', 'chelsea': 'CHE', 'everton': 'EVE',
-    'liverpool': 'LIV', 'manchester city': 'MCI', 'man city': 'MCI', 'manchester united': 'MUN',
-    'man united': 'MUN', 'newcastle': 'NEW', 'tottenham': 'TOT', 'spurs': 'TOT',
-    'west ham': 'WHU', 'leicester': 'LEI', 'wolves': 'WOL', 'wolverhampton': 'WOL',
-    'southampton': 'SOU', 'bournemouth': 'BOU', 'crystal palace': 'CRY', 'brighton': 'BHA',
-    'brentford': 'BRE', 'fulham': 'FUL', 'nottingham': 'NOT', 'nottingham forest': 'NOT',
-    'sheffield utd': 'SHU', 'sheffield united': 'SHU', 'leeds': 'LEE', 'burnley': 'BUR',
-    'watford': 'WAT', 'norwich': 'NOR', 'luton': 'LUT', 'luton town': 'LUT', 'sunderland': 'SUN'
-  };
-  if (teamMap[lower]) return teamMap[lower];
-  const words = clean.split(/\s+/);
-  if (words.length > 1) {
-    const abbrev = words.map(w => w[0]).join('').toUpperCase();
-    if (abbrev.length >= 2 && abbrev.length <= 4) return abbrev;
-  }
-  return clean.substring(0, 3).toUpperCase();
-};
-
-function savePredictionsToHistory(league, matches, predictions) {
+async function savePredictionsToHistory(league, matches, predictions) {
     console.log('[DEBUG] [Predictions History] Saving predictions to history...');
     let history = [];
     if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
@@ -5365,83 +5049,33 @@ function savePredictionsToHistory(league, matches, predictions) {
     }
     
     fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify(history, null, 2), 'utf8');
-}
 
-function resolvePredictionOutcomes(predictions, date) {
-    if (!fs.existsSync(LOCAL_DB_PATH)) return predictions;
-    let finishedMatches = [];
+    // Also save to Supabase asynchronously
     try {
-        finishedMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
-    } catch (e) {
-        return predictions;
+        await savePredictionToDb(roundData);
+        console.log(`[DEBUG] [Predictions History] Successfully saved round predictions to database for ID: ${roundId}`);
+    } catch (dbErr) {
+        console.error(`[DEBUG] [Predictions History] Failed to save round predictions to database for ID: ${roundId}:`, dbErr.message);
     }
-    
-    return predictions.map(pred => {
-        const homeAbbr = abbreviateTeamBackend(pred.homeTeam || pred.match.split(' vs ')[0]);
-        const awayAbbr = abbreviateTeamBackend(pred.awayTeam || pred.match.split(' vs ')[1]);
-        
-        // Find matching finished result on the same date
-        const actual = finishedMatches.find(m => {
-            const dateMatch = m.date === date;
-            const mHomeAbbr = abbreviateTeamBackend(m.homeTeam || m.home);
-            const mAwayAbbr = abbreviateTeamBackend(m.awayTeam || m.away);
-            return dateMatch && mHomeAbbr === homeAbbr && mAwayAbbr === awayAbbr;
-        });
-        
-        if (actual && actual.score && /^\d+[-:]\d+$/.test(actual.score.trim())) {
-            const score = actual.score.replace('-', ':').trim();
-            const [hg, ag] = score.split(':').map(Number);
-            let actualOutcome = 'D';
-            if (hg > ag) actualOutcome = 'H';
-            else if (hg < ag) actualOutcome = 'A';
-            
-            const isGG = hg > 0 && ag > 0;
-            const actualBtts = isGG ? 'GG' : 'NG';
-            
-            const goals = hg + ag;
-            const actualOver15 = goals >= 2 ? 'Over' : 'Under';
-            const actualOver25 = goals >= 3 ? 'Over' : 'Under';
-            
-            return {
-                ...pred,
-                actualScore: score,
-                actualOutcome,
-                actualBtts,
-                actualOver15,
-                actualOver25,
-                outcomeCorrect: pred.predictedOutcome === actualOutcome,
-                bttsCorrect: pred.predictedBtts === actualBtts,
-                over15Correct: pred.predictedOver15 === actualOver15,
-                over25Correct: pred.predictedOver25 === actualOver25,
-                resolved: true
-            };
-        }
-        
-        return {
-            ...pred,
-            resolved: false
-        };
-    });
 }
 
 // 6. GET predictions history resolved against completed scores
-app.get('/api/local-vfootball/predictions-history', (req, res) => {
+app.get('/api/local-vfootball/predictions-history', async (req, res) => {
     console.log('[DEBUG] [Local API] GET /api/local-vfootball/predictions-history requested');
     const leagueQuery = req.query.league || 'England League';
     const targetDbLeague = toDbLeague(leagueQuery);
     
     try {
-        if (!fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
-            return res.json({ success: true, history: [] });
-        }
-        
-        const history = JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
+        const history = await getPredictionsHistoryFromDb();
         const filteredHistory = history.filter(h => toDbLeague(h.league) === targetDbLeague);
+        
+        // Fetch all finished matches from database once to resolve prediction outcomes
+        const finishedMatches = await getMatchesFromDb();
         
         const resolvedHistory = filteredHistory.map(round => {
             return {
                 ...round,
-                predictions: resolvePredictionOutcomes(round.predictions, round.date)
+                predictions: resolvePredictionOutcomes(round.predictions, round.date, finishedMatches)
             };
         });
         
@@ -5457,57 +5091,20 @@ app.get('/api/local-vfootball/predictions-history', (req, res) => {
 });
 
 // 7. POST wipe local results/predictions data (with optional league filter)
-app.post('/api/local-vfootball/wipe', express.json(), (req, res) => {
+app.post('/api/local-vfootball/wipe', express.json(), async (req, res) => {
     console.log('[DEBUG] [Local API] POST /api/local-vfootball/wipe requested');
     const { league, scope } = req.body; // league: e.g. "England League" or "all", scope: "all" | "results" | "history"
     
     try {
-        const targetDbLeague = league && league !== 'all' ? toDbLeague(league) : null;
-        let wipedResults = 0;
-        let wipedHistory = 0;
-
-        // Wipe local results
-        if (!scope || scope === 'all' || scope === 'results') {
-            if (fs.existsSync(LOCAL_DB_PATH)) {
-                const allMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
-                if (targetDbLeague) {
-                    const filteredMatches = allMatches.filter(m => toDbLeague(m.league) !== targetDbLeague);
-                    wipedResults = allMatches.length - filteredMatches.length;
-                    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(filteredMatches, null, 2), 'utf8');
-                    console.log(`[LocalDB] 🗑️ Wiped ${wipedResults} local results for league: ${targetDbLeague}`);
-                } else {
-                    wipedResults = allMatches.length;
-                    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify([], null, 2), 'utf8');
-                    console.log(`[LocalDB] 🗑️ Wiped all local results`);
-                }
-            }
-        }
-
-        // Wipe prediction history
-        if (!scope || scope === 'all' || scope === 'history') {
-            if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
-                const history = JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
-                if (targetDbLeague) {
-                    const filteredHistory = history.filter(h => toDbLeague(h.league) !== targetDbLeague);
-                    wipedHistory = history.length - filteredHistory.length;
-                    fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify(filteredHistory, null, 2), 'utf8');
-                    console.log(`[LocalDB] 🗑️ Wiped ${wipedHistory} prediction history entries for league: ${targetDbLeague}`);
-                } else {
-                    wipedHistory = history.length;
-                    fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify([], null, 2), 'utf8');
-                    console.log(`[LocalDB] 🗑️ Wiped all prediction history`);
-                }
-            }
-        }
-
+        const stats = await wipeDbData(league, scope);
         res.json({
             success: true,
-            message: `Successfully wiped ${wipedResults} matches and ${wipedHistory} prediction history entries for ${league === 'all' ? 'All Leagues' : league}.`,
-            wipedResults,
-            wipedHistory
+            message: `Successfully wiped ${stats.wipedResults} matches and ${stats.wipedHistory} prediction history entries for ${league === 'all' ? 'All Leagues' : league} in database and local fallback.`,
+            wipedResults: stats.wipedResults,
+            wipedHistory: stats.wipedHistory
         });
     } catch (err) {
-        console.error('[DEBUG] [Local API] Failed to wipe local storage:', err.message);
+        console.error('[DEBUG] [Local API] Failed to wipe database storage:', err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -5524,43 +5121,45 @@ async function runAutoScrapeResults() {
     
     isAutoScrapingActive = true;
     const today = new Date().toISOString().split('T')[0];
-    const targetLeague = LEAGUES_TO_SCRAPE[currentScrapeLeagueIndex];
-    currentScrapeLeagueIndex = (currentScrapeLeagueIndex + 1) % LEAGUES_TO_SCRAPE.length;
-    console.log(`[Auto Scrape] 🔄 Starting automatic results scraper for "${targetLeague}" on ${today}...`);
+    console.log(`[Auto Scrape] 🔄 Starting automatic results scraper for ALL leagues on ${today}...`);
     
     try {
         const { nativeCaptureLeagueResults } = require('./native_scraper');
         
-        let consecutiveDupesCount = 0;
-        const result = await nativeCaptureLeagueResults(targetLeague, today, {
-            onPageCaptured: async (err, matchRows, pageNum) => {
-                if (err) {
-                    console.error(`[Auto Scrape Page Error] Page ${pageNum}: ${err.message}`);
-                    return;
-                }
-                if (matchRows && matchRows.length > 0) {
-                    const stats = saveToLocalJson(matchRows);
-                    console.log(`[Auto Scrape Saved] Page ${pageNum}: Added ${stats.added} matches. Total local DB: ${stats.total}`);
-                    
-                    if (stats.added === 0 && stats.dupes > 0) {
-                        consecutiveDupesCount++;
-                        if (consecutiveDupesCount >= 3) {
-                            console.log(`[Auto Scrape] 🛑 All matches on 3 consecutive pages already exist in storage. Halting early to conserve resources.`);
-                            return { stop: true };
-                        } else {
-                            console.log(`[Auto Scrape] Page ${pageNum} has only duplicates (consecutive: ${consecutiveDupesCount}/3). Continuing lookahead to backfill any potential missing matches in between...`);
+        for (const targetLeague of LEAGUES_TO_SCRAPE) {
+            console.log(`[Auto Scrape] 🔄 Scraping results for league: "${targetLeague}"...`);
+            let consecutiveDupesCount = 0;
+            const result = await nativeCaptureLeagueResults(targetLeague, today, {
+                onPageCaptured: async (err, matchRows, pageNum) => {
+                    if (err) {
+                        console.error(`[Auto Scrape Page Error] [${targetLeague}] Page ${pageNum}: ${err.message}`);
+                        return;
+                    }
+                    if (matchRows && matchRows.length > 0) {
+                        // Save using saveMatchesToDb (Supabase + local JSON fallback + autoResolve)
+                        const stats = await saveMatchesToDb(matchRows);
+                        console.log(`[Auto Scrape Saved] [${targetLeague}] Page ${pageNum}: Added ${stats.added} matches. Total DB: ${stats.total}`);
+                        
+                        if (stats.added === 0 && stats.dupes > 0) {
+                            consecutiveDupesCount++;
+                            if (consecutiveDupesCount >= 3) {
+                                console.log(`[Auto Scrape] 🛑 [${targetLeague}] All matches on 3 consecutive pages already exist in storage. Halting early to conserve resources.`);
+                                return { stop: true };
+                            } else {
+                                console.log(`[Auto Scrape] [${targetLeague}] Page ${pageNum} has only duplicates (consecutive: ${consecutiveDupesCount}/3). Continuing lookahead...`);
+                            }
+                        } else if (stats.added > 0) {
+                            consecutiveDupesCount = 0;
                         }
-                    } else if (stats.added > 0) {
-                        consecutiveDupesCount = 0; // Reset counter when a new match is successfully written
                     }
                 }
+            });
+            
+            if (result.success) {
+                console.log(`[Auto Scrape] ✅ Successfully completed automatic scrape for "${targetLeague}". Total pages: ${result.totalPages}`);
+            } else {
+                console.error(`[Auto Scrape Failed] [${targetLeague}] Scraper returned failure: ${result.error}`);
             }
-        });
-        
-        if (result.success) {
-            console.log(`[Auto Scrape] ✅ Successfully completed automatic scrape. Total pages: ${result.totalPages}`);
-        } else {
-            console.error(`[Auto Scrape Failed] Scraper returned failure: ${result.error}`);
         }
     } catch (err) {
         console.error(`[Auto Scrape Fatal Error] Background scraper failed:`, err.message);

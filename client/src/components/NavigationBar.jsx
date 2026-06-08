@@ -32,13 +32,7 @@ export default function NavigationBar() {
 
   const navItems = [
     { path: '/', label: 'Pattern Intel', icon: '🔮' },
-    { path: '/advanced-engine', label: 'Advanced AI Engine', icon: '⚡' },
-    { path: '/daily-tips', label: 'Daily Tips', icon: '🧠' },
-    { path: '/behaviour', label: 'Behaviour', icon: '🧬' },
-    { path: '/results', label: 'Dashboard', icon: '📋' },
-    { path: '/local-engine', label: 'Local Store', icon: '💾' },
-    { path: '/api-console', label: 'API Console', icon: '💻' },
-    { path: '/admin', label: 'Admin', icon: '⚙️' }
+    { path: '/predictions', label: 'Live Predictor & History', icon: '⚡' }
   ];
 
   // Auto-close menu when route changes

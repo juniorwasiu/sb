@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import html2canvas from 'html2canvas';
+
 import './../index.css';
 
 // Team name abbreviation map for virtual premier league teams
@@ -144,27 +144,11 @@ export default function LocalPatternEngine() {
   // Custom sequence search inputs
   const [searchSeq, setSearchSeq] = useState(['H', 'H']);
   const [searchResults, setSearchResults] = useState(null);
-
-  // Live DeepSeek predictions state
-  const [predicting, setPredicting] = useState(false);
-  const [predictionResults, setPredictionResults] = useState(null);
-  const [predictionError, setPredictionError] = useState(null);
-  const predictionsRef = useRef(null);
-  const [capturing, setCapturing] = useState(false);
-
   // Auto-update / Polling states (Defaults to 120s, doubled)
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(120);
   const [countdown, setCountdown] = useState(120);
   const [manualTriggering, setManualTriggering] = useState(false);
-
-  // View states: 'live' | 'history'
-  const [activeView, setActiveView] = useState('live');
-  const [historyList, setHistoryList] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [historyError, setHistoryError] = useState(null);
-  const [predictionCategoryTab, setPredictionCategoryTab] = useState('by-league'); // 'by-league' | 'best-picks' | 'best-single'
-
   // League tabs list
   const leagueTabs = [
     { id: 'England League', label: 'England 🏴󠁧󠁢󠁥󠁮󠁧󠁿', emoji: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
@@ -191,8 +175,6 @@ export default function LocalPatternEngine() {
   const handleLeagueTabChange = (leagueId) => {
     setSelectedLeague(leagueId);
     logMessage(`🔌 Switched active league to: ${leagueId}`);
-    setPredictionResults(null);
-    setPredictionError(null);
   };
 
   // Wipe local results / history
@@ -214,9 +196,6 @@ export default function LocalPatternEngine() {
         setWipeWroteConfirm('');
         // Refresh local views
         await fetchPatterns(sortType, selectedLeague);
-        if (activeView === 'history') {
-          await fetchPredictionsHistory(selectedLeague);
-        }
       } else {
         throw new Error(data.message || 'Server rejected wipe request');
       }
@@ -269,38 +248,7 @@ export default function LocalPatternEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortType, selectedLeague]);
 
-  // Fetch prediction history logs from backend
-  const fetchPredictionsHistory = async (league = selectedLeague) => {
-    setLoadingHistory(true);
-    setHistoryError(null);
-    logMessage(`📜 Querying predictions history logs for ${league} from backend database...`);
-    
-    try {
-      const response = await fetch(`/api/local-vfootball/predictions-history?league=${encodeURIComponent(league)}`);
-      const data = await response.json();
-      
-      if (data.success) {
-        setHistoryList(data.history || []);
-        logMessage(`✅ Successfully loaded ${data.history?.length || 0} rounds of prediction history.`);
-      } else {
-        throw new Error(data.error || 'Failed to fetch predictions history');
-      }
-    } catch (err) {
-      console.error('[History Fetch Error]', err);
-      setHistoryError(err.message || 'Failed to load predictions history.');
-      logMessage(`❌ HISTORY ERROR: ${err.message || 'Failed to load predictions history.'}`);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
 
-  // Fetch history when view is toggled to history or league changes
-  useEffect(() => {
-    if (activeView === 'history') {
-      fetchPredictionsHistory(selectedLeague);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView, selectedLeague]);
 
   // Polling / Auto-Update Effect
   useEffect(() => {
@@ -500,76 +448,7 @@ export default function LocalPatternEngine() {
     logMessage(`🔍 Toggled filter on Position #${pos + 1} trace to: ${val.toUpperCase()}`);
   };
 
-  // Trigger DeepSeek live list predictions
-  // Trigger DeepSeek live list predictions
-  const handlePredictLiveList = async (predictAll = false) => {
-    if (predicting) return;
-    setPredicting(true);
-    setPredictionError(null);
-    setPredictionResults(null);
-    
-    const targetQuery = predictAll ? 'all' : selectedLeague;
-    logMessage(`🔮 Initiating DeepSeek Live List AI Predictor for ${predictAll ? 'ALL LEAGUES' : selectedLeague}...`);
-    logMessage(`🌐 Scraping real-time ${predictAll ? 'all active' : selectedLeague} live list on SportyBet...`);
-    
-    try {
-      const response = await fetch(`/api/local-vfootball/predict-live?league=${encodeURIComponent(targetQuery)}`);
-      const data = await response.json();
-      
-      if (data.success) {
-        if (data.predictions && data.predictions.length > 0) {
-          setPredictionResults(data);
-          logMessage(`🎯 DeepSeek generated predictions for ${predictAll ? 'ALL active leagues' : 'round: ' + data.league}`);
-          logMessage('🔮 Predictions successfully processed and mapped to visual positions!');
-          setPredictionCategoryTab('by-league'); // Reset to default view tab
-        } else {
-          setPredictionError(data.message || `No ${predictAll ? 'active' : selectedLeague} live matches found.`);
-          logMessage(`⚠️ PREDICTION WARNING: ${data.message || 'No matches found.'}`);
-        }
-      } else {
-        throw new Error(data.error || 'Failed to generate predictions');
-      }
-    } catch (err) {
-      console.error('[Predict Live Error]', err);
-      setPredictionError(err.message || 'DeepSeek AI execution failed.');
-      logMessage(`❌ PREDICTION FAILED: ${err.message}`);
-    } finally {
-      setPredicting(false);
-    }
-  };
 
-  // Capture high-resolution PNG screenshot of predictions element
-  const handleCaptureScreenshot = async () => {
-    if (!predictionsRef.current || capturing) return;
-    setCapturing(true);
-    logMessage('📸 Initiating high-resolution canvas capture of predictions...');
-    
-    try {
-      // Small pause to allow UI interactions to settle
-      await new Promise(r => setTimeout(r, 100));
-      
-      const canvas = await html2canvas(predictionsRef.current, {
-        useCORS: true,
-        backgroundColor: '#0A0F1E', // Match theme background color
-        scale: 2, // Retina resolution multiplier (super sharp!)
-        logging: false
-      });
-      
-      const dataUrl = canvas.toDataURL('image/png');
-      const link = document.createElement('a');
-      const filename = `predictions_${predictionResults?.league ? predictionResults.league.replace(/[^a-zA-Z0-9]/g, '_') : 'round'}.png`;
-      link.download = filename;
-      link.href = dataUrl;
-      link.click();
-      
-      logMessage(`✅ Screenshot saved successfully as: ${filename}`);
-    } catch (err) {
-      console.error('[Capture Error]', err);
-      logMessage(`❌ SCREENSHOT FAILED: ${err.message}`);
-    } finally {
-      setCapturing(false);
-    }
-  };
 
   // Helper color map for outcomes
   const getOutcomeColor = (out) => {
@@ -578,213 +457,9 @@ export default function LocalPatternEngine() {
     return '#FFD700'; // gold
   };
 
-  const getLeagueBadge = (lg) => {
-    if (!lg) return null;
-    const lower = lg.toLowerCase();
-    if (lower.includes('england')) return '🏴󠁧󠁢󠁥󠁮󠁧󠁿 ENG';
-    if (lower.includes('spain')) return '🇪🇸 ESP';
-    if (lower.includes('italy')) return '🇮🇹 ITA';
-    if (lower.includes('germany')) return '🇩🇪 GER';
-    if (lower.includes('france')) return '🇫🇷 FRA';
-    return lg.replace(' League', '').substring(0, 3).toUpperCase();
-  };
 
-  const renderPredictionCard = (pred, isBestSingle = false) => {
-    const matchStatus = pred.status || 'UPCOMING';
-    const cardLeague = pred.league || predictionResults?.league || '';
-    
-    return (
-      <div 
-        key={`${cardLeague}_${pred.position}`} 
-        className="glass-panel hover-lift" 
-        style={{ 
-          padding: isBestSingle ? '20px' : '16px', 
-          border: isBestSingle ? '2px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.06)',
-          borderLeft: isBestSingle ? '8px solid var(--accent-gold)' : `4px solid ${pred.color || 'var(--accent-neon)'}`,
-          display: 'flex', 
-          flexDirection: 'column', 
-          gap: '10px',
-          background: 'rgba(0,0,0,0.15)',
-          boxShadow: isBestSingle ? '0 10px 30px rgba(255,215,0,0.15)' : '0 4px 10px rgba(0,0,0,0.3)',
-          width: '100%'
-        }}
-      >
-        {/* Card Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ 
-              background: isBestSingle ? 'rgba(255, 215, 0, 0.15)' : `${pred.color || 'var(--accent-neon)'}15`, 
-              color: isBestSingle ? 'var(--accent-gold)' : (pred.color || 'var(--accent-neon)'), 
-              width: '24px', 
-              height: '24px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              borderRadius: '50%', 
-              fontWeight: 800, 
-              border: `1px solid ${isBestSingle ? 'var(--accent-gold)' : (pred.color || 'var(--accent-neon)')}30`,
-              fontSize: '0.74rem'
-            }}>
-              {pred.position + 1}
-            </span>
-            
-            {/* League Badge */}
-            {cardLeague && (
-              <span style={{
-                fontSize: '0.62rem',
-                background: 'rgba(255, 255, 255, 0.05)',
-                color: 'white',
-                padding: '2px 6px',
-                borderRadius: '4px',
-                border: '1px solid rgba(255,255,255,0.1)',
-                fontWeight: 'bold'
-              }}>
-                {getLeagueBadge(cardLeague)}
-              </span>
-            )}
 
-            <span style={{ 
-              fontSize: '0.62rem', 
-              background: matchStatus === 'IN-PLAY' ? 'rgba(255, 51, 85, 0.15)' : 'rgba(255, 255, 255, 0.05)', 
-              color: matchStatus === 'IN-PLAY' ? 'var(--accent-live)' : 'var(--text-secondary)',
-              padding: '2px 6px', 
-              borderRadius: '4px',
-              fontWeight: 'bold',
-              border: matchStatus === 'IN-PLAY' ? '1px solid rgba(255, 51, 85, 0.2)' : '1px solid rgba(255,255,255,0.05)'
-            }}>
-              {matchStatus}
-            </span>
-            {pred.time && (
-              <span style={{
-                fontSize: '0.62rem',
-                background: 'rgba(255, 255, 255, 0.04)',
-                color: 'var(--accent-neon)',
-                padding: '2px 6px',
-                borderRadius: '4px',
-                border: '1px solid rgba(0, 229, 255, 0.2)',
-                fontFamily: 'monospace',
-                fontWeight: 'bold'
-              }}>
-                🕒 {pred.time}
-              </span>
-            )}
-          </div>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Confidence:</span>
-            <strong style={{ 
-              fontSize: '0.85rem', 
-              color: pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA',
-              textShadow: `0 0 6px ${pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA'}40`
-            }}>{pred.confidence}%</strong>
-          </div>
-        </div>
 
-        {/* Match Name */}
-        <strong style={{ color: 'white', fontSize: '0.94rem' }}>
-          {pred.match}
-        </strong>
-
-        {/* DeepSeek Prediction Badges */}
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {/* Prediction Outcome */}
-          <div style={{ 
-            background: `${pred.color || 'var(--accent-neon)'}10`,
-            border: `1px solid ${pred.color || 'var(--accent-neon)'}40`,
-            color: pred.color || 'var(--accent-neon)',
-            padding: '6px 12px',
-            borderRadius: '6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '0.8rem',
-            fontWeight: 'bold',
-            boxShadow: `0 0 8px ${pred.color || 'var(--accent-neon)'}10`
-          }}>
-            <span>Outcome:</span>
-            <span style={{ fontSize: '0.8rem' }}>
-              {pred.predictedOutcome === 'H' ? '🏠 Home Win (H)' : pred.predictedOutcome === 'A' ? '✈️ Away Win (A)' : '🤝 Draw (D)'}
-            </span>
-          </div>
-
-          {/* Prediction BTTS */}
-          <div style={{ 
-            background: pred.predictedBtts === 'GG' ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-            border: pred.predictedBtts === 'GG' ? '1px solid #00FF88' : '1px solid rgba(255,255,255,0.08)',
-            color: pred.predictedBtts === 'GG' ? '#00FF88' : 'white',
-            padding: '6px 12px',
-            borderRadius: '6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '0.8rem',
-            fontWeight: 'bold'
-          }}>
-            <span>BTTS:</span>
-            <span>
-              {pred.predictedBtts === 'GG' ? '⚽ GG (Yes)' : '🚫 NG (No)'}
-            </span>
-          </div>
-
-          {/* Prediction Over 1.5 */}
-          {pred.predictedOver15 && (
-            <div style={{ 
-              background: pred.predictedOver15 === 'Over' ? 'rgba(0, 229, 255, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-              border: pred.predictedOver15 === 'Over' ? '1px solid #00E5FF' : '1px solid rgba(255,255,255,0.08)',
-              color: pred.predictedOver15 === 'Over' ? '#00E5FF' : 'white',
-              padding: '6px 12px',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '0.8rem',
-              fontWeight: 'bold'
-            }}>
-              <span>O/U 1.5:</span>
-              <span>
-                {pred.predictedOver15 === 'Over' ? '⚽ Over 1.5' : '🚫 Under 1.5'}
-              </span>
-            </div>
-          )}
-
-          {/* Prediction Over 2.5 */}
-          {pred.predictedOver25 && (
-            <div style={{ 
-              background: pred.predictedOver25 === 'Over' ? 'rgba(167, 139, 250, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-              border: pred.predictedOver25 === 'Over' ? '1px solid #A78BFA' : '1px solid rgba(255,255,255,0.08)',
-              color: pred.predictedOver25 === 'Over' ? '#A78BFA' : 'white',
-              padding: '6px 12px',
-              borderRadius: '6px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '0.8rem',
-              fontWeight: 'bold'
-            }}>
-              <span>O/U 2.5:</span>
-              <span>
-                {pred.predictedOver25 === 'Over' ? '⚽ Over 2.5' : '🚫 Under 2.5'}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* DeepSeek Reasoning */}
-        <div style={{ 
-          background: 'rgba(255,255,255,0.02)', 
-          padding: '10px 12px', 
-          borderRadius: '6px', 
-          fontSize: '0.74rem', 
-          color: 'var(--text-secondary)',
-          lineHeight: '1.4',
-          border: '1px solid rgba(255,255,255,0.03)',
-          fontStyle: 'italic'
-        }}>
-          🧠 <strong style={{ color: 'var(--accent-neon)' }}>DeepSeek AI Analysis:</strong> "{pred.reasoning}"
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="pattern-engine-root">
@@ -835,7 +510,7 @@ export default function LocalPatternEngine() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span>⚙️</span>
-              <span>Controls: {selectedLeague.replace(' League', '')} ({activeView === 'live' ? 'Live Predictor' : 'History'})</span>
+              <span>Controls: {selectedLeague.replace(' League', '')}</span>
             </div>
             <span>{mobileMenuOpen ? '▲ CLOSE' : '▼ EXPAND MENU'}</span>
           </button>
@@ -892,54 +567,6 @@ export default function LocalPatternEngine() {
                   })}
                 </div>
               </div>
-
-              <div>
-                <label style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold', letterSpacing: '0.05em' }}>
-                  🔮 SELECT VIEW MODE
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button 
-                    onClick={() => {
-                      setActiveView('live');
-                      setMobileMenuOpen(false);
-                    }}
-                    style={{
-                      flex: 1,
-                      background: activeView === 'live' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'rgba(255,255,255,0.02)',
-                      color: activeView === 'live' ? '#000' : 'var(--text-secondary)',
-                      border: 'none',
-                      padding: '10px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      fontWeight: '900',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s'
-                    }}
-                  >
-                    Live Predictor
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setActiveView('history');
-                      setMobileMenuOpen(false);
-                    }}
-                    style={{
-                      flex: 1,
-                      background: activeView === 'history' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'rgba(255,255,255,0.02)',
-                      color: activeView === 'history' ? '#000' : 'var(--text-secondary)',
-                      border: 'none',
-                      padding: '10px',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
-                      fontWeight: '900',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s'
-                    }}
-                  >
-                    History Log
-                  </button>
-                </div>
-              </div>
             </div>
           )}
         </div>
@@ -978,53 +605,10 @@ export default function LocalPatternEngine() {
             })}
           </div>
 
-          {/* VIEW SEGMENT SELECTOR (DESKTOP) */}
-          <div style={{ display: 'flex', gap: '12px', background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '12px', border: '1px solid var(--glass-border)', width: 'fit-content', marginBottom: '8px' }}>
-            <button 
-              onClick={() => setActiveView('live')}
-              style={{
-                background: activeView === 'live' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'transparent',
-                color: activeView === 'live' ? '#000' : 'var(--text-secondary)',
-                border: 'none',
-                padding: '10px 20px',
-                borderRadius: '8px',
-                fontSize: '0.85rem',
-                fontWeight: '900',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: activeView === 'live' ? '0 4px 12px rgba(0, 229, 255, 0.2)' : 'none'
-              }}
-            >
-              🔮 Live Predictor
-            </button>
-            <button 
-              onClick={() => setActiveView('history')}
-              style={{
-                background: activeView === 'history' ? 'linear-gradient(135deg, #00E5FF, #00FF88)' : 'transparent',
-                color: activeView === 'history' ? '#000' : 'var(--text-secondary)',
-                border: 'none',
-                padding: '10px 20px',
-                borderRadius: '8px',
-                fontSize: '0.85rem',
-                fontWeight: '900',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: activeView === 'history' ? '0 4px 12px rgba(0, 229, 255, 0.2)' : 'none'
-              }}
-            >
-              📜 Prediction History
-            </button>
-          </div>
+
         </>
       )}
 
-            {activeView === 'live' && (
         <>
           {/* DETAILED "HOW IT WORKS" GUIDELINES SECTION */}
       <section className="glass-panel ultra-glass hud-panel" style={{ padding: '24px', borderLeft: '4px solid var(--accent-neon)' }}>
@@ -1063,13 +647,13 @@ export default function LocalPatternEngine() {
         <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'between' }}>
           <div>
             <h3 style={{ fontSize: '0.9rem', color: 'white', margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>💾</span> Local JSON Database
+              <span>🗄️</span> Supabase & Local Database
             </h3>
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.8rem', marginBottom: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>File Path</span>
-                <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>local_results.json</span>
+                <span style={{ color: 'var(--text-secondary)' }}>Storage Mode</span>
+                <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>Supabase + Fallback</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Total Records</span>
@@ -1159,7 +743,7 @@ export default function LocalPatternEngine() {
             }}
             className="hover-lift"
           >
-            🗑️ Wipe Local Store
+            🗑️ Wipe Database & Local
           </button>
         </div>
 
@@ -1222,7 +806,7 @@ export default function LocalPatternEngine() {
                 boxShadow: (scraping || manualTriggering) ? 'none' : '0 4px 15px rgba(0, 229, 255, 0.25)', transition: 'all 0.2s'
               }}
             >
-              {scraping ? '⏳ Scraping to Local Storage...' : '🚀 Scrape to Local Storage'}
+              {scraping ? '⏳ Scraping to Supabase...' : '🚀 Scrape to Supabase'}
             </button>
 
             <button 
@@ -1382,231 +966,7 @@ export default function LocalPatternEngine() {
           </div>
         </div>
 
-        {/* REAL-TIME LIVE LIST AI PREDICTOR (DEEPSEEK) */}
-        <section className="glass-panel ultra-glass hud-panel" style={{ padding: '24px', borderLeft: '4px solid var(--accent-neon)', display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', border: '1px solid rgba(0,229,255,0.2)' }}>
-          
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-            <div>
-              <h3 style={{ margin: '0 0 4px 0', color: 'var(--accent-neon)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.2rem', fontWeight: 'bold' }}>
-                🔮 Real-Time Live List AI Predictor (DeepSeek)
-              </h3>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                Scrapes the active virtual football live list on SportyBet and uses DeepSeek Chat to analyze row positions and predict likely outcomes.
-              </p>
-            </div>
-            
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <button
-                onClick={() => handlePredictLiveList(false)}
-                disabled={predicting}
-                style={{
-                  background: predicting ? 'rgba(0, 229, 255, 0.2)' : 'rgba(255,255,255,0.03)',
-                  color: 'white',
-                  border: '1px solid var(--glass-border)',
-                  padding: '12px 20px',
-                  borderRadius: '8px',
-                  cursor: predicting ? 'not-allowed' : 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '0.85rem',
-                  transition: 'all 0.2s',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px'
-                }}
-                className="hover-lift"
-              >
-                {predicting ? (
-                  <>
-                    <span className="spinner spinner-small" style={{ display: 'inline-block', borderColor: '#fff', borderTopColor: 'transparent' }} />
-                    Analyzing {selectedLeague.replace(' League', '')}...
-                  </>
-                ) : (
-                  <>
-                    🤖 Predict {selectedLeague.replace(' League', '')}
-                  </>
-                )}
-              </button>
 
-              <button
-                onClick={() => handlePredictLiveList(true)}
-                disabled={predicting}
-                style={{
-                  background: predicting ? 'rgba(0, 229, 255, 0.2)' : 'linear-gradient(135deg, #00E5FF, #00FF88)',
-                  color: '#000',
-                  border: 'none',
-                  padding: '12px 24px',
-                  borderRadius: '8px',
-                  cursor: predicting ? 'not-allowed' : 'pointer',
-                  fontWeight: '900',
-                  fontSize: '0.88rem',
-                  boxShadow: predicting ? 'none' : '0 4px 15px rgba(0, 229, 255, 0.25)',
-                  transition: 'all 0.2s',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px'
-                }}
-                className="hover-lift"
-              >
-                {predicting ? (
-                  <>
-                    <span className="spinner spinner-small" style={{ display: 'inline-block', borderColor: '#000', borderTopColor: 'transparent' }} />
-                    Predicting All Leagues...
-                  </>
-                ) : (
-                  <>
-                    🔮 Predict All 5 Leagues
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* PREDICTOR ERROR / FALLBACK */}
-          {predictionError && (
-            <div style={{ background: 'rgba(255, 184, 0, 0.08)', border: '1px solid rgba(255, 184, 0, 0.3)', borderRadius: '8px', padding: '14px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <span style={{ fontSize: '1.3rem' }}>⚠️</span>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                <strong style={{ color: '#FFB800' }}>Active Match Round Status Warning:</strong> {predictionError}
-              </div>
-            </div>
-          )}
-
-          {/* ACTIVE PREDICTIONS BOARD */}
-          {predictionResults && predictionResults.predictions && predictionResults.predictions.length > 0 && (
-            <div ref={predictionsRef} style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px', background: 'rgba(10,15,30,0.6)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.02)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px', flexWrap: 'wrap', gap: '12px' }}>
-                <span style={{ fontSize: '0.78rem', color: 'var(--accent-neon)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  🎯 Predictions for Round: {predictionResults.isAll ? 'ALL ACTIVE LEAGUES' : predictionResults.league}
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <button
-                    onClick={handleCaptureScreenshot}
-                    disabled={capturing}
-                    style={{
-                      background: capturing ? 'rgba(0, 229, 255, 0.05)' : 'rgba(0, 229, 255, 0.1)',
-                      border: '1px solid var(--accent-neon)',
-                      color: 'var(--accent-neon)',
-                      padding: '6px 12px',
-                      borderRadius: '6px',
-                      fontSize: '0.74rem',
-                      cursor: capturing ? 'not-allowed' : 'pointer',
-                      fontWeight: 'bold',
-                      transition: 'all 0.2s',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      boxShadow: capturing ? 'none' : '0 0 10px rgba(0, 229, 255, 0.1)'
-                    }}
-                  >
-                    {capturing ? '⏳ Capturing...' : '📸 Take Screenshot'}
-                  </button>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    Model: DeepSeek Chat (deepseek-chat)
-                  </span>
-                </div>
-              </div>
-
-              {/* Category Tab Row */}
-              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', marginBottom: '8px', overflowX: 'auto' }}>
-                {[
-                  { id: 'by-league', label: 'League View 📁', count: predictionResults.predictions.length },
-                  { id: 'best-picks', label: 'Best Picks ⭐ (70%+ Conf)', count: predictionResults.predictions.filter(p => p.confidence >= 70).length },
-                  { id: 'best-single', label: 'Best Single Option 🎯', count: 1 }
-                ].map(tab => {
-                  const isSelected = predictionCategoryTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setPredictionCategoryTab(tab.id)}
-                      style={{
-                        background: isSelected ? 'rgba(0, 229, 255, 0.1)' : 'transparent',
-                        color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
-                        border: isSelected ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid transparent',
-                        padding: '6px 14px',
-                        borderRadius: '6px',
-                        fontSize: '0.78rem',
-                        fontWeight: isSelected ? 800 : 500,
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        whiteSpace: 'nowrap'
-                      }}
-                      className="hover-lift"
-                    >
-                      <span>{tab.label}</span>
-                      <span style={{ fontSize: '0.68rem', opacity: 0.6, background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: '4px' }}>
-                        {tab.count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Categorized Displays */}
-              {predictionCategoryTab === 'by-league' && (() => {
-                const grouped = {};
-                predictionResults.predictions.forEach(pred => {
-                  const l = pred.league || predictionResults.league || 'Unknown League';
-                  if (!grouped[l]) grouped[l] = [];
-                  grouped[l].push(pred);
-                });
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    {Object.entries(grouped).map(([leagueName, preds]) => (
-                      <div key={leagueName} style={{ display: 'flex', flexDirection: 'column', gap: '12px', border: '1px solid rgba(255,255,255,0.03)', padding: '16px', borderRadius: '10px', background: 'rgba(255,255,255,0.01)' }}>
-                        <h4 style={{ margin: '0 0 4px 0', color: 'white', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem' }}>
-                          <span>⚽</span> {leagueName} Round Predictions
-                        </h4>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                          {preds.map(pred => renderPredictionCard(pred))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              {predictionCategoryTab === 'best-picks' && (() => {
-                const bestPicks = predictionResults.predictions
-                  .filter(pred => pred.confidence >= 70)
-                  .sort((a, b) => b.confidence - a.confidence);
-                if (bestPicks.length === 0) {
-                  return (
-                    <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                      No matches met the 70% confidence threshold in this round.
-                    </div>
-                  );
-                }
-                return (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                    {bestPicks.map(pred => renderPredictionCard(pred))}
-                  </div>
-                );
-              })()}
-
-              {predictionCategoryTab === 'best-single' && (() => {
-                const bestSingle = predictionResults.predictions.reduce((prev, current) => 
-                  (prev && prev.confidence > current.confidence) ? prev : current, null
-                );
-                if (!bestSingle) return null;
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', gap: '16px', padding: '10px 0' }}>
-                    <div style={{ background: 'linear-gradient(135deg, rgba(255,215,0,0.08), rgba(0,229,255,0.08))', border: '1px solid var(--accent-gold)', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '550px', position: 'relative', overflow: 'hidden', boxShadow: '0 10px 35px rgba(255, 215, 0, 0.15)' }}>
-                      <div style={{ position: 'absolute', top: '-10px', right: '-10px', fontSize: '5rem', opacity: 0.05 }}>🎯</div>
-                      <div style={{ background: 'var(--accent-gold)', color: 'black', fontWeight: 900, fontSize: '0.7rem', padding: '3px 8px', borderRadius: '4px', width: 'fit-content', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '14px' }}>
-                        🏆 SINGLE BEST TIP
-                      </div>
-                      {renderPredictionCard(bestSingle, true)}
-                    </div>
-                  </div>
-                );
-              })()}
-
-            </div>
-          )}
-        </section>
 
         {/* POSITION CARDS LIST (FULL PAGE WIDTH CHASSIS) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
@@ -1616,9 +976,25 @@ export default function LocalPatternEngine() {
           
           {results && results.positionPatterns && results.positionPatterns.length > 0 ? (
             results.positionPatterns.map((posData) => {
-              const nextPred = posData.nextPrediction;
-              const stats = posData.winLossDrawStats;
-              const streak = posData.currentStreak;
+              console.log(`[LocalPatternEngine] Processing position pattern mapping for: ${posData.positionLabel || posData.position}`);
+              if (!posData.topScores) {
+                console.warn(`[LocalPatternEngine] Missing topScores property for position ${posData.positionLabel || posData.position}. Falling back to empty array.`);
+              }
+              const nextPred = posData.nextPrediction || { outcome: 'D', probability: 33, currentOutcome: 'D' };
+              const stats = posData.winLossDrawStats || {
+                homeWinPercent: 0,
+                awayWinPercent: 0,
+                drawPercent: 0,
+                bttsYesPercent: 0,
+                bttsNoPercent: 0,
+                over15Percent: 0,
+                over25Percent: 0,
+                totalMatches: 0
+              };
+              const streak = posData.currentStreak ? {
+                ...posData.currentStreak,
+                label: posData.currentStreak.label || (posData.currentStreak.outcome === 'H' ? 'Home Win' : posData.currentStreak.outcome === 'A' ? 'Away Win' : 'Draw')
+              } : { outcome: 'D', streak: 0, label: 'Draw' };
               const transitions = posData.transitionProbabilities || {
                 H: { H: 0, A: 0, D: 0, totalCount: 0 },
                 A: { H: 0, A: 0, D: 0, totalCount: 0 },
@@ -1639,8 +1015,8 @@ export default function LocalPatternEngine() {
               
               const currentFilter = traceFilters[posData.position] || 'all';
               
-              // Filter chronological trace based on option selected
-              const filteredHistory = posData.recentHistory.filter(h => {
+              // Filter chronological trace based on option selected (with fallback empty array)
+              const filteredHistory = (posData.recentHistory || []).filter(h => {
                 if (currentFilter === 'all') return true;
                 if (currentFilter === 'GG') {
                   const parts = h.score.split(':').map(Number);
@@ -1962,7 +1338,7 @@ export default function LocalPatternEngine() {
                         🔁 Top Recurring Scorelines
                       </span>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.78rem' }}>
-                        {posData.topScores.slice(0, 3).map((scoreItem, idx) => (
+                        {(posData.topScores || []).slice(0, 3).map((scoreItem, idx) => (
                           <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={{ fontFamily: 'monospace', color: 'white', fontWeight: 'bold' }}>{scoreItem.score}</span>
                             <div style={{ flex: 1, height: '4px', background: 'rgba(255,255,255,0.05)', margin: '0 8px', borderRadius: '2px', overflow: 'hidden' }}>
@@ -2301,7 +1677,7 @@ export default function LocalPatternEngine() {
               <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '12px' }}>📂</span>
               <strong>No Positional Patterns Computed</strong>
               <p style={{ margin: '8px 0 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Use the scraper in the control dashboard above to pull England League results into your local storage database!
+                Use the scraper in the control dashboard above to pull England League results into your Supabase database!
               </p>
             </div>
           )}
@@ -2309,250 +1685,6 @@ export default function LocalPatternEngine() {
 
       </main>
         </>
-      )}
-      {activeView === 'history' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', width: '100%' }}>
-          
-          {/* HISTORY SECTION HOW IT WORKS */}
-          <section className="glass-panel ultra-glass hud-panel" style={{ padding: '24px', borderLeft: '4px solid var(--accent-success)' }}>
-            <h3 style={{ margin: '0 0 12px 0', color: 'var(--accent-success)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              📖 Prediction History & Automatic Verification
-            </h3>
-            <p style={{ fontSize: '0.88rem', lineHeight: '1.6', color: 'var(--text-secondary)', margin: '0 0 14px 0' }}>
-              Every time you generate live predictions, they are stored in the local file database <code>local_predictions_history.json</code>.
-              When new finished match results are scraped into <code>local_results.json</code>, the history page automatically resolves those outcomes in real-time, verifying both **Outright Match Winners** and **BTTS (Both Teams To Score)** results.
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', fontSize: '0.82rem' }}>
-              <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <strong style={{ color: 'white', display: 'block', marginBottom: '6px' }}>✓ / ✗ Auto Verification</strong>
-                Outright winners and BTTS predictions are automatically matched against finished games on the corresponding round date using team name abbreviations.
-              </div>
-              <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <strong style={{ color: 'white', display: 'block', marginBottom: '6px' }}>📈 Round Accuracy Metrics</strong>
-                Shows percentage of correct predictions for each finished round to evaluate AI accuracy trends.
-              </div>
-            </div>
-          </section>
-
-          {/* LOADING AND ERROR BANNER */}
-          {loadingHistory && (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '40px', gap: '12px' }}>
-              <span className="spinner" />
-              <span style={{ color: 'var(--text-secondary)' }}>Loading prediction history...</span>
-            </div>
-          )}
-
-          {historyError && (
-            <div className="glass-panel" style={{ background: 'rgba(255, 51, 85, 0.08)', border: '1px solid rgba(255, 51, 85, 0.3)', borderLeft: '4px solid var(--accent-live)', padding: '20px' }}>
-              <strong style={{ color: 'var(--accent-live)', display: 'block', fontSize: '0.95rem' }}>Failed to Load History</strong>
-              <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{historyError}</p>
-            </div>
-          )}
-
-          {/* HISTORY LIST */}
-          {!loadingHistory && !historyError && (
-            historyList.length === 0 ? (
-              <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)', width: '100%' }}>
-                <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '12px' }}>📜</span>
-                <strong>No predictions history found.</strong>
-                <p style={{ margin: '8px 0 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                  Use the Live Predictor to generate AI predictions for active matches. They will appear here once saved!
-                </p>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '32px', width: '100%' }}>
-                {historyList.map((round) => {
-                  // Calculate accuracy
-                  const resolvedPreds = round.predictions.filter(p => p.resolved);
-                  const totalResolved = resolvedPreds.length;
-                  const correctOutcome = resolvedPreds.filter(p => p.outcomeCorrect).length;
-                  const correctBtts = resolvedPreds.filter(p => p.bttsCorrect).length;
-
-                  const outcomePct = totalResolved > 0 ? Math.round((correctOutcome / totalResolved) * 100) : null;
-                  const bttsPct = totalResolved > 0 ? Math.round((correctBtts / totalResolved) * 100) : null;
-
-                  return (
-                    <div 
-                      key={round.id} 
-                      className="glass-panel" 
-                      style={{ 
-                        padding: '24px', 
-                        border: '1px solid rgba(255,255,255,0.06)',
-                        borderLeft: `4px solid ${totalResolved > 0 ? 'var(--accent-success)' : 'var(--accent-gold)'}`,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '20px',
-                        width: '100%'
-                      }}
-                    >
-                      {/* Round Header */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
-                        <div>
-                          <strong style={{ color: 'white', fontSize: '1.15rem', display: 'block' }}>
-                            Round: {round.league}
-                          </strong>
-                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                            📅 Match Date: {round.date} | Captured: {new Date(round.capturedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        
-                        {/* Accuracy Badges */}
-                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                          {totalResolved > 0 ? (
-                            <>
-                              <div style={{ background: 'rgba(0, 255, 136, 0.08)', border: '1px solid rgba(0, 255, 136, 0.2)', padding: '6px 12px', borderRadius: '6px', fontSize: '0.78rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase' }}>Outcome Accuracy</span>
-                                <strong style={{ color: 'var(--accent-success)', fontSize: '1.05rem' }}>{correctOutcome}/{totalResolved} ({outcomePct}%)</strong>
-                              </div>
-                              <div style={{ background: 'rgba(0, 255, 136, 0.08)', border: '1px solid rgba(0, 255, 136, 0.2)', padding: '6px 12px', borderRadius: '6px', fontSize: '0.78rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase' }}>BTTS Accuracy</span>
-                                <strong style={{ color: 'var(--accent-success)', fontSize: '1.05rem' }}>{correctBtts}/{totalResolved} ({bttsPct}%)</strong>
-                              </div>
-                            </>
-                          ) : (
-                            <div style={{ background: 'rgba(255, 215, 0, 0.08)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '8px 14px', borderRadius: '6px', fontSize: '0.8rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
-                              ⏳ Pending Match Completion
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Prediction Cards Grid */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                        {round.predictions.map((pred) => {
-                          return (
-                            <div 
-                              key={pred.position} 
-                              className="glass-panel" 
-                              style={{ 
-                                padding: '16px', 
-                                border: '1px solid rgba(255,255,255,0.04)',
-                                background: 'rgba(0,0,0,0.15)',
-                                display: 'flex', 
-                                flexDirection: 'column', 
-                                gap: '12px'
-                              }}
-                            >
-                              {/* Position & Time */}
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <span style={{ 
-                                    background: 'rgba(255,255,255,0.06)', 
-                                    color: 'white', 
-                                    width: '22px', 
-                                    height: '22px', 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    justifyContent: 'center', 
-                                    borderRadius: '50%', 
-                                    fontWeight: 800, 
-                                    fontSize: '0.7rem'
-                                  }}>
-                                    {pred.position + 1}
-                                  </span>
-                                  {pred.time && (
-                                    <span style={{ fontSize: '0.62rem', background: 'rgba(255, 255, 255, 0.04)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace' }}>
-                                      🕒 {pred.time}
-                                    </span>
-                                  )}
-                                </div>
-                                <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-                                  Conf: <strong style={{ color: 'white' }}>{pred.confidence}%</strong>
-                                </span>
-                              </div>
-
-                              {/* Match Title */}
-                              <strong style={{ color: 'white', fontSize: '0.9rem' }}>
-                                {pred.match}
-                              </strong>
-
-                              {/* Prediction & Outcome Badges */}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                
-                                {/* Outcome Verification */}
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '6px', fontSize: '0.78rem' }}>
-                                  <div>
-                                    <span style={{ color: 'var(--text-secondary)' }}>Outcome: </span>
-                                    <strong style={{ color: getOutcomeColor(pred.predictedOutcome) }}>{pred.predictedOutcome}</strong>
-                                  </div>
-                                  {pred.resolved ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Actual: <strong>{pred.actualOutcome}</strong></span>
-                                      <span style={{ 
-                                        color: pred.outcomeCorrect ? 'var(--accent-success)' : 'var(--accent-live)',
-                                        fontWeight: 'bold',
-                                        background: pred.outcomeCorrect ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 51, 85, 0.1)',
-                                        padding: '2px 6px',
-                                        borderRadius: '4px',
-                                        fontSize: '0.7rem'
-                                      }}>
-                                        {pred.outcomeCorrect ? '✓ OK' : '✗ ERR'}
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <span style={{ color: 'var(--accent-gold)', fontSize: '0.7rem' }}>Pending</span>
-                                  )}
-                                </div>
-
-                                {/* BTTS Verification */}
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '6px', fontSize: '0.78rem' }}>
-                                  <div>
-                                    <span style={{ color: 'var(--text-secondary)' }}>BTTS: </span>
-                                    <strong style={{ color: pred.predictedBtts === 'GG' ? 'var(--accent-success)' : 'white' }}>{pred.predictedBtts}</strong>
-                                  </div>
-                                  {pred.resolved ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Actual: <strong>{pred.actualBtts}</strong></span>
-                                      <span style={{ 
-                                        color: pred.bttsCorrect ? 'var(--accent-success)' : 'var(--accent-live)',
-                                        fontWeight: 'bold',
-                                        background: pred.bttsCorrect ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 51, 85, 0.1)',
-                                        padding: '2px 6px',
-                                        borderRadius: '4px',
-                                        fontSize: '0.7rem'
-                                      }}>
-                                        {pred.bttsCorrect ? '✓ OK' : '✗ ERR'}
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <span style={{ color: 'var(--accent-gold)', fontSize: '0.7rem' }}>Pending</span>
-                                  )}
-                                </div>
-
-                                {/* Actual Score */}
-                                {pred.resolved && (
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', padding: '6px 10px', borderRadius: '6px', fontSize: '0.78rem' }}>
-                                    <span style={{ color: 'var(--text-secondary)' }}>Actual Score:</span>
-                                    <strong style={{ color: 'white', fontFamily: 'monospace' }}>{pred.actualScore}</strong>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* AI Reasoning */}
-                              <div style={{ 
-                                background: 'rgba(255,255,255,0.01)', 
-                                padding: '8px 10px', 
-                                borderRadius: '6px', 
-                                fontSize: '0.7rem', 
-                                color: 'var(--text-secondary)',
-                                border: '1px solid rgba(255,255,255,0.02)',
-                                fontStyle: 'italic',
-                                marginTop: '4px'
-                              }}>
-                                🧠 AI: "{pred.reasoning}"
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )
-          )}
-        </div>
-      )}
 
       {wipeConfirmVisible && (
         <div style={{
@@ -2654,9 +1786,9 @@ export default function LocalPatternEngine() {
                     width: '100%'
                   }}
                 >
-                  <option value="all">Everything (Results & AI Predictions History)</option>
-                  <option value="results">Scraped Results Only (local_results.json)</option>
-                  <option value="history">AI Predictions History Only (local_predictions_history.json)</option>
+                  <option value="all">Everything (Supabase & Local Backup)</option>
+                  <option value="results">Scraped Results Only (Supabase & Local)</option>
+                  <option value="history">AI Predictions History Only (Supabase & Local)</option>
                 </select>
               </div>
 

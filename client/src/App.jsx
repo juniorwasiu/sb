@@ -14,6 +14,7 @@ import NavigationBar from './components/NavigationBar';
 import AdvancedPredictionEngine from './components/AdvancedPredictionEngine';
 import LocalPatternEngine from './components/LocalPatternEngine';
 import ApiConsole from './components/ApiConsole';
+import PredictionsDashboard from './components/PredictionsDashboard';
 import './index.css';
 
 // ── Live scores SSE hook ──────────────────────────────────────────────────────
@@ -422,6 +423,7 @@ export default function App() {
       <NavigationBar />
       <Routes>
         <Route path="/"          element={<LocalPatternEngine />} />
+        <Route path="/predictions" element={<PredictionsDashboard />} />
         <Route path="/advanced-engine" element={<AdvancedPredictionEngine />} />
         <Route path="/daily-tips" element={<DailyTips />} />
         <Route path="/admin"     element={<AdminDashboard />} />
