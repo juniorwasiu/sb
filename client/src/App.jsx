@@ -422,7 +422,8 @@ export default function App() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <NavigationBar />
       <Routes>
-        <Route path="/"          element={<LocalPatternEngine />} />
+        {/* 🏠 Default: AI Live Predictor & History Log */}
+        <Route path="/"          element={<PredictionsDashboard />} />
         <Route path="/predictions" element={<PredictionsDashboard />} />
         <Route path="/advanced-engine" element={<AdvancedPredictionEngine />} />
         <Route path="/daily-tips" element={<DailyTips />} />

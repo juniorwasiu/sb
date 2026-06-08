@@ -169,39 +169,34 @@ export default function PredictionsDashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLeague]);
 
-  // ── Resolve Pending: first scrapes fresh results for today, then resolves outcomes ──
-  const handleResolvePending = async () => {
+  // ── Resolve Pending for a SPECIFIC league: scrapes only that league then resolves ──
+  const handleResolvePending = async (leagueToCheck) => {
     if (resolvingPending) return;
     setResolvingPending(true);
-    setResolveStatus('🔄 Step 1/3: Scraping fresh match results for today...');
-    console.log('[PredictionsDashboard] [DEBUG] ⚙️ Manual resolve started — Step 1: triggering fresh results scrape for all leagues...');
-
-    const leaguesToScrape = ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League'];
+    setResolveStatus(`🔄 Step 1/3: Scraping fresh results for ${leagueToCheck}...`);
+    console.log(`[PredictionsDashboard] [DEBUG] ⚙️ Check Outcomes for league: "${leagueToCheck}"`);
     
     try {
-      // Step 1: Scrape today's results for all leagues before resolving
-      for (const league of leaguesToScrape) {
-        console.log(`[PredictionsDashboard] [DEBUG] 🔍 Scraping results for: ${league}`);
-        setResolveStatus(`🔄 Scraping: ${league}...`);
-        try {
-          const scrapeRes = await fetch(`/api/local-vfootball/sync-league?league=${encodeURIComponent(league)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-          });
-          if (scrapeRes.ok) {
-            const scrapeData = await scrapeRes.json();
-            console.log(`[PredictionsDashboard] [DEBUG] ✅ Scraped ${league}: added ${scrapeData.added || 0} new results.`);
-          } else {
-            console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape returned ${scrapeRes.status} for ${league} — continuing...`);
-          }
-        } catch (scrapeErr) {
-          console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape error for ${league}: ${scrapeErr.message} — continuing...`);
+      // Step 1: Scrape only this league
+      setResolveStatus(`🔍 Scraping: ${leagueToCheck}...`);
+      try {
+        const scrapeRes = await fetch(`/api/local-vfootball/sync-league?league=${encodeURIComponent(leagueToCheck)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        if (scrapeRes.ok) {
+          const scrapeData = await scrapeRes.json();
+          console.log(`[PredictionsDashboard] [DEBUG] ✅ Scraped "${leagueToCheck}": added ${scrapeData.added || 0} new results.`);
+        } else {
+          console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape returned ${scrapeRes.status} for "${leagueToCheck}" — continuing...`);
         }
+      } catch (scrapeErr) {
+        console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape error for "${leagueToCheck}": ${scrapeErr.message} — continuing...`);
       }
 
-      // Step 2: Resolve all pending predictions against fresh results
-      setResolveStatus('⚙️ Step 2/3: Resolving pending outcomes against scraped results...');
-      console.log('[PredictionsDashboard] [DEBUG] ⚙️ Step 2: Calling resolve-pending endpoint...');
+      // Step 2: Resolve pending predictions
+      setResolveStatus('⚙️ Step 2/3: Resolving pending outcomes...');
+      console.log('[PredictionsDashboard] [DEBUG] ⚙️ Calling resolve-pending...');
       const res = await fetch('/api/predictions/resolve-pending', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
@@ -209,19 +204,74 @@ export default function PredictionsDashboard() {
       const data = await res.json();
 
       if (data.success) {
-        // Step 3: Re-fetch updated history
-        setResolveStatus('📥 Step 3/3: Refreshing history log with updated results...');
+        setResolveStatus('📥 Step 3/3: Refreshing history...');
         console.log('[PredictionsDashboard] [DEBUG] ✅ Resolve complete. Re-fetching updated history...');
         await fetchPredictionsHistory(selectedLeague);
-        setResolveStatus(`✅ Done! History updated.`);
+        setResolveStatus(`✅ ${leagueToCheck} updated!`);
         setTimeout(() => setResolveStatus(''), 4000);
       } else {
         setResolveStatus(`❌ Resolve failed: ${data.error || 'Unknown error'}`);
-        console.error('[PredictionsDashboard] [DEBUG] ❌ Resolve endpoint returned failure:', data.error);
+        console.error('[PredictionsDashboard] [DEBUG] ❌ Resolve endpoint failed:', data.error);
         setTimeout(() => setResolveStatus(''), 5000);
       }
     } catch (err) {
-      console.error('[PredictionsDashboard] [DEBUG] ❌ Error during manual resolve:', err);
+      console.error('[PredictionsDashboard] [DEBUG] ❌ Error during resolve:', err);
+      setResolveStatus(`❌ Error: ${err.message}`);
+      setTimeout(() => setResolveStatus(''), 5000);
+    } finally {
+      setResolvingPending(false);
+    }
+  };
+
+  // ── Resolve All: scrapes all 5 leagues then resolves pending outcomes ──
+  const handleResolveAllPending = async () => {
+    if (resolvingPending) return;
+    setResolvingPending(true);
+    setResolveStatus('🔄 Checking all leagues — Step 1/3: Scraping fresh results...');
+    console.log('[PredictionsDashboard] [DEBUG] ⚙️ Check All Outcomes — scraping all 5 leagues...');
+
+    const allLeagues = ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League'];
+    
+    try {
+      // Step 1: Scrape all leagues
+      for (const league of allLeagues) {
+        console.log(`[PredictionsDashboard] [DEBUG] 🔍 Scraping: ${league}`);
+        setResolveStatus(`🔍 Scraping: ${league}...`);
+        try {
+          const scrapeRes = await fetch(`/api/local-vfootball/sync-league?league=${encodeURIComponent(league)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          if (scrapeRes.ok) {
+            const d = await scrapeRes.json();
+            console.log(`[PredictionsDashboard] [DEBUG] ✅ Scraped ${league}: +${d.added || 0} results.`);
+          } else {
+            console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape ${scrapeRes.status} for ${league} — continuing...`);
+          }
+        } catch (e) {
+          console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape error for ${league}: ${e.message}`);
+        }
+      }
+
+      // Step 2: Resolve all pending
+      setResolveStatus('⚙️ Step 2/3: Resolving ALL pending outcomes...');
+      const res = await fetch('/api/predictions/resolve-pending', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setResolveStatus('📥 Step 3/3: Refreshing history...');
+        await fetchPredictionsHistory(selectedLeague);
+        setResolveStatus('✅ All leagues updated!');
+        setTimeout(() => setResolveStatus(''), 4000);
+      } else {
+        setResolveStatus(`❌ Resolve failed: ${data.error || 'Unknown error'}`);
+        setTimeout(() => setResolveStatus(''), 5000);
+      }
+    } catch (err) {
+      console.error('[PredictionsDashboard] [DEBUG] ❌ Check All Outcomes error:', err);
       setResolveStatus(`❌ Error: ${err.message}`);
       setTimeout(() => setResolveStatus(''), 5000);
     } finally {
@@ -1090,43 +1140,72 @@ export default function PredictionsDashboard() {
               </div>
             )}
 
-            {/* Sub-tabs selector for History Log */}
+            {/* Global actions: sub-tabs + Check All Outcomes button */}
             {!loadingHistory && !historyError && historyList.length > 0 && (
-              <div style={{ display: 'flex', gap: '8px', background: 'rgba(255, 255, 255, 0.01)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.04)', alignSelf: 'flex-start', flexWrap: 'wrap' }}>
-                {[
-                  { id: 'all', label: 'As Predicted', emoji: '📋' },
-                  { id: 'best', label: 'Best Picks', emoji: '⭐️' },
-                  { id: 'best15', label: 'Best 1.5', emoji: '🥅' },
-                  { id: 'singlehome', label: 'Single Tip (Home)', emoji: '🏠' },
-                  { id: 'singleaway', label: 'Single Tip (Away)', emoji: '✈️' },
-                  { id: 'besthomeaway', label: 'Best Home/Away Pick', emoji: '🤝' },
-                  { id: 'bestsingle', label: 'Best Single Pick', emoji: '🔥' }
-                ].map(sub => {
-                  const isSelected = historySubTab === sub.id;
-                  return (
-                    <button
-                      key={sub.id}
-                      onClick={() => setHistorySubTab(sub.id)}
-                      style={{
-                        background: isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
-                        color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
-                        border: isSelected ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid transparent',
-                        padding: '6px 12px',
-                        borderRadius: '6px',
-                        fontSize: '0.75rem',
-                        fontWeight: isSelected ? 'bold' : 'normal',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                    >
-                      <span>{sub.emoji}</span>
-                      <span>{sub.label}</span>
-                    </button>
-                  );
-                })}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                {/* Sub-tabs */}
+                <div style={{ display: 'flex', gap: '8px', background: 'rgba(255, 255, 255, 0.01)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.04)', flexWrap: 'wrap' }}>
+                  {[
+                    { id: 'all', label: 'As Predicted', emoji: '📋' },
+                    { id: 'best', label: 'Best Picks', emoji: '⭐️' },
+                    { id: 'best15', label: 'Best 1.5', emoji: '🥅' },
+                    { id: 'singlehome', label: 'Single Tip (Home)', emoji: '🏠' },
+                    { id: 'singleaway', label: 'Single Tip (Away)', emoji: '✈️' },
+                    { id: 'besthomeaway', label: 'Best Home/Away Pick', emoji: '🤝' },
+                    { id: 'bestsingle', label: 'Best Single Pick', emoji: '🔥' }
+                  ].map(sub => {
+                    const isSelected = historySubTab === sub.id;
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => setHistorySubTab(sub.id)}
+                        style={{
+                          background: isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                          color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                          border: isSelected ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid transparent',
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: isSelected ? 'bold' : 'normal',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        <span>{sub.emoji}</span>
+                        <span>{sub.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Global — Check All Outcomes button */}
+                <button
+                  onClick={handleResolveAllPending}
+                  disabled={resolvingPending}
+                  title="Scrapes fresh results for ALL 5 leagues then resolves all pending predictions"
+                  style={{
+                    background: resolvingPending ? 'rgba(0, 229, 255, 0.04)' : 'linear-gradient(135deg, rgba(0,229,255,0.12), rgba(0,255,136,0.08))',
+                    border: '1px solid rgba(0, 229, 255, 0.3)',
+                    color: 'var(--accent-neon)',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    fontSize: '0.78rem',
+                    fontWeight: 'bold',
+                    cursor: resolvingPending ? 'not-allowed' : 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    opacity: resolvingPending ? 0.6 : 1,
+                    transition: 'all 0.2s',
+                    whiteSpace: 'nowrap',
+                    boxShadow: resolvingPending ? 'none' : '0 0 10px rgba(0,229,255,0.08)'
+                  }}
+                >
+                  {resolvingPending ? '⏳ Checking...' : '🌐 Check All Outcomes'}
+                </button>
               </div>
             )}
 
@@ -1293,35 +1372,31 @@ export default function PredictionsDashboard() {
                                     ⏳ Pending Match Completion
                                   </div>
                                 )}
-                                {totalResolved > 0 && totalResolved < filteredRoundPreds.length && (
-                                  <div style={{ background: 'rgba(255, 215, 0, 0.06)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.74rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
-                                    ⚡ {filteredRoundPreds.length - totalResolved} still pending
-                                  </div>
-                                )}
                                 <button
-                                  onClick={handleResolvePending}
-                                  disabled={resolvingPending}
-                                  style={{
-                                    background: resolvingPending ? 'rgba(167, 139, 250, 0.05)' : 'rgba(167, 139, 250, 0.15)',
-                                    border: '1px solid rgba(167, 139, 250, 0.35)',
-                                    color: 'var(--accent-purple)',
-                                    borderRadius: '4px',
-                                    padding: '6px 12px',
-                                    fontSize: '0.74rem',
-                                    fontWeight: 'bold',
-                                    cursor: resolvingPending ? 'not-allowed' : 'pointer',
-                                    transition: 'all 0.2s ease',
-                                    outline: 'none',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    opacity: resolvingPending ? 0.7 : 1
-                                  }}
-                                  onMouseEnter={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.25)')}
-                                  onMouseLeave={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.15)')}
-                                >
-                                  {resolvingPending ? '⏳ Scraping & Resolving...' : '🔄 Check Outcomes'}
-                                </button>
+                                   onClick={() => handleResolvePending(round.league)}
+                                   disabled={resolvingPending}
+                                   title={`Scrape today's results for ${round.league} and resolve pending predictions`}
+                                   style={{
+                                     background: resolvingPending ? 'rgba(167, 139, 250, 0.05)' : 'rgba(167, 139, 250, 0.15)',
+                                     border: '1px solid rgba(167, 139, 250, 0.35)',
+                                     color: 'var(--accent-purple)',
+                                     borderRadius: '4px',
+                                     padding: '6px 12px',
+                                     fontSize: '0.74rem',
+                                     fontWeight: 'bold',
+                                     cursor: resolvingPending ? 'not-allowed' : 'pointer',
+                                     transition: 'all 0.2s ease',
+                                     outline: 'none',
+                                     display: 'inline-flex',
+                                     alignItems: 'center',
+                                     gap: '4px',
+                                     opacity: resolvingPending ? 0.7 : 1
+                                   }}
+                                   onMouseEnter={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.25)')}
+                                   onMouseLeave={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.15)')}
+                                 >
+                                   {resolvingPending ? '⏳ Checking...' : `🔄 Check ${round.league.replace(' League', '')}`}
+                                 </button>
                               </div>
                             </div>
                           </div>
