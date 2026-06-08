@@ -5261,6 +5261,14 @@ setInterval(() => {
     runAutoScrapeResults();
 }, 180 * 1000); // 180 seconds (3 minutes)
 
+// Automatically run pending predictions outcome resolution check every 60 seconds in the background
+setInterval(() => {
+    console.log('[Auto Resolve] ⏰ 60-second interval triggered: Running prediction outcomes auto-resolution...');
+    autoResolvePendingPredictions().catch(err => {
+        console.error('[Auto Resolve] ❌ Error in auto-resolve task:', err.message);
+    });
+}, 60 * 1000);
+
 // Expose dedicated Positional Trace Dashboard APIs
 app.get('/api/positional-trace/patterns', (req, res) => {
     console.log('[DEBUG] [Positional Trace API] GET /api/positional-trace/patterns requested');

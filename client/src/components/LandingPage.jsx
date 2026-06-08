@@ -75,6 +75,9 @@ export default function LandingPage() {
   const [analyzing,      setAnalyzing]      = useState(null); // date string being analyzed
   const [analysisMap,    setAnalysisMap]    = useState({});   // date → analysis object
   const [analysisError,  setAnalysisError]  = useState({});
+  const [syncing,        setSyncing]        = useState(false);
+  const [syncStatus,     setSyncStatus]     = useState('');
+
   const analysisRef = useRef({});
   analysisRef.current = analysisMap;
 
@@ -92,36 +95,38 @@ export default function LandingPage() {
   };
 
   // ── Fetch ALL leagues once on mount (unfiltered — always shows the full list) ─
-  useEffect(() => {
-    const fetchAllLeagues = async () => {
-      setLeaguesLoading(true);
-      try {
-        console.log('[LandingPage] 🔍 Step 1: Fetching all available leagues from Database...');
-        const res = await fetch('/api/public/results?page=1&pageSize=1');
-        const json = await res.json();
-        if (!json.success) throw new Error(json.error || 'Failed to load leagues');
-        setAllLeagues(json.availableLeagues || []);
-      } catch {
-        setAllLeagues(Object.keys(KNOWN_LEAGUES));
+  const fetchAllLeagues = useCallback(async () => {
+    setLeaguesLoading(true);
+    try {
+      console.log('[LandingPage] 🔍 Fetching all available leagues from Database...');
+      const res = await fetch('/api/public/results?page=1&pageSize=1');
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'Failed to load leagues');
+      setAllLeagues(json.availableLeagues || []);
+    } catch {
+      setAllLeagues(Object.keys(KNOWN_LEAGUES));
+    }
+    setLeaguesLoading(false);
+  }, []);
+
+  const fetchAllDates = useCallback(async () => {
+    setDatesLoading(true);
+    try {
+      const res = await fetch('/api/vfootball/available-dates');
+      const data = await res.json();
+      if (data.success) {
+        setAllDates(data.dates || []);
       }
-      setLeaguesLoading(false);
-    };
-    const fetchAllDates = async () => {
-        setDatesLoading(true);
-        try {
-            const res = await fetch('/api/vfootball/available-dates');
-            const data = await res.json();
-            if (data.success) {
-                setAllDates(data.dates || []);
-            }
-        } catch (err) {
-            console.error('[LandingPage] Failed to fetch all dates:', err);
-        }
-        setDatesLoading(false);
-    };
+    } catch (err) {
+      console.error('[LandingPage] Failed to fetch all dates:', err);
+    }
+    setDatesLoading(false);
+  }, []);
+
+  useEffect(() => {
     fetchAllLeagues();
     fetchAllDates();
-  }, []); // runs only once on mount
+  }, [fetchAllLeagues, fetchAllDates]);
 
   // ── Fetch paginated results (reacts to filters) ──────────────────────────
   const fetchResults = useCallback(async (p = page) => {
@@ -160,7 +165,95 @@ export default function LandingPage() {
     setLoading(false);
   }, [page, pageSize, leagueFilter, dateFrom, dateTo, allLeagues.length]);
 
-  useEffect(() => { fetchResults(page); }, [page, fetchResults]);
+  useEffect(() => { 
+    fetchResults(page); 
+  }, [page, fetchResults]);
+
+  // ── 30-Second Auto-Refresh Timer for Match Results ─────────────────────────
+  useEffect(() => {
+    console.log('[LandingPage] ⏱️ Starting 30s auto-refresh for match results...');
+    const interval = setInterval(() => {
+      console.log('[LandingPage] 🔄 Auto-refreshing results list...');
+      fetchResults(page);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [page, fetchResults]);
+
+  // ── Manual Sync Results Handler ────────────────────────────────────────────
+  const handleManualSync = async (leagueToSync = null) => {
+    if (syncing) return;
+    setSyncing(true);
+    setError(null);
+    
+    // Map database league names (e.g. "England - Virtual") to scraper names (e.g. "England League")
+    const dbLeagueToScraperName = {
+      'England - Virtual': 'England League',
+      'Spain - Virtual': 'Spain League',
+      'Italy - Virtual': 'Italy League',
+      'Germany - Virtual': 'Germany League',
+      'France - Virtual': 'France League'
+    };
+
+    const scraperLeague = leagueToSync ? (dbLeagueToScraperName[leagueToSync] || leagueToSync) : null;
+    
+    try {
+      if (scraperLeague) {
+        setSyncStatus(`🔄 Syncing latest results for ${scraperLeague.replace(' League', '')}...`);
+        console.log(`[LandingPage] Manually syncing results for league: ${scraperLeague}`);
+        const res = await fetch(`/api/local-vfootball/sync-league?league=${encodeURIComponent(scraperLeague)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
+        const data = await res.json();
+        
+        if (data.success) {
+          setSyncStatus(`✅ Successfully synced ${scraperLeague.replace(' League', '')}! Added ${data.added || 0} new matches.`);
+        } else {
+          throw new Error(data.error || 'Failed to sync league results');
+        }
+      } else {
+        setSyncStatus('🔄 Syncing latest results for ALL leagues (takes up to 2 min)...');
+        console.log('[LandingPage] Manually syncing results for ALL leagues');
+        const res = await fetch('/api/admin/vfootball/sync-all');
+        
+        if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
+        const data = await res.json();
+        
+        if (data.success) {
+          setSyncStatus('✅ Successfully synced results for all leagues!');
+        } else {
+          throw new Error(data.error || 'Failed to sync all leagues results');
+        }
+      }
+
+      // Automatically trigger predictions resolution after sync
+      setSyncStatus(prev => prev + ' (Resolving pending predictions...)');
+      const resolveRes = await fetch('/api/predictions/resolve-pending', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      await resolveRes.json();
+
+      // Refresh page data
+      setSyncStatus('📥 Refreshing database view...');
+      await Promise.all([
+        fetchResults(page),
+        fetchAllLeagues(),
+        fetchAllDates()
+      ]);
+      
+      setSyncStatus(prev => prev + ' Done!');
+      setTimeout(() => setSyncStatus(''), 5000);
+    } catch (err) {
+      console.error('[LandingPage] Manual sync failed:', err);
+      setError(`Sync failed: ${err.message}. Please check that the server is online.`);
+      setSyncStatus('');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // ── Pagination handlers ───────────────────────────────────────────────────
   const goPage = (p) => { setPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }); };
@@ -314,6 +407,105 @@ export default function LandingPage() {
 
       <main style={{ maxWidth: 1100, margin: '0 auto', padding: '24px' }}>
         <LivePredictionHub />
+
+        {/* ── SYNC RESULTS CONTROL PANEL ── */}
+        <div className="glass-panel" style={{ 
+          padding: '20px', 
+          marginBottom: '24px', 
+          border: '1px solid rgba(0, 229, 255, 0.2)',
+          background: 'linear-gradient(135deg, rgba(0, 229, 255, 0.04) 0%, rgba(0, 0, 0, 0.6) 100%)',
+          borderRadius: 12,
+          position: 'relative'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '1.5rem' }}>🔄</span>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)' }}>Sync Today's Match Results</h3>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Scrape newly finished matches from the platform to update the database results history.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              {/* Sync Current League (from filter) or Sync England League (default) */}
+              <button
+                onClick={() => handleManualSync(leagueFilter || 'England - Virtual')}
+                disabled={syncing}
+                style={{
+                  background: 'rgba(0, 229, 255, 0.15)',
+                  border: '1px solid var(--accent-neon)',
+                  color: 'var(--accent-neon)',
+                  borderRadius: 8,
+                  padding: '10px 18px',
+                  fontSize: '0.82rem',
+                  fontWeight: 'bold',
+                  cursor: syncing ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  opacity: syncing ? 0.6 : 1
+                }}
+              >
+                {syncing ? '⏳ Syncing...' : `⚡ Sync ${leagueFilter ? leagueFilter.replace(' - Virtual', '') : 'England'}`}
+              </button>
+
+              <button
+                onClick={() => handleManualSync(null)}
+                disabled={syncing}
+                style={{
+                  background: 'linear-gradient(135deg, rgba(0, 255, 136, 0.2), rgba(0, 229, 255, 0.1))',
+                  border: '1px solid var(--accent-success)',
+                  color: 'var(--accent-success)',
+                  borderRadius: 8,
+                  padding: '10px 18px',
+                  fontSize: '0.82rem',
+                  fontWeight: 'bold',
+                  cursor: syncing ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  opacity: syncing ? 0.6 : 1
+                }}
+              >
+                {syncing ? '⏳ Syncing...' : '🌐 Sync All Leagues'}
+              </button>
+            </div>
+          </div>
+
+          {/* Sync status alert banner */}
+          {syncStatus && (
+            <div style={{ 
+              marginTop: '16px', 
+              padding: '10px 14px', 
+              background: 'rgba(0, 0, 0, 0.3)', 
+              borderRadius: 8, 
+              border: '1px solid rgba(0, 229, 255, 0.15)',
+              fontSize: '0.82rem',
+              color: 'var(--accent-neon)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}>
+              <div className="spinner spinner-small" style={{ width: '16px', height: '16px', borderWidth: '1.5px' }} />
+              <span>{syncStatus}</span>
+            </div>
+          )}
+
+          <div style={{ 
+            marginTop: '12px', 
+            fontSize: '0.72rem', 
+            color: 'var(--text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}>
+            <span>⏱️</span>
+            <span>Newly finished matches are automatically monitored and imported in the background every 3 minutes.</span>
+          </div>
+        </div>
 
         {/* ── FILTERS BAR ──────────────────────────────────────────────────── */}
         <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '24px', display: 'flex', gap: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
