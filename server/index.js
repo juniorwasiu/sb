@@ -23,6 +23,7 @@ const {
     getPredictionsHistoryFromDb,
     savePredictionToDb,
     resolvePredictionOutcomes,
+    autoResolvePendingPredictions,
     wipeDbData
 } = require('./supabase');
 const { saveAnalysis, getRecentContext, getLog, deleteEntry, getEntryById, clearLog, getStrategy, updateStrategy, fetchStrategyHistory, getLeagueIntelligence, updateLeagueIntelligence, getAnalysisByScopeAndDate, saveDailyTip, getDailyTip, getAllDailyTips } = require('./ai_memory');
@@ -4710,7 +4711,7 @@ app.get('/api/local-vfootball/predict-live', async (req, res) => {
         // Step 1: Scrape real-time live list vFootball games on SportyBet
         const { scrapeLiveListOnDemand } = require('./scraper');
         console.log('[DEBUG] [Local API] Step 1: Scraping SportyBet live list on-demand...');
-        const liveListGames = await scrapeLiveListOnDemand();
+        let liveListGames = await scrapeLiveListOnDemand();
         
         if (!liveListGames || liveListGames.length === 0) {
             console.warn('[DEBUG] [Local API] Scraper returned empty or null live list.');
@@ -4720,6 +4721,45 @@ app.get('/api/local-vfootball/predict-live', async (req, res) => {
                 predictions: [],
                 fixtures: null
             });
+        }
+
+        // Validate match completeness and attempt rescrape if partial round scraped due to loading lag
+        const validateLeagueMatches = (gamesList, leagueName) => {
+            const cleanName = leagueName.replace(' League', '').replace(' - Virtual', '').toLowerCase();
+            const isNine = cleanName.includes('france') || cleanName.includes('germany');
+            const expected = isNine ? 9 : 10;
+            
+            const inPlay = gamesList.find(g => 
+                g.league && g.league.toLowerCase().includes(cleanName) && !g.league.toLowerCase().includes('upcoming')
+            );
+            const upcoming = gamesList.find(g => 
+                g.league && g.league.toLowerCase().includes(cleanName) && g.league.toLowerCase().includes('upcoming')
+            );
+            
+            const group = (inPlay && inPlay.matches && inPlay.matches.length > 0) ? inPlay : upcoming;
+            if (!group || !group.matches) return { valid: false, reason: 'missing' };
+            if (group.matches.length < expected) return { valid: false, reason: 'incomplete', count: group.matches.length, expected };
+            return { valid: true, count: group.matches.length };
+        };
+
+        const leaguesToCheck = requestedLeague === 'all'
+            ? ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League']
+            : [requestedLeague];
+            
+        let needsRescrape = false;
+        for (const leagueToCheck of leaguesToCheck) {
+            const validation = validateLeagueMatches(liveListGames, leagueToCheck);
+            if (!validation.valid && validation.reason === 'incomplete') {
+                console.log(`[DEBUG] [Local API] League ${leagueToCheck} has incomplete matches (${validation.count}/${validation.expected}). Preparing to rescrape...`);
+                needsRescrape = true;
+                break;
+            }
+        }
+        
+        if (needsRescrape) {
+            console.log('[DEBUG] [Local API] Incomplete matches detected. Waiting 3 seconds for page rendering and rescraping...');
+            await new Promise(r => setTimeout(r, 3000));
+            liveListGames = await scrapeLiveListOnDemand();
         }
 
         const predictLeague = async (leagueName) => {
@@ -4763,7 +4803,7 @@ app.get('/api/local-vfootball/predict-live', async (req, res) => {
             
             // Compute patterns
             console.log(`[DEBUG] [Local API] Computing local database pattern profiles for ${leagueName} with alphabetical sorting...`);
-            const patternsData = computeLocalPatterns('homeTeam', leagueName);
+            const patternsData = await computeLocalPatterns('homeTeam', leagueName);
             let posPatterns = patternsData.positionPatterns || [];
 
             if (posPatterns.length === 0) {
@@ -4847,21 +4887,23 @@ Visual Row Position Markov Over 2.5 Transition Probabilities:
 - After Under 2.5 Goals (U25) transitions to → Over 2.5:${f.over25Transitions?.U25?.O25 || 0}% | Under 2.5:${f.over25Transitions?.U25?.U25 || 0}%
 `).join('\n');
 
+            const matchesCount = fixturesDataList.length;
+
             // Send structured prompt to DeepSeek
             const { callPredictionAI, parseAIJson } = require('./prediction_ai');
             
             const prompt = `
 You are DeepSeek Chat, an elite sports betting Virtual Football prediction model. 
-Your task is to analyze the ${expectedMatchCount} virtual matches starting in the next ${leagueName} round using historical visual row position statistics.
+Your task is to analyze the ${matchesCount} virtual matches starting in the next ${leagueName} round using historical visual row position statistics.
 
 INSTRUCTIONS:
 1. Review the historical win rates, streaks, and Markov transitions for each visual row position.
-2. Formulate predictions for all ${expectedMatchCount} positions.
+2. Formulate predictions for all ${matchesCount} positions.
 3. Be highly critical and analytical. If a position currently has a long win streak, account for regression to the mean.
-4. Return a JSON array of exactly ${expectedMatchCount} prediction objects. DO NOT wrap the output in markdown code fences (\`\`\`json), just return the raw JSON array.
+4. Return a JSON array of exactly ${matchesCount} prediction objects. DO NOT wrap the output in markdown code fences (\`\`\`json), just return the raw JSON array.
 
 Each object must contain the following keys:
-- "position": number (0 to ${expectedMatchCount - 1})
+- "position": number (0 to ${matchesCount - 1})
 - "match": string (e.g. "Arsenal vs Chelsea")
 - "status": string ("IN-PLAY" or "UPCOMING")
 - "predictedOutcome": string ("H" or "D" or "A")
@@ -4872,6 +4914,11 @@ Each object must contain the following keys:
 - "predictedOver15Prob": number (0 to 100 representing probability percentage of the Over/Under 1.5 choice)
 - "predictedOver25": string ("Over" or "Under")
 - "predictedOver25Prob": number (0 to 100 representing probability percentage of the Over/Under 2.5 choice)
+- "predictedHomeOrAwayProb": number (0 to 100 representing probability percentage of either Home or Away winning, i.e. the match not ending in a Draw)
+- "predictedHomeTip": string (The best single tip favoring the Home team. MUST be one of: "Home Win", "Home Win or Draw", "Home or Away")
+- "predictedHomeTipProb": number (0 to 100 representing probability percentage of the Home tip)
+- "predictedAwayTip": string (The best single tip favoring the Away team. MUST be one of: "Away Win", "Away Win or Draw", "Home or Away")
+- "predictedAwayTipProb": number (0 to 100 representing probability percentage of the Away tip)
 - "confidence": number (0 to 100 representing confidence score)
 - "reasoning": string (Brief 1-sentence expert prediction reasoning combining matchup, row statistics, and Markov transitions)
 - "color": string (hex color representing predicted outcome: H=#00FF88, D=#FFD700, A=#A78BFA)
@@ -4971,7 +5018,8 @@ ${fixturesDataStr}
 const PREDICTIONS_HISTORY_PATH = path.join(__dirname, 'local_predictions_history.json');
 
 async function savePredictionsToHistory(league, matches, predictions) {
-    console.log('[DEBUG] [Predictions History] Saving predictions to history...');
+    const cleanLeague = toDbLeague(league);
+    console.log(`[DEBUG] [Predictions History] Saving predictions to history for clean league: ${cleanLeague}...`);
     let history = [];
     if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
         try {
@@ -4993,14 +5041,14 @@ async function savePredictionsToHistory(league, matches, predictions) {
         time = `${hrs}:${mins} (Live Captured)`;
     }
     
-    const roundId = `${date.replace(/\//g, '-')}_${time.replace(/[^a-zA-Z0-9]/g, '_')}_${league.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const roundId = `${date.replace(/\//g, '-')}_${time.replace(/[^a-zA-Z0-9]/g, '_')}_${cleanLeague.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
     const existingIndex = history.findIndex(h => h.id === roundId);
     
     const roundData = {
         id: roundId,
         date,
         time,
-        league,
+        league: cleanLeague,
         capturedAt: new Date().toISOString(),
         predictions: predictions.map(p => {
             const m = matches[p.position];
@@ -5086,159 +5134,19 @@ app.post('/api/local-vfootball/wipe', express.json(), async (req, res) => {
     }
 });
 
-// Helper for exporting predictions to Telegram/markdown format
-function getLeagueEmoji(leagueName) {
-    if (!leagueName) return '⚽';
-    const lower = leagueName.toLowerCase();
-    if (lower.includes('england')) return '🏴󠁧󠁢󠁥󠁮󠁧󠁿';
-    if (lower.includes('spain')) return '🇪🇸';
-    if (lower.includes('italy')) return '🇮🇹';
-    if (lower.includes('germany')) return '🇩🇪';
-    if (lower.includes('france')) return '🇫🇷';
-    return '⚽';
-}
-
-function formatPredictionsForTelegram(data, type) {
-    if (!data) return '⚠️ No predictions found to export.';
-    
-    let text = '';
-    if (type === 'live') {
-        const leagueEmoji = getLeagueEmoji(data.league);
-        text += `🔮 *AI LIVE PREDICTIONS* 🔮\n`;
-        text += `🏆 *League:* ${data.league} ${leagueEmoji}\n`;
-        text += `📅 *Date:* ${data.date} | 🕒 *Time:* ${data.time}\n`;
-        text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-        
-        if (data.predictions && data.predictions.length > 0) {
-            data.predictions.forEach((pred, index) => {
-                const matchName = pred.match || `${pred.homeTeam} vs ${pred.awayTeam}`;
-                text += `⚽ *${index + 1}. ${matchName}*\n`;
-                text += `🎯 *Winner:* ${pred.predictedOutcome === 'H' ? 'Home' : pred.predictedOutcome === 'A' ? 'Away' : 'Draw'} (${pred.predictedOutcomeProb || 0}%)\n`;
-                text += `🥅 *BTTS (GG/NG):* ${pred.predictedBtts || 'N/A'} (${pred.predictedBttsProb || 0}%)\n`;
-                if (pred.predictedOver15) {
-                    text += `📈 *Over 1.5:* ${pred.predictedOver15} (${pred.predictedOver15Prob || 0}%)\n`;
-                }
-                if (pred.predictedOver25) {
-                    text += `📈 *Over 2.5:* ${pred.predictedOver25} (${pred.predictedOver25Prob || 0}%)\n`;
-                }
-                text += `🛡️ *Confidence:* ${pred.confidence || 0}%\n`;
-                if (pred.resolved) {
-                    text += `📊 *Result:* ${pred.actualScore || '?'}\n`;
-                    text += `✅ *Outcome:* ${pred.outcomeCorrect ? 'WON 🎉' : 'LOST ❌'}\n`;
-                }
-                if (pred.reasoning) {
-                    text += `🧠 *Analysis:* _${pred.reasoning}_\n`;
-                }
-                text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-            });
-        } else {
-            text += `No predictions in this round.\n`;
-        }
-    } else { // daily
-        const leagueEmoji = getLeagueEmoji(data.league);
-        text += `📅 *AI DAILY TIPS* 📅\n`;
-        text += `🏆 *League:* ${data.league} ${leagueEmoji}\n`;
-        text += `📅 *Date:* ${data.date}\n`;
-        if (data.tipData?.context) {
-            text += `📝 *Vibe:* _${data.tipData.context}_\n`;
-        }
-        text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-        
-        const matches = data.tipData?.upcoming_matches || data.tipData?.predictions || [];
-        if (matches.length > 0) {
-            matches.forEach((pred, index) => {
-                text += `⚽ *${index + 1}. ${pred.fixture}*\n`;
-                if (pred.game_time) text += `🕒 *Time:* ${pred.game_time}\n`;
-                text += `🎯 *Winner:* ${pred.match_winner} (${pred.match_winner_pct || 0}%)\n`;
-                text += `🥅 *BTTS (GG):* ${pred.gg || 'N/A'} (${pred.gg_pct || 0}%)\n`;
-                text += `📈 *Over 1.5:* ${pred.over_1_5 || 'N/A'} (${pred.over_1_5_pct || 0}%)\n`;
-                text += `📈 *Over 2.5:* ${pred.over_2_5 || 'N/A'} (${pred.over_2_5_pct || 0}%)\n`;
-                if (pred.exact_score) text += `🎯 *Exact Score:* ${pred.exact_score}\n`;
-                if (pred.prediction_reasoning) {
-                    text += `🧠 *Analysis:* _${pred.prediction_reasoning}_\n`;
-                }
-                text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-            });
-        } else {
-            text += `No daily tips matches found.\n`;
-        }
-    }
-    
-    text += `🤖 _Generated by Mango AI Assistant_`;
-    return text;
-}
-
 // 8. GET public endpoint for predictions export (Telegram, etc.)
-app.get('/api/public/predictions/export', async (req, res) => {
-    console.log('[DEBUG] [/api/public/predictions/export] Request received. Params:', req.query);
-    const type = req.query.type || 'live'; // 'live' or 'daily'
-    const league = req.query.league; // e.g. "England League" or undefined
-    const format = req.query.format || 'text'; // 'text' or 'json'
+const predictionsExportRouter = require('./predictions_export');
+app.use('/api/public/predictions/export', predictionsExportRouter);
 
+// 8.5. POST endpoint to trigger manual predictions resolution
+app.post('/api/predictions/resolve-pending', async (req, res) => {
+    console.log('[DEBUG] [Local API] POST /api/predictions/resolve-pending requested (manual check)');
     try {
-        console.log(`[DEBUG] [/api/public/predictions/export] Step 1: Fetching predictions data for type: ${type}`);
-        if (type === 'live') {
-            const history = await getPredictionsHistoryFromDb();
-            let filtered = history;
-            if (league) {
-                const targetDbLeague = toDbLeague(league);
-                console.log(`[DEBUG] [/api/public/predictions/export] Step 2: Filtering predictions by league: ${league} (${targetDbLeague})`);
-                filtered = history.filter(h => toDbLeague(h.league) === targetDbLeague);
-            }
-            
-            if (!filtered || filtered.length === 0) {
-                console.log('[DEBUG] [/api/public/predictions/export] No live predictions history found.');
-                if (format === 'json') {
-                    return res.json({ success: false, error: 'No live predictions found.' });
-                } else {
-                    return res.send('⚠️ No live predictions found to export.');
-                }
-            }
-
-            // Return deep copy so we don't accidentally mutate cachedDB arrays in memory
-            const latestRound = JSON.parse(JSON.stringify(filtered[0]));
-            console.log(`[DEBUG] [/api/public/predictions/export] Step 3: Latest round found: ${latestRound.id}. Fetching finished matches to resolve outcomes.`);
-            
-            const finishedMatches = await getMatchesFromDb();
-            latestRound.predictions = resolvePredictionOutcomes(latestRound.predictions, latestRound.date, finishedMatches);
-            
-            if (format === 'json') {
-                return res.json({ success: true, data: latestRound });
-            } else {
-                const formattedText = formatPredictionsForTelegram(latestRound, 'live');
-                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-                return res.send(formattedText);
-            }
-        } else if (type === 'daily') {
-            console.log(`[DEBUG] [/api/public/predictions/export] Step 2: Fetching daily tips for league: ${league || 'All Leagues'}`);
-            const dailyTips = await getAllDailyTips(league);
-            
-            if (!dailyTips || dailyTips.length === 0) {
-                console.log('[DEBUG] [/api/public/predictions/export] No daily tips found.');
-                if (format === 'json') {
-                    return res.json({ success: false, error: 'No daily tips found.' });
-                } else {
-                    return res.send('⚠️ No daily tips found to export.');
-                }
-            }
-
-            const latestTip = dailyTips[0];
-            console.log(`[DEBUG] [/api/public/predictions/export] Step 3: Latest daily tip found for date: ${latestTip.date}, league: ${latestTip.league}`);
-            
-            if (format === 'json') {
-                return res.json({ success: true, data: latestTip });
-            } else {
-                const formattedText = formatPredictionsForTelegram(latestTip, 'daily');
-                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-                return res.send(formattedText);
-            }
-        } else {
-            console.log(`[DEBUG] [/api/public/predictions/export] Invalid type parameter: ${type}`);
-            return res.status(400).json({ success: false, error: 'Invalid type. Use "live" or "daily".' });
-        }
+        await autoResolvePendingPredictions();
+        res.json({ success: true, message: 'Successfully triggered predictions resolution check.' });
     } catch (err) {
-        console.error('[Database Index Debug/Error Details]: [/api/public/predictions/export] failed:', err.message);
-        res.status(500).json({ success: false, error: `Export failed: ${err.message}` });
+        console.error('[DEBUG] [Local API] Manual predictions resolution failed:', err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 

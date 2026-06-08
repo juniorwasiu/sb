@@ -36,21 +36,24 @@ const SUPPORTED_LEAGUES = ['England League', 'Spain League', 'Italy League', 'Ge
 function toDbLeague(league) {
     if (!league) return 'Unknown';
 
+    // Clean up "(Upcoming)" suffix if present
+    const cleanLeague = league.replace(/\s*\(Upcoming\)/i, '').trim();
+
     // Direct match from LEAGUE_MAP
-    if (LEAGUE_MAP[league]) return LEAGUE_MAP[league];
+    if (LEAGUE_MAP[cleanLeague]) return LEAGUE_MAP[cleanLeague];
 
     // Handle "England League" -> "England - Virtual"
-    if (league.includes(' League')) {
-        return `${league.replace(' League', '')} - Virtual`;
+    if (cleanLeague.includes(' League')) {
+        return `${cleanLeague.replace(' League', '')} - Virtual`;
     }
 
     // Handle "England" -> "England - Virtual" (for sync-all or direct inputs)
-    if (['England', 'Spain', 'Italy', 'Germany', 'France'].includes(league)) {
-        return `${league} - Virtual`;
+    if (['England', 'Spain', 'Italy', 'Germany', 'France'].includes(cleanLeague)) {
+        return `${cleanLeague} - Virtual`;
     }
 
     // Already a DB league name (e.g. "England - Virtual") — return as-is
-    return league;
+    return cleanLeague;
 }
 
 module.exports = { LEAGUE_MAP, LEAGUE_TAB_TEXT, toDbLeague, SUPPORTED_LEAGUES };

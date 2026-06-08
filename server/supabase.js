@@ -495,6 +495,32 @@ function resolvePredictionOutcomes(predictions, date, finishedMatches = []) {
             const actualOver15 = goals >= 2 ? 'Over' : 'Under';
             const actualOver25 = goals >= 3 ? 'Over' : 'Under';
             
+            const homeOrAwayCorrect = hg !== ag;
+            
+            let homeTipCorrect = false;
+            if (pred.predictedHomeTip === "Home Win") {
+                homeTipCorrect = hg > ag;
+            } else if (pred.predictedHomeTip === "Home Win or Draw") {
+                homeTipCorrect = hg >= ag;
+            } else if (pred.predictedHomeTip === "Home or Away") {
+                homeTipCorrect = hg !== ag;
+            }
+            
+            let awayTipCorrect = false;
+            if (pred.predictedAwayTip === "Away Win") {
+                awayTipCorrect = hg < ag;
+            } else if (pred.predictedAwayTip === "Away Win or Draw") {
+                awayTipCorrect = hg <= ag;
+            } else if (pred.predictedAwayTip === "Home or Away") {
+                awayTipCorrect = hg !== ag;
+            }
+            
+            console.log(`[DEBUG] [resolvePredictionOutcomes] Match: "${pred.match || pred.homeTeam + ' vs ' + pred.awayTeam}", Score: ${score} (HG:${hg}, AG:${ag})`);
+            console.log(`  - Winner outcome: ${pred.predictedOutcome} vs Actual: ${actualOutcome} => ${pred.predictedOutcome === actualOutcome ? 'WON' : 'LOST'}`);
+            console.log(`  - Double Chance (12): Prob: ${pred.predictedHomeOrAwayProb}% => ${homeOrAwayCorrect ? 'WON' : 'LOST'}`);
+            console.log(`  - Home Tip: "${pred.predictedHomeTip}" (Prob: ${pred.predictedHomeTipProb}%) => ${homeTipCorrect ? 'WON' : 'LOST'}`);
+            console.log(`  - Away Tip: "${pred.predictedAwayTip}" (Prob: ${pred.predictedAwayTipProb}%) => ${awayTipCorrect ? 'WON' : 'LOST'}`);
+            
             return {
                 ...pred,
                 actualScore: score,
@@ -506,6 +532,9 @@ function resolvePredictionOutcomes(predictions, date, finishedMatches = []) {
                 bttsCorrect: pred.predictedBtts === actualBtts,
                 over15Correct: pred.predictedOver15 === actualOver15,
                 over25Correct: pred.predictedOver25 === actualOver25,
+                homeOrAwayCorrect,
+                homeTipCorrect,
+                awayTipCorrect,
                 resolved: true
             };
         }

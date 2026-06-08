@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 export default function PredictionsDashboard() {
   const [selectedLeague, setSelectedLeague] = useState('England League');
@@ -11,10 +12,12 @@ export default function PredictionsDashboard() {
   const [predictionError, setPredictionError] = useState(null);
   const predictionsRef = useRef(null);
   const [capturing, setCapturing] = useState(false);
+  const [exportingPDF, setExportingPDF] = useState(false);
+  const [resolvingPending, setResolvingPending] = useState(false);
 
   // Sub-tabs states
-  const [liveSubTab, setLiveSubTab] = useState('all'); // 'all' | 'best' | 'singles' | 'bestsingle'
-  const [historySubTab, setHistorySubTab] = useState('all'); // 'all' | 'best' | 'singles' | 'bestsingle'
+  const [liveSubTab, setLiveSubTab] = useState('all'); // 'all' | 'best' | 'best15' | 'singlehome' | 'singleaway' | 'besthomeaway' | 'bestsingle'
+  const [historySubTab, setHistorySubTab] = useState('all'); // 'all' | 'best' | 'best15' | 'singlehome' | 'singleaway' | 'besthomeaway' | 'bestsingle'
 
   // Helper to extract the single highest-probability tip for a match
   const getBestSingleTip = (pred) => {
@@ -27,6 +30,30 @@ export default function PredictionsDashboard() {
         prediction: label,
         prob: pred.predictedOutcomeProb,
         color: 'var(--accent-neon)'
+      });
+    }
+    if (pred.predictedHomeOrAwayProb !== undefined && pred.predictedHomeOrAwayProb !== null) {
+      options.push({
+        market: 'Double Chance',
+        prediction: 'Home or Away',
+        prob: pred.predictedHomeOrAwayProb,
+        color: '#F43F5E' // rose/pink color
+      });
+    }
+    if (pred.predictedHomeTipProb !== undefined && pred.predictedHomeTipProb !== null && pred.predictedHomeTip) {
+      options.push({
+        market: 'Home Tip',
+        prediction: pred.predictedHomeTip,
+        prob: pred.predictedHomeTipProb,
+        color: '#3B82F6' // blue color
+      });
+    }
+    if (pred.predictedAwayTipProb !== undefined && pred.predictedAwayTipProb !== null && pred.predictedAwayTip) {
+      options.push({
+        market: 'Away Tip',
+        prediction: pred.predictedAwayTip,
+        prob: pred.predictedAwayTipProb,
+        color: '#EC4899' // pink/magenta color
       });
     }
     if (pred.predictedBttsProb !== undefined && pred.predictedBttsProb !== null) {
@@ -69,8 +96,14 @@ export default function PredictionsDashboard() {
     if (subTab === 'best') {
       return predictions.filter(p => p.confidence >= 75);
     }
-    if (subTab === 'singles') {
+    if (subTab === 'best15') {
+      return predictions.filter(p => p.predictedOver15 === 'Over' && p.predictedOver15Prob >= 75);
+    }
+    if (subTab === 'singlehome' || subTab === 'singleaway') {
       return predictions; // Render handles single tip display
+    }
+    if (subTab === 'besthomeaway') {
+      return predictions.filter(p => p.predictedHomeOrAwayProb >= 75);
     }
     if (subTab === 'bestsingle') {
       let topPred = null;
@@ -132,11 +165,49 @@ export default function PredictionsDashboard() {
     }
   };
 
-  // Fetch history when view is toggled to history or league changes
+  const handleResolvePending = async () => {
+    if (resolvingPending) return;
+    setResolvingPending(true);
+    console.log('[PredictionsDashboard] [DEBUG] Triggering manual predictions resolution check...');
+    try {
+      const res = await fetch('/api/predictions/resolve-pending', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (data.success) {
+        console.log('[PredictionsDashboard] [DEBUG] Manual predictions resolution triggered successfully. Re-fetching history logs...');
+        await fetchPredictionsHistory(selectedLeague);
+      } else {
+        alert(`Failed to resolve predictions: ${data.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('[PredictionsDashboard] [DEBUG] Error triggering manual resolution:', err);
+      alert(`Error: ${err.message}`);
+    } finally {
+      setResolvingPending(false);
+    }
+  };
+
+  // Fetch history when view is toggled to history or league changes, with auto-refresh interval
   useEffect(() => {
+    let intervalId;
     if (activeView === 'history') {
       fetchPredictionsHistory(selectedLeague);
+      
+      // Auto-refresh history logs every 30 seconds to fetch completed matches outcomes
+      console.log('[PredictionsDashboard] [DEBUG] 🔄 Initializing auto-refresh interval for predictions history (30s)...');
+      intervalId = setInterval(() => {
+        fetchPredictionsHistory(selectedLeague);
+      }, 30000);
     }
+    
+    return () => {
+      if (intervalId) {
+        console.log('[PredictionsDashboard] [DEBUG] 🛑 Clearing predictions history auto-refresh interval.');
+        clearInterval(intervalId);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, selectedLeague]);
 
@@ -208,6 +279,88 @@ export default function PredictionsDashboard() {
     }
   };
 
+  // Capture multi-page PDF report of live predictions by sequentially rendering all sub-tabs
+  const handleExportPDF = async () => {
+    if (!predictionsRef.current || exportingPDF) return;
+    setExportingPDF(true);
+    console.log('[PredictionsDashboard] [DEBUG] 📄 Starting multi-page PDF generation...');
+    
+    // Save current sub-tab state
+    const originalSubTab = liveSubTab;
+    const pdfSubTabs = [
+      { id: 'all', label: 'As Predicted' },
+      { id: 'best', label: 'Best Picks' },
+      { id: 'best15', label: 'Best 1.5' },
+      { id: 'singlehome', label: 'Single Tip (Home)' },
+      { id: 'singleaway', label: 'Single Tip (Away)' },
+      { id: 'besthomeaway', label: 'Best Home/Away Pick (Double Chance)' },
+      { id: 'bestsingle', label: 'Best Single Pick' }
+    ];
+    
+    try {
+      const images = [];
+      
+      // Step-by-step transition, render, and capture of each tab
+      for (let i = 0; i < pdfSubTabs.length; i++) {
+        const tab = pdfSubTabs[i];
+        console.log(`[PredictionsDashboard] [DEBUG] 📸 Capturing tab: "${tab.label}" (${i + 1}/${pdfSubTabs.length})...`);
+        
+        // Update tab state to force React update
+        setLiveSubTab(tab.id);
+        
+        // Wait for React rendering & CSS transition effects to finish
+        await new Promise(r => setTimeout(r, 200));
+        
+        const canvas = await html2canvas(predictionsRef.current, {
+          useCORS: true,
+          backgroundColor: '#0A0F1E',
+          scale: 1.5, // optimal resolution without huge file sizes
+          logging: false
+        });
+        
+        images.push({
+          label: tab.label,
+          dataUrl: canvas.toDataURL('image/jpeg', 0.92), // high-quality JPEG compression
+          width: canvas.width,
+          height: canvas.height
+        });
+      }
+      
+      console.log('[PredictionsDashboard] [DEBUG] 📄 Stitching captured sub-tabs into a unified PDF document...');
+      
+      // Initialize landscape orientation PDF using the dimensions of the first captured tab
+      const firstImg = images[0];
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'px',
+        format: [firstImg.width, firstImg.height]
+      });
+      
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        if (i > 0) {
+          pdf.addPage([img.width, img.height], 'landscape');
+        }
+        pdf.setPage(i + 1);
+        
+        // Draw captured tab image to full page
+        pdf.addImage(img.dataUrl, 'JPEG', 0, 0, img.width, img.height);
+      }
+      
+      const leagueName = predictionResults?.league ? predictionResults.league.replace(/[^a-zA-Z0-9]/g, '_') : 'round';
+      const filename = `predictions_report_${leagueName}.pdf`;
+      pdf.save(filename);
+      
+      console.log(`[PredictionsDashboard] [DEBUG] ✅ PDF export complete! Saved as: ${filename}`);
+    } catch (err) {
+      console.error('[PredictionsDashboard] [DEBUG] ❌ PDF Export Failed:', err);
+    } finally {
+      // Restore original subtab state
+      setLiveSubTab(originalSubTab);
+      setExportingPDF(false);
+    }
+  };
+
   const getOutcomeColor = (out) => {
     if (out === 'H') return '#00FF88'; // success green
     if (out === 'A') return '#A78BFA'; // purple
@@ -228,8 +381,27 @@ export default function PredictionsDashboard() {
   const renderPredictionCard = (pred, subTab = 'all') => {
     const matchStatus = pred.status || 'UPCOMING';
     const cardLeague = pred.league || predictionResults?.league || '';
-    const isSingleView = subTab === 'singles' || subTab === 'bestsingle';
-    const bestTip = isSingleView ? getBestSingleTip(pred) : null;
+    const isSingleHomeView = subTab === 'singlehome';
+    const isSingleAwayView = subTab === 'singleaway';
+    const isBestHomeAwayView = subTab === 'besthomeaway';
+    const isBestSingleView = subTab === 'bestsingle';
+    const isBest15View = subTab === 'best15';
+    
+    let borderLeftColor = 'var(--accent-neon)';
+    if (isBest15View) {
+      borderLeftColor = '#00E5FF';
+    } else if (isSingleHomeView) {
+      borderLeftColor = '#3B82F6';
+    } else if (isSingleAwayView) {
+      borderLeftColor = '#EC4899';
+    } else if (isBestHomeAwayView) {
+      borderLeftColor = '#F43F5E';
+    } else if (isBestSingleView) {
+      const bestTip = getBestSingleTip(pred);
+      borderLeftColor = bestTip?.color || 'var(--accent-neon)';
+    } else {
+      borderLeftColor = pred.color || 'var(--accent-neon)';
+    }
     
     return (
       <div 
@@ -238,7 +410,7 @@ export default function PredictionsDashboard() {
         style={{ 
           padding: '16px', 
           border: '1px solid rgba(255,255,255,0.06)',
-          borderLeft: `4px solid ${bestTip?.color || pred.color || 'var(--accent-neon)'}`,
+          borderLeft: `4px solid ${borderLeftColor}`,
           display: 'flex', 
           flexDirection: 'column', 
           gap: '10px',
@@ -251,8 +423,8 @@ export default function PredictionsDashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ 
-              background: `${bestTip?.color || pred.color || 'var(--accent-neon)'}15`, 
-              color: (bestTip?.color || pred.color || 'var(--accent-neon)'), 
+              background: `${borderLeftColor}15`, 
+              color: borderLeftColor, 
               width: '24px', 
               height: '24px', 
               display: 'flex', 
@@ -260,7 +432,7 @@ export default function PredictionsDashboard() {
               justifyContent: 'center', 
               borderRadius: '50%', 
               fontWeight: 800, 
-              border: `1px solid ${bestTip?.color || pred.color || 'var(--accent-neon)'}30`,
+              border: `1px solid ${borderLeftColor}30`,
               fontSize: '0.74rem'
             }}>
               {pred.position + 1}
@@ -323,11 +495,33 @@ export default function PredictionsDashboard() {
 
         {/* Badges */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {isSingleView && bestTip ? (
+          {isBestSingleView ? (
+            (() => {
+              const bestTip = getBestSingleTip(pred);
+              return bestTip ? (
+                <div style={{ 
+                  background: `${bestTip.color}12`,
+                  border: `2px solid ${bestTip.color}`,
+                  color: bestTip.color,
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  fontSize: '0.8rem',
+                  fontWeight: 'bold',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: `0 0 10px ${bestTip.color}15`
+                }}>
+                  <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>🔥 BEST SINGLE TIP ({bestTip.market}):</span>
+                  <span>{bestTip.prediction} ({bestTip.prob}%)</span>
+                </div>
+              ) : null;
+            })()
+          ) : isSingleHomeView ? (
             <div style={{ 
-              background: `${bestTip.color}12`,
-              border: `2px solid ${bestTip.color}`,
-              color: bestTip.color,
+              background: 'rgba(59, 130, 246, 0.12)',
+              border: `2px solid #3B82F6`,
+              color: '#3B82F6',
               padding: '6px 12px',
               borderRadius: '8px',
               fontSize: '0.8rem',
@@ -335,10 +529,61 @@ export default function PredictionsDashboard() {
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              boxShadow: `0 0 10px ${bestTip.color}15`
+              boxShadow: '0 0 10px rgba(59, 130, 246, 0.15)'
             }}>
-              <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>🎯 BEST SINGLE TIP ({bestTip.market}):</span>
-              <span>{bestTip.prediction} ({bestTip.prob}%)</span>
+              <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>🏠 HOME SINGLE TIP:</span>
+              <span>{pred.predictedHomeTip || 'N/A'} ({pred.predictedHomeTipProb || 0}%)</span>
+            </div>
+          ) : isSingleAwayView ? (
+            <div style={{ 
+              background: 'rgba(236, 72, 153, 0.12)',
+              border: `2px solid #EC4899`,
+              color: '#EC4899',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 0 10px rgba(236, 72, 153, 0.15)'
+            }}>
+              <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>✈️ AWAY SINGLE TIP:</span>
+              <span>{pred.predictedAwayTip || 'N/A'} ({pred.predictedAwayTipProb || 0}%)</span>
+            </div>
+          ) : isBestHomeAwayView ? (
+            <div style={{ 
+              background: 'rgba(244, 63, 94, 0.12)',
+              border: `2px solid #F43F5E`,
+              color: '#F43F5E',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 0 10px rgba(244, 63, 94, 0.15)'
+            }}>
+              <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>🤝 DOUBLE CHANCE TIP:</span>
+              <span>Home or Away ({pred.predictedHomeOrAwayProb || 0}%)</span>
+            </div>
+          ) : isBest15View ? (
+            <div style={{ 
+              background: 'rgba(0, 229, 255, 0.12)',
+              border: '2px solid #00E5FF',
+              color: '#00E5FF',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 0 10px rgba(0, 229, 255, 0.15)'
+            }}>
+              <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>🎯 BEST 1.5 TIP:</span>
+              <span>Over 1.5 ({pred.predictedOver15Prob}%)</span>
             </div>
           ) : (
             <>
@@ -353,6 +598,48 @@ export default function PredictionsDashboard() {
               }}>
                 Outcome: {pred.predictedOutcome === 'H' ? 'H' : pred.predictedOutcome === 'A' ? 'A' : 'D'}{pred.predictedOutcomeProb !== undefined ? ` (${pred.predictedOutcomeProb}%)` : ''}
               </div>
+
+              {pred.predictedHomeOrAwayProb !== undefined && pred.predictedHomeOrAwayProb !== null && (
+                <div style={{ 
+                  background: 'rgba(244, 63, 94, 0.1)',
+                  border: '1px solid rgba(244, 63, 94, 0.4)',
+                  color: '#F43F5E',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  fontWeight: 'bold'
+                }}>
+                  Double Chance: Home or Away ({pred.predictedHomeOrAwayProb}%)
+                </div>
+              )}
+
+              {pred.predictedHomeTip && (
+                <div style={{ 
+                  background: 'rgba(59, 130, 246, 0.1)',
+                  border: '1px solid rgba(59, 130, 246, 0.4)',
+                  color: '#3B82F6',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  fontWeight: 'bold'
+                }}>
+                  Home Tip: {pred.predictedHomeTip} ({pred.predictedHomeTipProb}%)
+                </div>
+              )}
+
+              {pred.predictedAwayTip && (
+                <div style={{ 
+                  background: 'rgba(236, 72, 153, 0.1)',
+                  border: '1px solid rgba(236, 72, 153, 0.4)',
+                  color: '#EC4899',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  fontWeight: 'bold'
+                }}>
+                  Away Tip: {pred.predictedAwayTip} ({pred.predictedAwayTipProb}%)
+                </div>
+              )}
 
               <div style={{ 
                 background: pred.predictedBtts === 'GG' ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 255, 255, 0.03)',
@@ -637,22 +924,41 @@ export default function PredictionsDashboard() {
                     </span>
                   </div>
 
-                  <button
-                    onClick={handleCaptureScreenshot}
-                    disabled={capturing}
-                    style={{
-                      background: 'rgba(167, 139, 250, 0.1)',
-                      border: '1px solid rgba(167, 139, 250, 0.3)',
-                      color: 'var(--accent-purple)',
-                      padding: '8px 14px',
-                      borderRadius: '6px',
-                      fontSize: '0.78rem',
-                      fontWeight: '700',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {capturing ? '📸 Saving...' : '📸 Save Screenshot (PNG)'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      onClick={handleCaptureScreenshot}
+                      disabled={capturing || exportingPDF}
+                      style={{
+                        background: 'rgba(167, 139, 250, 0.1)',
+                        border: '1px solid rgba(167, 139, 250, 0.3)',
+                        color: 'var(--accent-purple)',
+                        padding: '8px 14px',
+                        borderRadius: '6px',
+                        fontSize: '0.78rem',
+                        fontWeight: '700',
+                        cursor: (capturing || exportingPDF) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      {capturing ? '📸 Saving...' : '📸 Save Screenshot (PNG)'}
+                    </button>
+
+                    <button
+                      onClick={handleExportPDF}
+                      disabled={capturing || exportingPDF}
+                      style={{
+                        background: 'rgba(0, 229, 255, 0.1)',
+                        border: '1px solid rgba(0, 229, 255, 0.3)',
+                        color: 'var(--accent-neon)',
+                        padding: '8px 14px',
+                        borderRadius: '6px',
+                        fontSize: '0.78rem',
+                        fontWeight: '700',
+                        cursor: (capturing || exportingPDF) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      {exportingPDF ? '📄 Exporting PDF...' : '📄 Save PDF Report'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Sub-tabs selector for Live Predictor */}
@@ -660,7 +966,10 @@ export default function PredictionsDashboard() {
                   {[
                     { id: 'all', label: 'As Predicted', emoji: '📋' },
                     { id: 'best', label: 'Best Picks', emoji: '⭐️' },
-                    { id: 'singles', label: 'Single Tip / Match', emoji: '🎯' },
+                    { id: 'best15', label: 'Best 1.5', emoji: '🥅' },
+                    { id: 'singlehome', label: 'Single Tip (Home)', emoji: '🏠' },
+                    { id: 'singleaway', label: 'Single Tip (Away)', emoji: '✈️' },
+                    { id: 'besthomeaway', label: 'Best Home/Away Pick', emoji: '🤝' },
                     { id: 'bestsingle', label: 'Best Single Pick', emoji: '🔥' }
                   ].map(sub => {
                     const isSelected = liveSubTab === sub.id;
@@ -746,7 +1055,10 @@ export default function PredictionsDashboard() {
                 {[
                   { id: 'all', label: 'As Predicted', emoji: '📋' },
                   { id: 'best', label: 'Best Picks', emoji: '⭐️' },
-                  { id: 'singles', label: 'Single Tip / Match', emoji: '🎯' },
+                  { id: 'best15', label: 'Best 1.5', emoji: '🥅' },
+                  { id: 'singlehome', label: 'Single Tip (Home)', emoji: '🏠' },
+                  { id: 'singleaway', label: 'Single Tip (Away)', emoji: '✈️' },
+                  { id: 'besthomeaway', label: 'Best Home/Away Pick', emoji: '🤝' },
                   { id: 'bestsingle', label: 'Best Single Pick', emoji: '🔥' }
                 ].map(sub => {
                   const isSelected = historySubTab === sub.id;
@@ -801,6 +1113,9 @@ export default function PredictionsDashboard() {
                       let correctBtts = 0;
                       let correctOver15 = 0;
                       let correctOver25 = 0;
+                      let correctHomeOrAway = 0;
+                      let correctHomeTip = 0;
+                      let correctAwayTip = 0;
                       let correctSingleCount = 0;
                       
                       filteredRoundPreds.forEach(p => {
@@ -809,6 +1124,9 @@ export default function PredictionsDashboard() {
                           if (p.bttsCorrect) correctBtts++;
                           if (p.over15Correct) correctOver15++;
                           if (p.over25Correct) correctOver25++;
+                          if (p.homeOrAwayCorrect) correctHomeOrAway++;
+                          if (p.homeTipCorrect) correctHomeTip++;
+                          if (p.awayTipCorrect) correctAwayTip++;
                           
                           const bestTip = getBestSingleTip(p);
                           if (bestTip) {
@@ -817,16 +1135,28 @@ export default function PredictionsDashboard() {
                             else if (bestTip.market === 'BTTS') isCorrect = p.bttsCorrect;
                             else if (bestTip.market === 'O/U 1.5') isCorrect = p.over15Correct;
                             else if (bestTip.market === 'O/U 2.5') isCorrect = p.over25Correct;
+                            else if (bestTip.market === 'Double Chance') isCorrect = p.homeOrAwayCorrect;
+                            else if (bestTip.market === 'Home Tip') isCorrect = p.homeTipCorrect;
+                            else if (bestTip.market === 'Away Tip') isCorrect = p.awayTipCorrect;
                             if (isCorrect) correctSingleCount++;
                           }
                         }
                       });
 
-                      const isSingleView = historySubTab === 'singles' || historySubTab === 'bestsingle';
+                      const isSingleHomeView = historySubTab === 'singlehome';
+                      const isSingleAwayView = historySubTab === 'singleaway';
+                      const isBestHomeAwayView = historySubTab === 'besthomeaway';
+                      const isBestSingleView = historySubTab === 'bestsingle';
+                      const isSingleView = isSingleHomeView || isSingleAwayView || isBestHomeAwayView || isBestSingleView;
+                      const isBest15View = historySubTab === 'best15';
+
                       const outcomePct = totalResolved > 0 ? Math.round((correctOutcome / totalResolved) * 100) : null;
                       const bttsPct = totalResolved > 0 ? Math.round((correctBtts / totalResolved) * 100) : null;
                       const over15Pct = totalResolved > 0 ? Math.round((correctOver15 / totalResolved) * 100) : null;
                       const over25Pct = totalResolved > 0 ? Math.round((correctOver25 / totalResolved) * 100) : null;
+                      const homeOrAwayPct = totalResolved > 0 ? Math.round((correctHomeOrAway / totalResolved) * 100) : null;
+                      const homeTipPct = totalResolved > 0 ? Math.round((correctHomeTip / totalResolved) * 100) : null;
+                      const awayTipPct = totalResolved > 0 ? Math.round((correctAwayTip / totalResolved) * 100) : null;
                       const singlePct = totalResolved > 0 ? Math.round((correctSingleCount / totalResolved) * 100) : null;
 
                       return (
@@ -856,16 +1186,48 @@ export default function PredictionsDashboard() {
                             {/* Accuracy badges */}
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                               {totalResolved > 0 ? (
-                                isSingleView ? (
+                                isSingleHomeView ? (
+                                  <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '85px' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Home Tip Acc</span>
+                                    <strong style={{ color: '#3B82F6', fontSize: '0.85rem' }}>{correctHomeTip}/{totalResolved} ({homeTipPct}%)</strong>
+                                  </div>
+                                ) : isSingleAwayView ? (
+                                  <div style={{ background: 'rgba(236, 72, 153, 0.05)', border: '1px solid rgba(236, 72, 153, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '85px' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Away Tip Acc</span>
+                                    <strong style={{ color: '#EC4899', fontSize: '0.85rem' }}>{correctAwayTip}/{totalResolved} ({awayTipPct}%)</strong>
+                                  </div>
+                                ) : isBestHomeAwayView ? (
+                                  <div style={{ background: 'rgba(244, 63, 94, 0.05)', border: '1px solid rgba(244, 63, 94, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '85px' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Double Chance Acc</span>
+                                    <strong style={{ color: '#F43F5E', fontSize: '0.85rem' }}>{correctHomeOrAway}/{totalResolved} ({homeOrAwayPct}%)</strong>
+                                  </div>
+                                ) : isBestSingleView ? (
                                   <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '85px' }}>
                                     <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Single Tip Acc</span>
                                     <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctSingleCount}/{totalResolved} ({singlePct}%)</strong>
+                                  </div>
+                                ) : isBest15View ? (
+                                  <div style={{ background: 'rgba(0, 229, 255, 0.05)', border: '1px solid rgba(0, 229, 255, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '85px' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Over 1.5 Acc</span>
+                                    <strong style={{ color: '#00E5FF', fontSize: '0.85rem' }}>{correctOver15}/{totalResolved} ({over15Pct}%)</strong>
                                   </div>
                                 ) : (
                                   <>
                                     <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
                                       <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Outcome</span>
                                       <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctOutcome}/{totalResolved} ({outcomePct}%)</strong>
+                                    </div>
+                                    <div style={{ background: 'rgba(244, 63, 94, 0.05)', border: '1px solid rgba(244, 63, 94, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '85px' }}>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Double Chance</span>
+                                      <strong style={{ color: '#F43F5E', fontSize: '0.85rem' }}>{correctHomeOrAway}/{totalResolved} ({homeOrAwayPct}%)</strong>
+                                    </div>
+                                    <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Home Tip</span>
+                                      <strong style={{ color: '#3B82F6', fontSize: '0.85rem' }}>{correctHomeTip}/{totalResolved} ({homeTipPct}%)</strong>
+                                    </div>
+                                    <div style={{ background: 'rgba(236, 72, 153, 0.05)', border: '1px solid rgba(236, 72, 153, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Away Tip</span>
+                                      <strong style={{ color: '#EC4899', fontSize: '0.85rem' }}>{correctAwayTip}/{totalResolved} ({awayTipPct}%)</strong>
                                     </div>
                                     <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
                                       <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>BTTS</span>
@@ -882,8 +1244,33 @@ export default function PredictionsDashboard() {
                                   </>
                                 )
                               ) : (
-                                <div style={{ background: 'rgba(255, 215, 0, 0.06)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.74rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
-                                  ⏳ Pending Match Completion
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <div style={{ background: 'rgba(255, 215, 0, 0.06)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.74rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
+                                    ⏳ Pending Match Completion
+                                  </div>
+                                  <button
+                                    onClick={handleResolvePending}
+                                    disabled={resolvingPending}
+                                    style={{
+                                      background: 'rgba(167, 139, 250, 0.15)',
+                                      border: '1px solid rgba(167, 139, 250, 0.35)',
+                                      color: 'var(--accent-purple)',
+                                      borderRadius: '4px',
+                                      padding: '6px 12px',
+                                      fontSize: '0.74rem',
+                                      fontWeight: 'bold',
+                                      cursor: resolvingPending ? 'not-allowed' : 'pointer',
+                                      transition: 'all 0.2s ease',
+                                      outline: 'none',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px'
+                                    }}
+                                    onMouseEnter={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.25)')}
+                                    onMouseLeave={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.15)')}
+                                  >
+                                    {resolvingPending ? '⏳ Checking...' : '🔄 Check Outcomes'}
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -894,13 +1281,27 @@ export default function PredictionsDashboard() {
                             {filteredRoundPreds.map(pred => {
                               const bestTip = isSingleView ? getBestSingleTip(pred) : null;
                               
+                              let isHomeTipCorrect = pred.homeTipCorrect;
+                              let isAwayTipCorrect = pred.awayTipCorrect;
+                              let isHomeOrAwayCorrect = pred.homeOrAwayCorrect;
+                              
                               let isBestTipCorrect = false;
                               if (bestTip) {
                                 if (bestTip.market === 'Outcome') isBestTipCorrect = pred.outcomeCorrect;
                                 else if (bestTip.market === 'BTTS') isBestTipCorrect = pred.bttsCorrect;
                                 else if (bestTip.market === 'O/U 1.5') isBestTipCorrect = pred.over15Correct;
                                 else if (bestTip.market === 'O/U 2.5') isBestTipCorrect = pred.over25Correct;
+                                else if (bestTip.market === 'Double Chance') isBestTipCorrect = pred.homeOrAwayCorrect;
+                                else if (bestTip.market === 'Home Tip') isBestTipCorrect = pred.homeTipCorrect;
+                                else if (bestTip.market === 'Away Tip') isBestTipCorrect = pred.awayTipCorrect;
                               }
+
+                              const hasBorderStatus = pred.resolved && (isSingleHomeView || isSingleAwayView || isBestHomeAwayView || isBestSingleView || isBest15View);
+                              const isResolvedCorrect = (isSingleHomeView && isHomeTipCorrect) ||
+                                (isSingleAwayView && isAwayTipCorrect) ||
+                                (isBestHomeAwayView && isHomeOrAwayCorrect) ||
+                                (isBest15View && pred.over15Correct) ||
+                                (isBestSingleView && isBestTipCorrect);
 
                               return (
                                 <div 
@@ -910,8 +1311,8 @@ export default function PredictionsDashboard() {
                                     padding: '12px 14px',
                                     background: 'rgba(0,0,0,0.2)',
                                     border: '1px solid rgba(255,255,255,0.03)',
-                                    borderLeft: isSingleView && bestTip && pred.resolved
-                                      ? `4px solid ${isBestTipCorrect ? 'var(--accent-success)' : 'var(--accent-live)'}`
+                                    borderLeft: hasBorderStatus
+                                      ? `4px solid ${isResolvedCorrect ? 'var(--accent-success)' : 'var(--accent-live)'}`
                                       : '1px solid rgba(255,255,255,0.03)',
                                     display: 'flex',
                                     flexDirection: 'column',
@@ -935,7 +1336,61 @@ export default function PredictionsDashboard() {
 
                                   <strong style={{ color: 'white', fontSize: '0.85rem' }}>{pred.match}</strong>
                                   
-                                  {isSingleView && bestTip && (
+                                  {isSingleHomeView && (
+                                    <div style={{ 
+                                      background: 'rgba(59, 130, 246, 0.1)',
+                                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                                      color: '#3B82F6',
+                                      padding: '4px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: 'bold',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      alignSelf: 'flex-start'
+                                    }}>
+                                      🏠 Home Single Tip: {pred.predictedHomeTip} ({pred.predictedHomeTipProb}%)
+                                    </div>
+                                  )}
+
+                                  {isSingleAwayView && (
+                                    <div style={{ 
+                                      background: 'rgba(236, 72, 153, 0.1)',
+                                      border: '1px solid rgba(236, 72, 153, 0.3)',
+                                      color: '#EC4899',
+                                      padding: '4px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: 'bold',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      alignSelf: 'flex-start'
+                                    }}>
+                                      ✈️ Away Single Tip: {pred.predictedAwayTip} ({pred.predictedAwayTipProb}%)
+                                    </div>
+                                  )}
+
+                                  {isBestHomeAwayView && (
+                                    <div style={{ 
+                                      background: 'rgba(244, 63, 94, 0.1)',
+                                      border: '1px solid rgba(244, 63, 94, 0.3)',
+                                      color: '#F43F5E',
+                                      padding: '4px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: 'bold',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      alignSelf: 'flex-start'
+                                    }}>
+                                      🤝 Double Chance Tip: Home or Away ({pred.predictedHomeOrAwayProb}%)
+                                    </div>
+                                  )}
+
+                                  {isBestSingleView && bestTip && (
                                     <div style={{ 
                                       background: `${bestTip.color}10`,
                                       border: `1px solid ${bestTip.color}30`,
@@ -949,15 +1404,33 @@ export default function PredictionsDashboard() {
                                       gap: '4px',
                                       alignSelf: 'flex-start'
                                     }}>
-                                      🎯 Single Tip ({bestTip.market}): {bestTip.prediction} ({bestTip.prob}%)
+                                      🔥 Best Single Tip ({bestTip.market}): {bestTip.prediction} ({bestTip.prob}%)
+                                    </div>
+                                  )}
+
+                                  {isBest15View && (
+                                    <div style={{ 
+                                      background: 'rgba(0, 229, 255, 0.1)',
+                                      border: '1px solid rgba(0, 229, 255, 0.3)',
+                                      color: '#00E5FF',
+                                      padding: '4px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: 'bold',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      alignSelf: 'flex-start'
+                                    }}>
+                                      🎯 Best 1.5 Tip: Over 1.5 ({pred.predictedOver15Prob}%)
                                     </div>
                                   )}
 
                                   {/* Verifications */}
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                    
+
                                     {/* 1. OUTCOME VERIFICATION */}
-                                    {(!isSingleView || bestTip?.market === 'Outcome') && (
+                                    {(!isSingleView && !isBest15View) && (
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
                                         <div>
                                           <span style={{ color: 'var(--text-secondary)' }}>Winner: </span>
@@ -966,14 +1439,7 @@ export default function PredictionsDashboard() {
                                         {pred.resolved ? (
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                             <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOutcome}</span>
-                                            <span style={{ 
-                                              color: pred.outcomeCorrect ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                              fontWeight: 'bold',
-                                              background: pred.outcomeCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                              padding: '1px 4px',
-                                              borderRadius: '3px',
-                                              fontSize: '0.65rem'
-                                            }}>
+                                            <span style={{ color: pred.outcomeCorrect ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold', background: pred.outcomeCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.65rem' }}>
                                               {pred.outcomeCorrect ? '✓' : '✗'}
                                             </span>
                                           </div>
@@ -983,8 +1449,68 @@ export default function PredictionsDashboard() {
                                       </div>
                                     )}
 
-                                    {/* 2. BTTS VERIFICATION */}
-                                    {(!isSingleView || bestTip?.market === 'BTTS') && (
+                                    {/* 2. DOUBLE CHANCE VERIFICATION */}
+                                    {(isBestHomeAwayView || (!isSingleView && !isBest15View)) && pred.predictedHomeOrAwayProb !== undefined && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(244,63,94,0.06)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <div>
+                                          <span style={{ color: '#F43F5E' }}>🤝 Double Chance: </span>
+                                          <strong style={{ color: '#F43F5E' }}>Home or Away ({pred.predictedHomeOrAwayProb}%)</strong>
+                                        </div>
+                                        {pred.resolved ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOutcome !== 'D' ? 'WON' : 'DRAW'}</span>
+                                            <span style={{ color: pred.homeOrAwayCorrect ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold', background: pred.homeOrAwayCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.65rem' }}>
+                                              {pred.homeOrAwayCorrect ? '✓' : '✗'}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* 3. HOME TIP VERIFICATION */}
+                                    {(isSingleHomeView || (!isSingleView && !isBest15View)) && pred.predictedHomeTip && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(59,130,246,0.06)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <div>
+                                          <span style={{ color: '#3B82F6' }}>🏠 Home Tip: </span>
+                                          <strong style={{ color: '#3B82F6' }}>{pred.predictedHomeTip} ({pred.predictedHomeTipProb}%)</strong>
+                                        </div>
+                                        {pred.resolved ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Score: {pred.actualScore}</span>
+                                            <span style={{ color: pred.homeTipCorrect ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold', background: pred.homeTipCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.65rem' }}>
+                                              {pred.homeTipCorrect ? '✓' : '✗'}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* 4. AWAY TIP VERIFICATION */}
+                                    {(isSingleAwayView || (!isSingleView && !isBest15View)) && pred.predictedAwayTip && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(236,72,153,0.06)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <div>
+                                          <span style={{ color: '#EC4899' }}>✈️ Away Tip: </span>
+                                          <strong style={{ color: '#EC4899' }}>{pred.predictedAwayTip} ({pred.predictedAwayTipProb}%)</strong>
+                                        </div>
+                                        {pred.resolved ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Score: {pred.actualScore}</span>
+                                            <span style={{ color: pred.awayTipCorrect ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold', background: pred.awayTipCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.65rem' }}>
+                                              {pred.awayTipCorrect ? '✓' : '✗'}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* 5. BTTS VERIFICATION */}
+                                    {(!isSingleView && !isBest15View) && (
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
                                         <div>
                                           <span style={{ color: 'var(--text-secondary)' }}>BTTS: </span>
@@ -993,14 +1519,7 @@ export default function PredictionsDashboard() {
                                         {pred.resolved ? (
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                             <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualBtts}</span>
-                                            <span style={{ 
-                                              color: pred.bttsCorrect ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                              fontWeight: 'bold',
-                                              background: pred.bttsCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                              padding: '1px 4px',
-                                              borderRadius: '3px',
-                                              fontSize: '0.65rem'
-                                            }}>
+                                            <span style={{ color: pred.bttsCorrect ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold', background: pred.bttsCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.65rem' }}>
                                               {pred.bttsCorrect ? '✓' : '✗'}
                                             </span>
                                           </div>
@@ -1010,8 +1529,8 @@ export default function PredictionsDashboard() {
                                       </div>
                                     )}
 
-                                    {/* 3. O/U 1.5 VERIFICATION */}
-                                    {(!isSingleView || bestTip?.market === 'O/U 1.5') && (
+                                    {/* 6. O/U 1.5 VERIFICATION */}
+                                    {((!isSingleView && !isBest15View) || isBest15View) && (
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
                                         <div>
                                           <span style={{ color: 'var(--text-secondary)' }}>O/U 1.5: </span>
@@ -1020,14 +1539,7 @@ export default function PredictionsDashboard() {
                                         {pred.resolved ? (
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                             <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOver15}</span>
-                                            <span style={{ 
-                                              color: pred.over15Correct ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                              fontWeight: 'bold',
-                                              background: pred.over15Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                              padding: '1px 4px',
-                                              borderRadius: '3px',
-                                              fontSize: '0.65rem'
-                                            }}>
+                                            <span style={{ color: pred.over15Correct ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold', background: pred.over15Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.65rem' }}>
                                               {pred.over15Correct ? '✓' : '✗'}
                                             </span>
                                           </div>
@@ -1037,8 +1549,8 @@ export default function PredictionsDashboard() {
                                       </div>
                                     )}
 
-                                    {/* 4. O/U 2.5 VERIFICATION */}
-                                    {(!isSingleView || bestTip?.market === 'O/U 2.5') && (
+                                    {/* 7. O/U 2.5 VERIFICATION */}
+                                    {(!isSingleView && !isBest15View) && (
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
                                         <div>
                                           <span style={{ color: 'var(--text-secondary)' }}>O/U 2.5: </span>
@@ -1047,14 +1559,7 @@ export default function PredictionsDashboard() {
                                         {pred.resolved ? (
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                             <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOver25}</span>
-                                            <span style={{ 
-                                              color: pred.over25Correct ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                              fontWeight: 'bold',
-                                              background: pred.over25Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                              padding: '1px 4px',
-                                              borderRadius: '3px',
-                                              fontSize: '0.65rem'
-                                            }}>
+                                            <span style={{ color: pred.over25Correct ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold', background: pred.over25Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.65rem' }}>
                                               {pred.over25Correct ? '✓' : '✗'}
                                             </span>
                                           </div>
@@ -1075,7 +1580,7 @@ export default function PredictionsDashboard() {
                                   
                                   {/* Reasoning */}
                                   <div style={{ background: 'rgba(255,255,255,0.01)', padding: '6px 8px', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.02)', fontStyle: 'italic', marginTop: '2px' }}>
-                                    🧠 AI: "{pred.reasoning}"
+                                    🧠 AI: &quot;{pred.reasoning}&quot;
                                   </div>
                                 </div>
                               );

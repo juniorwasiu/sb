@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import RecommendedPicks from './RecommendedPicks';
 
 // ── Colour helpers ─────────────────────────────────────────────────────────
 const NEON    = '#00E5FF';
@@ -308,47 +307,12 @@ export default function LandingPage() {
                   </div>
                 )}
               </div>
-              <Link to="/" style={{
-                background: 'rgba(0,255,136,0.12)', border: '1px solid rgba(0,255,136,0.35)',
-                color: GREEN, borderRadius: 10, padding: '10px 18px',
-                textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
-                display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease',
-              }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,255,136,0.22)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,255,136,0.12)'}
-              >
-                🧠 Pattern Intel
-              </Link>
-              <Link to="/daily-tips" style={{
-                background: 'rgba(0,229,255,0.12)', border: '1px solid rgba(0,229,255,0.35)',
-                color: NEON, borderRadius: 10, padding: '10px 18px',
-                textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
-                display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease',
-              }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,229,255,0.22)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,229,255,0.12)'}
-              >
-                🔮 Daily Tips
-              </Link>
-              <Link to="/admin" style={{
-                background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.35)',
-                color: PURPLE, borderRadius: 10, padding: '10px 18px',
-                textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
-                display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease',
-              }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(167,139,250,0.22)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'rgba(167,139,250,0.12)'}
-              >
-                ⚙️ Admin Panel
-              </Link>
             </div>
           </div>
         </div>
       </header>
 
       <main style={{ maxWidth: 1100, margin: '0 auto', padding: '24px' }}>
-
-        <RecommendedPicks />
         <LivePredictionHub />
 
         {/* ── FILTERS BAR ──────────────────────────────────────────────────── */}
