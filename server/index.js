@@ -24,6 +24,7 @@ const {
     savePredictionToDb,
     resolvePredictionOutcomes,
     autoResolvePendingPredictions,
+    checkAndUpdatePendingPredictions,
     wipeDbData
 } = require('./supabase');
 const { saveAnalysis, getRecentContext, getLog, deleteEntry, getEntryById, clearLog, getStrategy, updateStrategy, fetchStrategyHistory, getLeagueIntelligence, updateLeagueIntelligence, getAnalysisByScopeAndDate, saveDailyTip, getDailyTip, getAllDailyTips } = require('./ai_memory');
@@ -5013,43 +5014,42 @@ ${fixturesDataStr}
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PREDICTIONS HISTORY AND ACCURACY RESOLUTION (LOCAL FILE STORE)
+// PREDICTIONS HISTORY — SUPABASE ONLY (no local file storage)
 // ─────────────────────────────────────────────────────────────────────────────
-const PREDICTIONS_HISTORY_PATH = path.join(__dirname, 'local_predictions_history.json');
 
+/**
+ * Builds a prediction round object and upserts it directly into Supabase.
+ * No local JSON file is used. Supabase is the single source of truth.
+ */
 async function savePredictionsToHistory(league, matches, predictions) {
     const cleanLeague = toDbLeague(league);
-    console.log(`[DEBUG] [Predictions History] Saving predictions to history for clean league: ${cleanLeague}...`);
-    let history = [];
-    if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
-        try {
-            history = JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
-        } catch (e) {
-            console.error('[DEBUG] [Predictions History] Error reading history file, resetting:', e.message);
-            history = [];
-        }
-    }
+    console.log(`[DEBUG] [Predictions History] Saving predictions to Supabase for league: ${cleanLeague}...`);
+
     const firstMatch = matches[0];
-    if (!firstMatch) return;
-    
+    if (!firstMatch) {
+        console.warn('[DEBUG] [Predictions History] No matches provided — skipping save.');
+        return;
+    }
+
     const date = firstMatch.date || new Date().toLocaleDateString('en-GB'); // DD/MM/YYYY
     let time = firstMatch.time || '';
-    if (time.includes("'") || time.includes("LIVE") || !time.includes(":")) {
+    if (time.includes("'") || time.includes('LIVE') || !time.includes(':')) {
         const now = new Date();
-        const hrs = String(now.getHours()).padStart(2, '0');
+        const hrs  = String(now.getHours()).padStart(2, '0');
         const mins = String(now.getMinutes()).padStart(2, '0');
         time = `${hrs}:${mins} (Live Captured)`;
+        console.log(`[DEBUG] [Predictions History] Adjusted live match time to: ${time}`);
     }
-    
+
     const roundId = `${date.replace(/\//g, '-')}_${time.replace(/[^a-zA-Z0-9]/g, '_')}_${cleanLeague.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-    const existingIndex = history.findIndex(h => h.id === roundId);
-    
+    console.log(`[DEBUG] [Predictions History] Round ID: ${roundId}`);
+
     const roundData = {
-        id: roundId,
+        id:          roundId,
         date,
         time,
-        league: cleanLeague,
-        capturedAt: new Date().toISOString(),
+        league:      cleanLeague,
+        capturedAt:  new Date().toISOString(),
         predictions: predictions.map(p => {
             const m = matches[p.position];
             return {
@@ -5059,59 +5059,44 @@ async function savePredictionsToHistory(league, matches, predictions) {
             };
         })
     };
-    
-    if (existingIndex !== -1) {
-        history[existingIndex] = roundData;
-        console.log(`[DEBUG] [Predictions History] Updated existing round predictions for ID: ${roundId}`);
-    } else {
-        history.push(roundData);
-        console.log(`[DEBUG] [Predictions History] Added new round predictions for ID: ${roundId}`);
-    }
-    
-    // Limit history length to conserve storage
-    if (history.length > 100) {
-        history.shift();
-    }
-    
-    fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify(history, null, 2), 'utf8');
 
-    // Also save to Supabase asynchronously
+    // Save directly to Supabase (upsert — handles both new and updated rounds)
     try {
         await savePredictionToDb(roundData);
-        console.log(`[DEBUG] [Predictions History] Successfully saved round predictions to database for ID: ${roundId}`);
+        console.log(`[DEBUG] [Predictions History] ✅ Upserted round ${roundId} to Supabase.`);
     } catch (dbErr) {
-        console.error(`[DEBUG] [Predictions History] Failed to save round predictions to database for ID: ${roundId}:`, dbErr.message);
+        console.error(`[DEBUG] [Predictions History] ❌ Failed to save round ${roundId} to Supabase:`, dbErr.message);
     }
 }
 
 // 6. GET predictions history resolved against completed scores
 app.get('/api/local-vfootball/predictions-history', async (req, res) => {
     console.log('[DEBUG] [Local API] GET /api/local-vfootball/predictions-history requested');
-    const leagueQuery = req.query.league || 'England League';
+    const leagueQuery    = req.query.league || 'England League';
     const targetDbLeague = toDbLeague(leagueQuery);
-    
+
     try {
-        const history = await getPredictionsHistoryFromDb();
-        const filteredHistory = history.filter(h => toDbLeague(h.league) === targetDbLeague);
-        
-        // Fetch all finished matches from database once to resolve prediction outcomes
+        console.log(`[DEBUG] [Predictions History] Fetching history for league: "${leagueQuery}" (db key: "${targetDbLeague}")`);
+        // Fetch only predictions for this league directly from Supabase (filtered server-side)
+        const history = await getPredictionsHistoryFromDb(targetDbLeague);
+
+        // Fetch all finished match results from Supabase to resolve outcomes
         const finishedMatches = await getMatchesFromDb();
-        
-        const resolvedHistory = filteredHistory.map(round => {
-            return {
-                ...round,
-                predictions: resolvePredictionOutcomes(round.predictions, round.date, finishedMatches)
-            };
-        });
-        
-        // Return reverse chronological order (newest first)
-        resolvedHistory.reverse();
-        
-        console.log(`[DEBUG] [Local API] Returning ${resolvedHistory.length} rounds of prediction history for ${leagueQuery}.`);
+        console.log(`[DEBUG] [Predictions History] Resolving ${history.length} rounds against ${finishedMatches.length} finished matches...`);
+
+        const resolvedHistory = history.map(round => ({
+            ...round,
+            predictions: resolvePredictionOutcomes(round.predictions, round.date, finishedMatches)
+        }));
+
+        // newest first (Supabase already returns captured_at DESC, but reverse just in case)
+        resolvedHistory.sort((a, b) => new Date(b.capturedAt) - new Date(a.capturedAt));
+
+        console.log(`[DEBUG] [Local API] Returning ${resolvedHistory.length} resolved rounds for "${leagueQuery}".`);
         res.json({ success: true, history: resolvedHistory });
     } catch (err) {
         console.error('[DEBUG] [Local API] Failed to fetch predictions history:', err.message);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: `Failed to load predictions history: ${err.message}` });
     }
 });
 
@@ -5150,7 +5135,7 @@ app.post('/api/local-vfootball/sync-league', async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     let totalAdded = 0;
     let totalDupes = 0;
-    
+
     try {
         const { nativeCaptureLeagueResults } = require('./native_scraper');
         const result = await nativeCaptureLeagueResults(league, today, {
@@ -5171,7 +5156,16 @@ app.post('/api/local-vfootball/sync-league', async (req, res) => {
                 }
             }
         });
-        
+
+        // After scraping, immediately check & update any pending predictions for this league
+        console.log(`[Sync League] 🔄 Triggering pending predictions check for "${league}" after scrape...`);
+        try {
+            const resolveStats = await checkAndUpdatePendingPredictions(league);
+            console.log(`[Sync League] ✅ Pending check done: checked=${resolveStats.checked}, updated=${resolveStats.updated}, resolved=${resolveStats.resolved}`);
+        } catch (resolveErr) {
+            console.error(`[Sync League] ⚠️ Pending check failed (non-fatal):`, resolveErr.message);
+        }
+
         console.log(`[Sync League] ✅ Finished scraping "${league}" for ${today}. Added: ${totalAdded}, Dupes: ${totalDupes}, Pages: ${result.totalPages}`);
         res.json({ success: true, league, date: today, added: totalAdded, dupes: totalDupes, pages: result.totalPages });
     } catch (err) {
@@ -5181,15 +5175,45 @@ app.post('/api/local-vfootball/sync-league', async (req, res) => {
     }
 });
 
-// 8.5. POST endpoint to trigger manual predictions resolution
+// 8.5. POST endpoint to trigger manual predictions resolution for all leagues
 app.post('/api/predictions/resolve-pending', async (req, res) => {
-    console.log('[DEBUG] [Local API] POST /api/predictions/resolve-pending requested (manual check)');
+    console.log('[DEBUG] [Local API] POST /api/predictions/resolve-pending requested (manual check — ALL leagues)');
     try {
-        await autoResolvePendingPredictions();
-        res.json({ success: true, message: 'Successfully triggered predictions resolution check.' });
+        const stats = await autoResolvePendingPredictions();
+        res.json({
+            success: true,
+            message: `Predictions resolution complete. Updated ${stats.updated} round(s) out of ${stats.checked} pending.`,
+            updated: stats.updated,
+            checked: stats.checked
+        });
     } catch (err) {
         console.error('[DEBUG] [Local API] Manual predictions resolution failed:', err.message);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: `Resolution failed: ${err.message}` });
+    }
+});
+
+// 8.6. POST /api/predictions/check-pending?league=England+League
+// Checks and updates pending predictions for a SPECIFIC league only.
+// Steps: fetch pending rounds for league → fetch latest results → resolve & save.
+app.post('/api/predictions/check-pending', async (req, res) => {
+    const league = req.query.league || req.body?.league;
+    if (!league) {
+        return res.status(400).json({ success: false, error: 'Missing ?league= query parameter or league in request body.' });
+    }
+    console.log(`[DEBUG] [Local API] POST /api/predictions/check-pending → league: "${league}"`);
+    try {
+        const stats = await checkAndUpdatePendingPredictions(league);
+        res.json({
+            success:  true,
+            league,
+            message:  `Checked ${stats.checked} pending round(s) for "${league}". Updated ${stats.updated} round(s), resolved ${stats.resolved} new prediction(s).`,
+            checked:  stats.checked,
+            updated:  stats.updated,
+            resolved: stats.resolved
+        });
+    } catch (err) {
+        console.error(`[DEBUG] [Local API] check-pending failed for "${league}":`, err.message);
+        res.status(500).json({ success: false, error: `Check pending failed: ${err.message}` });
     }
 });
 

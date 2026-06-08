@@ -1,16 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // supabase.js — SUPABASE-ONLY storage for match results & predictions history
 // ─────────────────────────────────────────────────────────────────────────────
-// ⚠️  local_results.json is NO LONGER USED. All results go straight to Supabase.
-//     Supabase is REQUIRED — the server will throw if SUPABASE_URL / SUPABASE_KEY
-//     are missing.
-//
-// Predictions history still keeps a local JSON backup alongside Supabase so that
-// history survives a cold Supabase outage during development.
+// ✅ All data (match results + predictions history) is stored in Supabase ONLY.
+//    No local JSON files are used for storage.
+//    Supabase is REQUIRED — the server throws clearly if credentials are missing.
 // ─────────────────────────────────────────────────────────────────────────────
 const { createClient } = require('@supabase/supabase-js');
-const fs   = require('fs');
-const path = require('path');
 const { toDbLeague } = require('./constants');
 require('dotenv').config();
 
@@ -39,9 +34,6 @@ if (supabaseUrl && supabaseKey) {
         console.error('[SUPABASE] [DEBUG] Failed to initialize Supabase client:', err.message);
     }
 }
-
-// ── Predictions history — local backup path (kept, small file) ───────────────
-const PREDICTIONS_HISTORY_PATH = path.join(__dirname, 'local_predictions_history.json');
 
 // ── DB row mappers ───────────────────────────────────────────────────────────
 const mapMatchToDb = (match) => {
@@ -78,31 +70,6 @@ const mapMatchFromDb = (row) => ({
     sourceTag:  row.source_tag,
     uploadedAt: row.uploaded_at
 });
-
-// ── Predictions history local helpers (backup only) ──────────────────────────
-function getPredictionsHistoryFromLocal() {
-    if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
-        try {
-            return JSON.parse(fs.readFileSync(PREDICTIONS_HISTORY_PATH, 'utf8'));
-        } catch (e) {
-            console.error('[SUPABASE] [DEBUG] Failed to read local_predictions_history.json:', e.message);
-            return [];
-        }
-    }
-    return [];
-}
-
-function savePredictionsToLocalJson(roundData) {
-    let history = getPredictionsHistoryFromLocal();
-    const idx = history.findIndex(h => h.id === roundData.id);
-    if (idx !== -1) {
-        history[idx] = roundData;
-    } else {
-        history.push(roundData);
-    }
-    if (history.length > 100) history.shift();
-    fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify(history, null, 2), 'utf8');
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC DATABASE API FUNCTIONS
@@ -197,79 +164,67 @@ async function saveMatchesToDb(newMatches) {
     return { added, dupes, total };
 }
 
-// 3. Get predictions history — prefer Supabase, fall back to local JSON if Supabase fails
-async function getPredictionsHistoryFromDb() {
-    if (supabaseClient) {
-        try {
-            console.log('[SUPABASE] [DEBUG] Querying predictions_history table from Supabase...');
-            const { data, error } = await supabaseClient
-                .from('predictions_history')
-                .select('*')
-                .order('captured_at', { ascending: false });
-            if (error) throw error;
-            console.log(`[SUPABASE] [DEBUG] ✅ Fetched ${data.length} prediction history entries from Supabase.`);
-            return data.map(row => ({
-                id:          row.id,
-                date:        row.date,
-                time:        row.time,
-                league:      row.league,
-                capturedAt:  row.captured_at,
-                predictions: row.predictions
-            }));
-        } catch (err) {
-            console.error('[SUPABASE] [DEBUG] Supabase query failed. Falling back to local JSON history:', err.message);
-        }
+// 3. Get predictions history — Supabase ONLY, throw if not configured
+async function getPredictionsHistoryFromDb(leagueFilter = null) {
+    if (!supabaseClient) {
+        throw new Error('[SUPABASE] Supabase client is not initialized. Check SUPABASE_URL and SUPABASE_KEY in .env.');
     }
-    return getPredictionsHistoryFromLocal();
+    console.log(`[SUPABASE] [DEBUG] Querying predictions_history from Supabase${leagueFilter ? ` (league: ${leagueFilter})` : ''}...`);
+
+    let query = supabaseClient
+        .from('predictions_history')
+        .select('*')
+        .order('captured_at', { ascending: false });
+
+    if (leagueFilter) {
+        query = query.ilike('league', `%${leagueFilter}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        console.error('[SUPABASE] [DEBUG] ❌ Failed to fetch predictions history from Supabase:', error.message);
+        throw error;
+    }
+    console.log(`[SUPABASE] [DEBUG] ✅ Fetched ${data.length} prediction history entries from Supabase.`);
+    return data.map(row => ({
+        id:          row.id,
+        date:        row.date,
+        time:        row.time,
+        league:      row.league,
+        capturedAt:  row.captured_at,
+        predictions: row.predictions
+    }));
 }
 
-// 4. Save prediction — write local backup + upsert to Supabase
+// 4. Save prediction — Supabase ONLY (no local backup)
 async function savePredictionToDb(roundData) {
-    // Local backup always written first so history survives a Supabase outage
-    savePredictionsToLocalJson(roundData);
-
-    if (supabaseClient) {
-        try {
-            console.log(`[SUPABASE] [DEBUG] Upserting prediction round ${roundData.id} to Supabase...`);
-            const dbRow = {
-                id:           roundData.id,
-                date:         roundData.date,
-                time:         roundData.time,
-                league:       roundData.league,
-                captured_at:  roundData.capturedAt || new Date().toISOString(),
-                predictions:  roundData.predictions
-            };
-            const { error } = await supabaseClient
-                .from('predictions_history')
-                .upsert(dbRow, { onConflict: 'id' });
-            if (error) throw error;
-            console.log(`[SUPABASE] [DEBUG] ✅ Upserted prediction round ${roundData.id}.`);
-        } catch (err) {
-            console.error('[SUPABASE] [DEBUG] Failed to upsert prediction round to Supabase:', err.message);
-        }
+    if (!supabaseClient) {
+        throw new Error('[SUPABASE] Supabase client is not initialized. Cannot save prediction — check .env for SUPABASE_URL and SUPABASE_KEY.');
     }
+    console.log(`[SUPABASE] [DEBUG] Upserting prediction round ${roundData.id} to Supabase...`);
+    const dbRow = {
+        id:          roundData.id,
+        date:        roundData.date,
+        time:        roundData.time,
+        league:      roundData.league,
+        captured_at: roundData.capturedAt || new Date().toISOString(),
+        predictions: roundData.predictions
+    };
+    const { error } = await supabaseClient
+        .from('predictions_history')
+        .upsert(dbRow, { onConflict: 'id' });
+    if (error) {
+        console.error('[SUPABASE] [DEBUG] ❌ Failed to upsert prediction round to Supabase:', error.message);
+        throw error;
+    }
+    console.log(`[SUPABASE] [DEBUG] ✅ Upserted prediction round ${roundData.id} to Supabase.`);
 }
 
-// 5. Wipe DB data — Supabase only (no more local_results.json to wipe)
+// 5. Wipe DB data — Supabase only
 async function wipeDbData(league, scope) {
     const targetDbLeague = league && league !== 'all' ? toDbLeague(league) : null;
     let wipedResults = 0;
     let wipedHistory = 0;
-
-    // Wipe predictions history local backup
-    if (!scope || scope === 'all' || scope === 'history') {
-        if (fs.existsSync(PREDICTIONS_HISTORY_PATH)) {
-            const history = getPredictionsHistoryFromLocal();
-            if (targetDbLeague) {
-                const filtered = history.filter(h => toDbLeague(h.league) !== targetDbLeague);
-                wipedHistory = history.length - filtered.length;
-                fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify(filtered, null, 2), 'utf8');
-            } else {
-                wipedHistory = history.length;
-                fs.writeFileSync(PREDICTIONS_HISTORY_PATH, JSON.stringify([], null, 2), 'utf8');
-            }
-        }
-    }
 
     // Wipe from Supabase
     if (supabaseClient) {
@@ -303,44 +258,25 @@ async function wipeDbData(league, scope) {
     return { wipedResults, wipedHistory };
 }
 
-// 6. Startup: seed predictions_history from local backup if Supabase table is empty
-//    (No longer seeds results from local_results.json — Supabase is authoritative)
-async function seedSupabaseFromLocal() {
+// 6. Startup: log record counts for both tables
+async function logStartupCounts() {
     if (!supabaseClient) return;
     try {
-        console.log('[SUPABASE] [DEBUG] Checking if Supabase predictions_history requires seeding...');
-        const { count: historyCount, error: historyErr } = await supabaseClient
+        const { count: resultCount } = await supabaseClient
+            .from('vfootball_results')
+            .select('*', { count: 'exact', head: true });
+        const { count: histCount } = await supabaseClient
             .from('predictions_history')
             .select('*', { count: 'exact', head: true });
-        if (historyErr) throw historyErr;
-
-        if (historyCount === 0) {
-            const localHistory = getPredictionsHistoryFromLocal();
-            if (localHistory.length > 0) {
-                console.log(`[SUPABASE] [DEBUG] Predictions table is empty. Seeding ${localHistory.length} records from local backup...`);
-                const dbRows = localHistory.map(row => ({
-                    id:          row.id,
-                    date:        row.date,
-                    time:        row.time,
-                    league:      row.league,
-                    captured_at: row.capturedAt || new Date().toISOString(),
-                    predictions: row.predictions
-                }));
-                const { error } = await supabaseClient.from('predictions_history').insert(dbRows);
-                if (error) throw error;
-                console.log(`[SUPABASE] [DEBUG] ✅ Successfully seeded ${localHistory.length} prediction rounds to Supabase.`);
-            }
-        } else {
-            console.log(`[SUPABASE] [DEBUG] Supabase predictions_history already has ${historyCount} records. No seeding needed.`);
-        }
+        console.log(`[SUPABASE] [DEBUG] 📊 Startup check: vfootball_results=${resultCount || 0} | predictions_history=${histCount || 0}`);
     } catch (err) {
-        console.error('[SUPABASE] [DEBUG] Error during startup seeding:', err.message);
+        console.error('[SUPABASE] [DEBUG] Error during startup count check:', err.message);
     }
 }
 
-// Run seeding check 3 seconds after startup
+// Run startup check 3 seconds after boot
 setTimeout(() => {
-    seedSupabaseFromLocal();
+    logStartupCounts();
 }, 3000);
 
 // ── Team abbreviation helper ─────────────────────────────────────────────────
@@ -435,9 +371,9 @@ function resolvePredictionOutcomes(predictions, date, finishedMatches = []) {
     });
 }
 
-// ── Auto-resolve pending predictions ─────────────────────────────────────────
+// ── Auto-resolve ALL pending predictions ─────────────────────────────────────
 async function autoResolvePendingPredictions() {
-    console.log('[SUPABASE] [DEBUG] 🔍 Checking for pending predictions to resolve...');
+    console.log('[SUPABASE] [DEBUG] 🔍 autoResolvePendingPredictions: checking all leagues...');
     try {
         const history = await getPredictionsHistoryFromDb();
         const pendingRounds = history.filter(round =>
@@ -446,10 +382,10 @@ async function autoResolvePendingPredictions() {
 
         if (pendingRounds.length === 0) {
             console.log('[SUPABASE] [DEBUG] No pending predictions require resolution.');
-            return;
+            return { updated: 0, checked: 0 };
         }
 
-        // Fetch ALL results from Supabase (most recent first — already ordered by uploaded_at DESC)
+        // Fetch ALL results from Supabase once (ordered by uploaded_at DESC — latest first)
         const finishedMatches = await getMatchesFromDb();
         let updatedCount = 0;
 
@@ -465,10 +401,69 @@ async function autoResolvePendingPredictions() {
                 console.log(`[SUPABASE] [DEBUG] ✅ Resolved round ${round.id} (+${afterCount - beforeCount} matches).`);
             }
         }
-        console.log(`[SUPABASE] [DEBUG] Auto-resolution complete. Updated ${updatedCount} round(s).`);
+        console.log(`[SUPABASE] [DEBUG] Auto-resolution complete. Updated ${updatedCount}/${pendingRounds.length} pending round(s).`);
+        return { updated: updatedCount, checked: pendingRounds.length };
     } catch (err) {
         console.error('[SUPABASE] [DEBUG] Auto-resolution check failed:', err.message);
+        throw err;
     }
+}
+
+// ── Check & update pending predictions for a specific league ─────────────────
+/**
+ * Fetches only the pending prediction rounds for the given league from Supabase,
+ * then resolves their outcomes against the latest match results and saves back.
+ *
+ * @param {string} league - League display name e.g. "England League"
+ * @returns {{ checked: number, updated: number, resolved: number }} summary stats
+ */
+async function checkAndUpdatePendingPredictions(league) {
+    const dbLeague = toDbLeague(league);
+    console.log(`[SUPABASE] [DEBUG] 🔄 checkAndUpdatePendingPredictions: league="${league}" (db key: "${dbLeague}")`);
+
+    // Step 1 — Fetch all history for this league from Supabase
+    const history = await getPredictionsHistoryFromDb(dbLeague);
+    console.log(`[SUPABASE] [DEBUG] Step 1: fetched ${history.length} history rounds for "${league}"`);
+
+    // Step 2 — Filter to only rounds that still have unresolved predictions
+    const pendingRounds = history.filter(round =>
+        round.predictions && round.predictions.some(pred => !pred.resolved)
+    );
+    console.log(`[SUPABASE] [DEBUG] Step 2: ${pendingRounds.length} round(s) have pending (unresolved) predictions`);
+
+    if (pendingRounds.length === 0) {
+        console.log(`[SUPABASE] [DEBUG] ✅ All predictions for "${league}" are already resolved. Nothing to update.`);
+        return { checked: history.length, updated: 0, resolved: 0 };
+    }
+
+    // Step 3 — Fetch latest match results from Supabase for comparison
+    const finishedMatches = await getMatchesFromDb();
+    console.log(`[SUPABASE] [DEBUG] Step 3: fetched ${finishedMatches.length} finished match results from Supabase`);
+
+    // Step 4 — Resolve each pending round against the latest results
+    let updatedCount  = 0;
+    let totalResolved = 0;
+
+    for (const round of pendingRounds) {
+        const beforeCount = round.predictions.filter(p => p.resolved).length;
+        const updatedPreds = resolvePredictionOutcomes(round.predictions, round.date, finishedMatches);
+        const afterCount   = updatedPreds.filter(p => p.resolved).length;
+        const newlyResolved = afterCount - beforeCount;
+
+        if (newlyResolved > 0) {
+            round.predictions = updatedPreds;
+            // Step 5 — Save updated round back to Supabase
+            await savePredictionToDb(round);
+            updatedCount++;
+            totalResolved += newlyResolved;
+            console.log(`[SUPABASE] [DEBUG] ✅ Round ${round.id}: +${newlyResolved} newly resolved (${afterCount}/${round.predictions.length} total).`);
+        } else {
+            console.log(`[SUPABASE] [DEBUG] ⏳ Round ${round.id}: no new matches found yet to resolve (${beforeCount}/${round.predictions.length} already resolved).`);
+        }
+    }
+
+    console.log(`[SUPABASE] [DEBUG] checkAndUpdatePendingPredictions complete → updated ${updatedCount} round(s), resolved ${totalResolved} new prediction(s).`);
+    return { checked: pendingRounds.length, updated: updatedCount, resolved: totalResolved };
 }
 
 module.exports = {
@@ -479,5 +474,6 @@ module.exports = {
     savePredictionToDb,
     resolvePredictionOutcomes,
     autoResolvePendingPredictions,
+    checkAndUpdatePendingPredictions,
     wipeDbData
 };
