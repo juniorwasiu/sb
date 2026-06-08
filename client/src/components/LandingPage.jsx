@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import RecommendedPicks from './RecommendedPicks';
 
 // ── Colour helpers ─────────────────────────────────────────────────────────
@@ -307,7 +308,7 @@ export default function LandingPage() {
                   </div>
                 )}
               </div>
-              <a href="/" style={{
+              <Link to="/" style={{
                 background: 'rgba(0,255,136,0.12)', border: '1px solid rgba(0,255,136,0.35)',
                 color: GREEN, borderRadius: 10, padding: '10px 18px',
                 textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
@@ -317,8 +318,8 @@ export default function LandingPage() {
                 onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,255,136,0.12)'}
               >
                 🧠 Pattern Intel
-              </a>
-              <a href="/daily-tips" style={{
+              </Link>
+              <Link to="/daily-tips" style={{
                 background: 'rgba(0,229,255,0.12)', border: '1px solid rgba(0,229,255,0.35)',
                 color: NEON, borderRadius: 10, padding: '10px 18px',
                 textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
@@ -328,8 +329,8 @@ export default function LandingPage() {
                 onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,229,255,0.12)'}
               >
                 🔮 Daily Tips
-              </a>
-              <a href="/admin" style={{
+              </Link>
+              <Link to="/admin" style={{
                 background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.35)',
                 color: PURPLE, borderRadius: 10, padding: '10px 18px',
                 textDecoration: 'none', fontSize: '0.85rem', fontWeight: 700,
@@ -339,7 +340,7 @@ export default function LandingPage() {
                 onMouseLeave={e => e.currentTarget.style.background = 'rgba(167,139,250,0.12)'}
               >
                 ⚙️ Admin Panel
-              </a>
+              </Link>
             </div>
           </div>
         </div>
@@ -428,6 +429,24 @@ export default function LandingPage() {
                 <option key={d} value={formatToIso(d)}>{d}</option>
               ))}
             </select>
+
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>or</span>
+
+            <input
+              type="date"
+              value={dateFrom === dateTo ? dateFrom : ''}
+              onChange={(e) => {
+                const iso = e.target.value;
+                setDateFrom(iso);
+                setDateTo(iso);
+                setPage(1);
+              }}
+              style={{
+                background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+                color: 'white', borderRadius: 6, padding: '6px 12px', fontSize: '0.8rem', outline: 'none',
+                cursor: 'pointer', colorScheme: 'dark'
+              }}
+            />
 
             <button onClick={setToday} style={{ background: `${GREEN}15`, color: GREEN, border: `1px solid ${GREEN}40`, borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}>
               Today
@@ -738,7 +757,7 @@ export default function LandingPage() {
       <footer style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '24px', textAlign: 'center', marginTop: '40px' }}>
         <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
           vFootball Terminal · Real-time results powered by AI extraction ·{' '}
-          <a href="/admin" style={{ color: PURPLE, textDecoration: 'none' }}>Admin</a>
+          <Link to="/admin" style={{ color: PURPLE, textDecoration: 'none' }}>Admin</Link>
         </p>
       </footer>
     </div>

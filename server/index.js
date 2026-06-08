@@ -2314,10 +2314,14 @@ Return EXACTLY this valid JSON structure. DO NOT deviate from this schema:
           "exact_score": "2:1",
           "match_winner": "Home",
           "winner_team_name": "TeamA",
+          "match_winner_pct": 82,
           "venue_confidence": "High",
           "over_1_5": "Yes",
+          "over_1_5_pct": 88,
           "over_2_5": "No",
+          "over_2_5_pct": 32,
           "gg": "Yes",
+          "gg_pct": 65,
           "prediction_reasoning": "TeamA wins 68% at home. TeamB has lost last 5 away games (AwayWin%=10%). Strong home advantage confirmed by H2H record."
       }
   ],
@@ -2331,6 +2335,7 @@ FIELD NOTES:
 - match_winner MUST be exactly "Home", "Away", or "Draw" — NOT a team name
 - winner_team_name = the actual team name that you predict wins
 - venue_confidence = "High" (clear home/away advantage), "Medium" (slight edge), or "Low" (genuinely balanced — only then is Draw valid)
+- match_winner_pct, over_1_5_pct, over_2_5_pct, and gg_pct MUST be integers between 0 and 100 representing the estimated percentage probability of the prediction.
 - If wrong_draws_count > 2, you MUST add an "avoid_draw_default" rule to new_rules_to_add
 
 Return ONLY valid JSON. No markdown. No code blocks. No extra text.`;
@@ -4305,61 +4310,8 @@ if (fs.existsSync(PUBLIC_DIR)) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOCAL FILE STORAGE VFOOTBALL ENGINE (NO MONGO/FIREBASE)
+// DATABASE ROUTED VFOOTBALL ENGINE (VIA SUPABASE)
 // ─────────────────────────────────────────────────────────────────────────────
-const LOCAL_DB_PATH = path.join(__dirname, 'local_results.json');
-
-function saveToLocalJson(newMatches) {
-    console.log(`[DEBUG] [Local DB] Attempting to save ${newMatches.length} matches...`);
-    let current = [];
-    if (fs.existsSync(LOCAL_DB_PATH)) {
-        try {
-            current = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
-        } catch (e) {
-            console.error('[DEBUG] [Local DB] Error reading file, resetting:', e.message);
-            current = [];
-        }
-    }
-    
-    let added = 0;
-    let dupes = 0;
-    
-    newMatches.forEach(match => {
-        // Construct canonical id
-        const dateSafe = (match.date || '').replace(/\//g, '-');
-        const leagueSafe = (match.league || '').replace(/[^a-zA-Z0-9_-]/g, '_');
-        const gameId = match.gameId || `fallback_${(match.time || '00:00').replace(':', '')}_${(match.homeTeam || match.home || '').replace(/\s+/g, '')}`;
-        const matchId = `${dateSafe}_${gameId}_${leagueSafe}`;
-        
-        const isDupe = current.some(m => {
-            const mDateSafe = (m.date || '').replace(/\//g, '-');
-            const mLeagueSafe = (m.league || '').replace(/[^a-zA-Z0-9_-]/g, '_');
-            const mGameId = m.gameId || `fallback_${(m.time || '00:00').replace(':', '')}_${(m.homeTeam || m.home || '').replace(/\s+/g, '')}`;
-            const mMatchId = `${mDateSafe}_${mGameId}_${mLeagueSafe}`;
-            return mMatchId === matchId || (m.gameId === match.gameId && m.league === match.league && m.date === match.date);
-        });
-        
-        if (!isDupe) {
-            current.push({
-                ...match,
-                _id: matchId,
-                uploadedAt: new Date().toISOString()
-            });
-            added++;
-        } else {
-            dupes++;
-        }
-    });
-    
-    if (added > 0) {
-        fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(current, null, 2), 'utf8');
-        console.log(`[DEBUG] [Local DB] Saved ${added} new matches to file. Total: ${current.length}`);
-    } else {
-        console.log(`[DEBUG] [Local DB] No new matches saved. All ${dupes} were duplicate.`);
-    }
-    
-    return { added, dupes, total: current.length };
-}
 
 // 1. GET results (routed through Supabase with JSON fallback)
 app.get('/api/local-vfootball/results', async (req, res) => {
@@ -4410,10 +4362,9 @@ app.post('/api/local-vfootball/upload', express.json(), async (req, res) => {
     }
 });
 
-// 3. POST scrape (saves to Supabase with JSON fallback)
 app.post('/api/local-vfootball/scrape', express.json(), async (req, res) => {
     console.log('[DEBUG] [Local API] POST /api/local-vfootball/scrape requested');
-    const { league, date } = req.body;
+    const { league, date, scrapeAllPages = true } = req.body; // league: league name or "all", scrapeAllPages: if true crawls all pages
     if (!league) {
         return res.status(400).json({ success: false, error: 'league field is required' });
     }
@@ -4432,44 +4383,66 @@ app.post('/api/local-vfootball/scrape', express.json(), async (req, res) => {
     try {
         const { nativeCaptureLeagueResults } = require('./native_scraper');
         
-        sendProgress('init', `Launching browser for native capture of ${league} on ${date || 'today'}...`);
+        const targetLeagues = league === 'all' 
+            ? ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League']
+            : [league];
+            
+        sendProgress('init', `Launching browser for native capture of ${league === 'all' ? 'All Leagues' : league} on ${date || 'today'} (Full Day: ${scrapeAllPages ? 'YES' : 'NO'})...`);
         
-        let consecutiveDupesCount = 0;
-        const result = await nativeCaptureLeagueResults(league, date || null, {
-            onPageCaptured: async (err, matchRows, pageNum) => {
-                if (err) {
-                    sendProgress('page_error', `Error on page ${pageNum}: ${err.message}`, 'error');
-                    return;
-                }
-                if (matchRows && matchRows.length > 0) {
-                    sendProgress('page_capture', `Captured page ${pageNum} with ${matchRows.length} matches. Deduplicating and writing to database storage...`);
-                    const stats = await saveMatchesToDb(matchRows);
-                    sendProgress('page_saved', `Saved to database storage: +${stats.added} new matches, skipped ${stats.dupes} duplicates. Total database records: ${stats.total}.`);
-                    
-                    if (stats.added === 0 && stats.dupes > 0) {
-                        consecutiveDupesCount++;
-                        if (consecutiveDupesCount >= 3) {
-                            sendProgress('page_capture', `🛑 All matches on 3 consecutive pages already exist in storage. Halting early as we are fully up-to-date!`, 'progress');
-                            return { stop: true };
-                        } else {
-                            sendProgress('page_capture', `Page ${pageNum} has only duplicates (consecutive: ${consecutiveDupesCount}/3). Continuing lookahead to backfill any potential missing matches in between...`, 'progress');
-                        }
-                    } else if (stats.added > 0) {
-                        consecutiveDupesCount = 0; // Reset counter when a new match is successfully written
+        let overallSuccess = true;
+        let overallPages = 0;
+        let lastError = null;
+        
+        for (const targetLeague of targetLeagues) {
+            sendProgress('league_init', `⏳ Starting results extraction for league: "${targetLeague}"...`);
+            let consecutiveDupesCount = 0;
+            const result = await nativeCaptureLeagueResults(targetLeague, date || null, {
+                scrapeAllPages,
+                onPageCaptured: async (err, matchRows, pageNum) => {
+                    if (err) {
+                        sendProgress('page_error', `[${targetLeague}] Error on page ${pageNum}: ${err.message}`, 'error');
+                        return;
                     }
-                } else {
-                    sendProgress('page_capture', `No matches found on page ${pageNum}.`);
+                    if (matchRows && matchRows.length > 0) {
+                        sendProgress('page_capture', `[${targetLeague}] Captured page ${pageNum} with ${matchRows.length} matches. Deduplicating and writing to database...`);
+                        const stats = await saveMatchesToDb(matchRows);
+                        sendProgress('page_saved', `[${targetLeague}] Saved to database storage: +${stats.added} new matches, skipped ${stats.dupes} duplicates. Total records: ${stats.total}.`);
+                        
+                        // If scrapeAllPages is false, stop early on 3 consecutive duplicate pages
+                        if (!scrapeAllPages && stats.added === 0 && stats.dupes > 0) {
+                            consecutiveDupesCount++;
+                            if (consecutiveDupesCount >= 3) {
+                                sendProgress('page_capture', `[${targetLeague}] 🛑 All matches on 3 consecutive pages already exist in storage. Halting early to save resources!`, 'progress');
+                                return { stop: true };
+                            } else {
+                                sendProgress('page_capture', `[${targetLeague}] [${pageNum}/20] Page has only duplicates (consecutive: ${consecutiveDupesCount}/3). Continuing lookahead...`, 'progress');
+                            }
+                        } else if (stats.added > 0) {
+                            consecutiveDupesCount = 0; // Reset counter on successful write
+                        }
+                    } else {
+                        sendProgress('page_capture', `[${targetLeague}] No matches found on page ${pageNum}.`);
+                    }
                 }
+            });
+            
+            if (result.success) {
+                sendProgress('league_complete', `[${targetLeague}] Scrape complete! Processed ${result.totalPages} page(s).`, 'progress');
+                overallPages += result.totalPages;
+            } else {
+                sendProgress('league_failed', `[${targetLeague}] Scrape failed: ${result.error}`, 'error');
+                overallSuccess = false;
+                lastError = result.error;
             }
-        });
+        }
         
-        if (result.success) {
-            sendProgress('complete', `Scrape complete! Successfully processed ${result.totalPages} page(s).`, 'success');
-            res.write(`data: ${JSON.stringify({ type: 'done', success: true, totalPages: result.totalPages })}\n\n`);
+        if (overallSuccess) {
+            sendProgress('complete', `Scrape complete! Successfully processed all ${targetLeagues.length} league(s) (${overallPages} total pages).`, 'success');
+            res.write(`data: ${JSON.stringify({ type: 'done', success: true, totalPages: overallPages })}\n\n`);
             res.end();
         } else {
-            sendProgress('failed', `Scrape failed: ${result.error}`, 'error');
-            res.write(`data: ${JSON.stringify({ type: 'error', success: false, error: result.error })}\n\n`);
+            sendProgress('failed', `Scrape session completed with errors. Last error: ${lastError}`, 'error');
+            res.write(`data: ${JSON.stringify({ type: 'error', success: false, error: lastError })}\n\n`);
             res.end();
         }
     } catch (err) {
@@ -4892,9 +4865,13 @@ Each object must contain the following keys:
 - "match": string (e.g. "Arsenal vs Chelsea")
 - "status": string ("IN-PLAY" or "UPCOMING")
 - "predictedOutcome": string ("H" or "D" or "A")
+- "predictedOutcomeProb": number (0 to 100 representing probability percentage of the outcome)
 - "predictedBtts": string ("GG" or "NG")
+- "predictedBttsProb": number (0 to 100 representing probability percentage of the BTTS choice)
 - "predictedOver15": string ("Over" or "Under")
+- "predictedOver15Prob": number (0 to 100 representing probability percentage of the Over/Under 1.5 choice)
 - "predictedOver25": string ("Over" or "Under")
+- "predictedOver25Prob": number (0 to 100 representing probability percentage of the Over/Under 2.5 choice)
 - "confidence": number (0 to 100 representing confidence score)
 - "reasoning": string (Brief 1-sentence expert prediction reasoning combining matchup, row statistics, and Markov transitions)
 - "color": string (hex color representing predicted outcome: H=#00FF88, D=#FFD700, A=#A78BFA)
@@ -5106,6 +5083,162 @@ app.post('/api/local-vfootball/wipe', express.json(), async (req, res) => {
     } catch (err) {
         console.error('[DEBUG] [Local API] Failed to wipe database storage:', err.message);
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Helper for exporting predictions to Telegram/markdown format
+function getLeagueEmoji(leagueName) {
+    if (!leagueName) return '⚽';
+    const lower = leagueName.toLowerCase();
+    if (lower.includes('england')) return '🏴󠁧󠁢󠁥󠁮󠁧󠁿';
+    if (lower.includes('spain')) return '🇪🇸';
+    if (lower.includes('italy')) return '🇮🇹';
+    if (lower.includes('germany')) return '🇩🇪';
+    if (lower.includes('france')) return '🇫🇷';
+    return '⚽';
+}
+
+function formatPredictionsForTelegram(data, type) {
+    if (!data) return '⚠️ No predictions found to export.';
+    
+    let text = '';
+    if (type === 'live') {
+        const leagueEmoji = getLeagueEmoji(data.league);
+        text += `🔮 *AI LIVE PREDICTIONS* 🔮\n`;
+        text += `🏆 *League:* ${data.league} ${leagueEmoji}\n`;
+        text += `📅 *Date:* ${data.date} | 🕒 *Time:* ${data.time}\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        
+        if (data.predictions && data.predictions.length > 0) {
+            data.predictions.forEach((pred, index) => {
+                const matchName = pred.match || `${pred.homeTeam} vs ${pred.awayTeam}`;
+                text += `⚽ *${index + 1}. ${matchName}*\n`;
+                text += `🎯 *Winner:* ${pred.predictedOutcome === 'H' ? 'Home' : pred.predictedOutcome === 'A' ? 'Away' : 'Draw'} (${pred.predictedOutcomeProb || 0}%)\n`;
+                text += `🥅 *BTTS (GG/NG):* ${pred.predictedBtts || 'N/A'} (${pred.predictedBttsProb || 0}%)\n`;
+                if (pred.predictedOver15) {
+                    text += `📈 *Over 1.5:* ${pred.predictedOver15} (${pred.predictedOver15Prob || 0}%)\n`;
+                }
+                if (pred.predictedOver25) {
+                    text += `📈 *Over 2.5:* ${pred.predictedOver25} (${pred.predictedOver25Prob || 0}%)\n`;
+                }
+                text += `🛡️ *Confidence:* ${pred.confidence || 0}%\n`;
+                if (pred.resolved) {
+                    text += `📊 *Result:* ${pred.actualScore || '?'}\n`;
+                    text += `✅ *Outcome:* ${pred.outcomeCorrect ? 'WON 🎉' : 'LOST ❌'}\n`;
+                }
+                if (pred.reasoning) {
+                    text += `🧠 *Analysis:* _${pred.reasoning}_\n`;
+                }
+                text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+            });
+        } else {
+            text += `No predictions in this round.\n`;
+        }
+    } else { // daily
+        const leagueEmoji = getLeagueEmoji(data.league);
+        text += `📅 *AI DAILY TIPS* 📅\n`;
+        text += `🏆 *League:* ${data.league} ${leagueEmoji}\n`;
+        text += `📅 *Date:* ${data.date}\n`;
+        if (data.tipData?.context) {
+            text += `📝 *Vibe:* _${data.tipData.context}_\n`;
+        }
+        text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        
+        const matches = data.tipData?.upcoming_matches || data.tipData?.predictions || [];
+        if (matches.length > 0) {
+            matches.forEach((pred, index) => {
+                text += `⚽ *${index + 1}. ${pred.fixture}*\n`;
+                if (pred.game_time) text += `🕒 *Time:* ${pred.game_time}\n`;
+                text += `🎯 *Winner:* ${pred.match_winner} (${pred.match_winner_pct || 0}%)\n`;
+                text += `🥅 *BTTS (GG):* ${pred.gg || 'N/A'} (${pred.gg_pct || 0}%)\n`;
+                text += `📈 *Over 1.5:* ${pred.over_1_5 || 'N/A'} (${pred.over_1_5_pct || 0}%)\n`;
+                text += `📈 *Over 2.5:* ${pred.over_2_5 || 'N/A'} (${pred.over_2_5_pct || 0}%)\n`;
+                if (pred.exact_score) text += `🎯 *Exact Score:* ${pred.exact_score}\n`;
+                if (pred.prediction_reasoning) {
+                    text += `🧠 *Analysis:* _${pred.prediction_reasoning}_\n`;
+                }
+                text += `━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+            });
+        } else {
+            text += `No daily tips matches found.\n`;
+        }
+    }
+    
+    text += `🤖 _Generated by Mango AI Assistant_`;
+    return text;
+}
+
+// 8. GET public endpoint for predictions export (Telegram, etc.)
+app.get('/api/public/predictions/export', async (req, res) => {
+    console.log('[DEBUG] [/api/public/predictions/export] Request received. Params:', req.query);
+    const type = req.query.type || 'live'; // 'live' or 'daily'
+    const league = req.query.league; // e.g. "England League" or undefined
+    const format = req.query.format || 'text'; // 'text' or 'json'
+
+    try {
+        console.log(`[DEBUG] [/api/public/predictions/export] Step 1: Fetching predictions data for type: ${type}`);
+        if (type === 'live') {
+            const history = await getPredictionsHistoryFromDb();
+            let filtered = history;
+            if (league) {
+                const targetDbLeague = toDbLeague(league);
+                console.log(`[DEBUG] [/api/public/predictions/export] Step 2: Filtering predictions by league: ${league} (${targetDbLeague})`);
+                filtered = history.filter(h => toDbLeague(h.league) === targetDbLeague);
+            }
+            
+            if (!filtered || filtered.length === 0) {
+                console.log('[DEBUG] [/api/public/predictions/export] No live predictions history found.');
+                if (format === 'json') {
+                    return res.json({ success: false, error: 'No live predictions found.' });
+                } else {
+                    return res.send('⚠️ No live predictions found to export.');
+                }
+            }
+
+            // Return deep copy so we don't accidentally mutate cachedDB arrays in memory
+            const latestRound = JSON.parse(JSON.stringify(filtered[0]));
+            console.log(`[DEBUG] [/api/public/predictions/export] Step 3: Latest round found: ${latestRound.id}. Fetching finished matches to resolve outcomes.`);
+            
+            const finishedMatches = await getMatchesFromDb();
+            latestRound.predictions = resolvePredictionOutcomes(latestRound.predictions, latestRound.date, finishedMatches);
+            
+            if (format === 'json') {
+                return res.json({ success: true, data: latestRound });
+            } else {
+                const formattedText = formatPredictionsForTelegram(latestRound, 'live');
+                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                return res.send(formattedText);
+            }
+        } else if (type === 'daily') {
+            console.log(`[DEBUG] [/api/public/predictions/export] Step 2: Fetching daily tips for league: ${league || 'All Leagues'}`);
+            const dailyTips = await getAllDailyTips(league);
+            
+            if (!dailyTips || dailyTips.length === 0) {
+                console.log('[DEBUG] [/api/public/predictions/export] No daily tips found.');
+                if (format === 'json') {
+                    return res.json({ success: false, error: 'No daily tips found.' });
+                } else {
+                    return res.send('⚠️ No daily tips found to export.');
+                }
+            }
+
+            const latestTip = dailyTips[0];
+            console.log(`[DEBUG] [/api/public/predictions/export] Step 3: Latest daily tip found for date: ${latestTip.date}, league: ${latestTip.league}`);
+            
+            if (format === 'json') {
+                return res.json({ success: true, data: latestTip });
+            } else {
+                const formattedText = formatPredictionsForTelegram(latestTip, 'daily');
+                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                return res.send(formattedText);
+            }
+        } else {
+            console.log(`[DEBUG] [/api/public/predictions/export] Invalid type parameter: ${type}`);
+            return res.status(400).json({ success: false, error: 'Invalid type. Use "live" or "daily".' });
+        }
+    } catch (err) {
+        console.error('[Database Index Debug/Error Details]: [/api/public/predictions/export] failed:', err.message);
+        res.status(500).json({ success: false, error: `Export failed: ${err.message}` });
     }
 });
 

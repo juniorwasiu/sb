@@ -1,4 +1,5 @@
 const { Result, HistoryLog, LeagueBaseline } = require('./db_init');
+const { getMatchesFromDb } = require('./supabase');
 
 // ── Global In-Memory Cache ────────────────────────────────────────────────────
 const GLOBAL_CACHE = {
@@ -37,12 +38,12 @@ async function getCachedDocs() {
         return GLOBAL_CACHE.resultsDocs;
     }
 
-    console.log('[DB Reader] 🔄 Cache miss — fetching fresh data from MongoDB...');
-    const docs = await Result.find({}).lean();
+    console.log('[DB Reader] 🔄 Cache miss — fetching fresh data from Supabase/Local Fallback...');
+    const docs = await getMatchesFromDb();
 
     GLOBAL_CACHE.resultsDocs      = docs;
     GLOBAL_CACHE.resultsTimestamp = now;
-    console.log(`[DB Reader] ✅ Fetched ${docs.length} docs from MongoDB. Cache updated.`);
+    console.log(`[DB Reader] ✅ Fetched ${docs.length} docs from database. Cache updated.`);
     return docs;
 }
 
@@ -130,17 +131,17 @@ async function fetchTodayResultsFromDatabase(leagueFilter = '') {
 
 async function fetchFullDayRawResults(league, targetDate) {
     console.log(`[DB Reader] Fetching full day raw results — league="${league || 'ALL'}", date="${targetDate}"`);
-    let query = { date: targetDate };
-    if (league) query.league = league;
-    
-    const docs = await Result.find(query).lean();
+    const allDocs = await getCachedDocs();
+    let docs = allDocs.filter(d => d.date === targetDate);
+    if (league) docs = docs.filter(d => d.league === league);
     console.log(`[DB Reader] Full day raw results: ${docs.length} docs for date=${targetDate}`);
     return docs;
 }
 
 async function fetchTeamHistoryFromDatabase(league, homeTeam, awayTeam, daysBack = 10) {
     console.log(`[DB Reader] Fetching H2H history: ${homeTeam} vs ${awayTeam} in ${league}`);
-    const rawDocs = await Result.find({ league }).sort({ date: -1 }).limit(2000).lean();
+    const allDocs = await getCachedDocs();
+    const rawDocs = allDocs.filter(d => d.league === league);
     
     const targets = [homeTeam.toLowerCase(), awayTeam.toLowerCase()];
 
@@ -162,11 +163,11 @@ async function fetchTeamHistoryFromDatabase(league, homeTeam, awayTeam, daysBack
 
 async function fetchAvailableDates(league = null) {
     console.log(`[DB Reader] Fetching available dates for league="${league || 'ALL'}"`);
-    let query = {};
-    if (league) query.league = league;
+    const allDocs = await getCachedDocs();
+    let docs = allDocs;
+    if (league) docs = docs.filter(d => d.league === league);
 
-    // Use distinct for efficiency
-    const uniqueDates = await Result.distinct('date', query);
+    const uniqueDates = [...new Set(docs.map(d => d.date).filter(Boolean))];
     
     uniqueDates.sort((a, b) => {
         const pa = parseDDMMYYYY(a) || new Date(0);
@@ -309,8 +310,9 @@ async function computeH2HForm(league, homeTeam, awayTeam, limit = 10) {
     try {
         if (!league || !homeTeam || !awayTeam) return _emptyH2H(homeTeam, awayTeam);
 
-        // use index for H2H
-        const rawDocs = await Result.find({ league }).sort({ date: -1 }).limit(1000).lean();
+        // fetch from cache
+        const allDocs = await getCachedDocs();
+        const rawDocs = allDocs.filter(d => d.league === league);
         const hName = String(homeTeam).toLowerCase();
         const aName = String(awayTeam).toLowerCase();
 

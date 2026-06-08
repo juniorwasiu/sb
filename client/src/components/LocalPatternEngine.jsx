@@ -127,6 +127,8 @@ export default function LocalPatternEngine() {
   const todayISO = new Date().toISOString().split('T')[0];
   const [targetDate, setTargetDate] = useState(todayISO);
   const [selectedLeague, setSelectedLeague] = useState('England League');
+  const [scraperLeague, setScraperLeague] = useState('England League');
+  const [scrapeAllPages, setScrapeAllPages] = useState(true);
   
   // Engine configurations
   const [sortType, setSortType] = useState('scraped'); // 'scraped' | 'homeTeam'
@@ -174,6 +176,7 @@ export default function LocalPatternEngine() {
   // Switch active league tab
   const handleLeagueTabChange = (leagueId) => {
     setSelectedLeague(leagueId);
+    setScraperLeague(leagueId);
     logMessage(`🔌 Switched active league to: ${leagueId}`);
   };
 
@@ -304,13 +307,13 @@ export default function LocalPatternEngine() {
     if (scraping) return;
     setScraping(true);
     setError(null);
-    logMessage(`🚀 Initiating Puppeteer scraper for "${selectedLeague}" on date ${targetDate}...`);
+    logMessage(`🚀 Initiating Puppeteer scraper for "${scraperLeague}" on date ${targetDate} (Full Day: ${scrapeAllPages ? 'YES' : 'NO'})...`);
     
     try {
       const response = await fetch('/api/local-vfootball/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ league: selectedLeague, date: targetDate })
+        body: JSON.stringify({ league: scraperLeague, date: targetDate, scrapeAllPages })
       });
       
       if (!response.ok) {
@@ -760,14 +763,15 @@ export default function LocalPatternEngine() {
                   Target League
                 </label>
                 <select 
-                  value={selectedLeague} 
-                  onChange={(e) => setSelectedLeague(e.target.value)}
+                  value={scraperLeague} 
+                  onChange={(e) => setScraperLeague(e.target.value)}
                   disabled={scraping}
                   style={{
                     width: '100%', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--glass-border)',
                     color: 'white', padding: '8px 10px', borderRadius: '6px', fontSize: '0.8rem', outline: 'none'
                   }}
                 >
+                  <option value="all">All Leagues (Entire Day)</option>
                   <option value="England League">England League</option>
                   <option value="Spain League">Spain League</option>
                   <option value="Italy League">Italy League</option>
@@ -792,6 +796,33 @@ export default function LocalPatternEngine() {
                   }} 
                 />
               </div>
+            </div>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+              <input 
+                type="checkbox" 
+                id="scrape-all-pages"
+                checked={scrapeAllPages} 
+                onChange={(e) => setScrapeAllPages(e.target.checked)}
+                disabled={scraping}
+                style={{
+                  cursor: scraping ? 'not-allowed' : 'pointer',
+                  accentColor: 'var(--accent-neon)',
+                  width: '16px',
+                  height: '16px'
+                }}
+              />
+              <label 
+                htmlFor="scrape-all-pages" 
+                style={{ 
+                  fontSize: '0.75rem', 
+                  color: 'var(--text-secondary)', 
+                  cursor: scraping ? 'not-allowed' : 'pointer',
+                  userSelect: 'none'
+                }}
+              >
+                Scrape All Pages (Entire Day)
+              </label>
             </div>
           </div>
           

@@ -61,12 +61,26 @@ const ENDPOINTS = [
     requiresParams: true
   },
   {
+    id: 'export-predictions',
+    category: CATEGORIES.PREDICTIONS,
+    method: 'GET',
+    path: '/api/public/predictions/export',
+    description: 'Exports predicted matches of the latest round/day formatted as a plain-text Telegram post or raw JSON payload.',
+    howItWorks: '1. Reads latest prediction history round (for type=live) or daily tips (for type=daily) from Database.\n2. Performs league filtering if specified.\n3. Resolves and compiles prediction outcomes against finished scores in Database.\n4. Formats and builds plain-text with emojis and markdown bold tags, or outputs raw structured JSON.',
+    defaultParams: {
+      type: 'live',
+      league: 'England League',
+      format: 'text'
+    },
+    requiresParams: true
+  },
+  {
     id: 'run-scrape',
     category: CATEGORIES.SCRAPER,
     method: 'POST',
     path: '/api/local-vfootball/scrape',
-    description: 'Spawns Puppeteer scraper to extract finished match results from sportybet.com results archive and saves them to local storage.',
-    howItWorks: '1. Launches headless chromium browser instances.\n2. Navigates to sportybet results archive and inputs virtual football selectors.\n3. Extracts score strings, league tags, matchdates, and identifiers.\n4. Smart-syncs matching scores to `vfootball_results.json` and updates scraping checkpoints in `history_logs.json`.',
+    description: 'Spawns Puppeteer scraper to extract finished match results from sportybet.com results archive and saves them directly to Supabase database.',
+    howItWorks: '1. Launches headless chromium browser instances.\n2. Navigates to sportybet results archive and inputs virtual football selectors.\n3. Extracts score strings, league tags, matchdates, and identifiers.\n4. Deduplicates and syncs matching scores directly to the Supabase `vfootball_results` database table.',
     defaultBody: {
       league: 'England - Virtual',
       pages: 3
@@ -88,8 +102,8 @@ const ENDPOINTS = [
     category: CATEGORIES.SCRAPER,
     method: 'GET',
     path: '/api/public/results',
-    description: 'Queries extracted match results from local database JSON files.',
-    howItWorks: '1. Reads `vfootball_results.json` local file.\n2. Performs query matches for league, date, and date limits.\n3. Returns sorted list of match scores.',
+    description: 'Queries extracted match results from the Supabase database.',
+    howItWorks: '1. Reads from the Supabase `vfootball_results` database table.\n2. Performs query matches for league, date, and date limits.\n3. Returns sorted list of match scores.',
     defaultParams: {
       league: 'England - Virtual',
       date: new Date().toLocaleDateString('en-GB'),
@@ -190,8 +204,8 @@ const ENDPOINTS = [
     category: CATEGORIES.POSITIONAL_TRACE,
     method: 'GET',
     path: '/api/positional-trace/predictions-history',
-    description: 'Retrieves predictions history resolved against actual scores from local results.',
-    howItWorks: '1. Scans `local_predictions_history.json` local store.\n2. Filters history records matching query league.\n3. Correlates outcome correctness metrics against completed match results in `local_results.json`.',
+    description: 'Retrieves predictions history resolved against actual scores from Supabase results.',
+    howItWorks: '1. Scans `predictions_history` table in Supabase.\n2. Filters history records matching query league.\n3. Correlates outcome correctness metrics against completed match results in Supabase.',
     defaultParams: {
       league: 'England League'
     },
@@ -202,8 +216,8 @@ const ENDPOINTS = [
     category: CATEGORIES.POSITIONAL_TRACE,
     method: 'GET',
     path: '/api/positional-trace/results',
-    description: 'Retrieves finished historical results dataset directly from local results storage.',
-    howItWorks: '1. Reads `local_results.json` local database.\n2. Returns count and array of all match result objects.',
+    description: 'Retrieves finished historical results dataset directly from the Supabase database.',
+    howItWorks: '1. Reads from the Supabase `vfootball_results` database table.\n2. Returns count and array of all match result objects.',
     defaultParams: {},
     requiresParams: false
   }

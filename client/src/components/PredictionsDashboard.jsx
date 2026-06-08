@@ -12,6 +12,83 @@ export default function PredictionsDashboard() {
   const predictionsRef = useRef(null);
   const [capturing, setCapturing] = useState(false);
 
+  // Sub-tabs states
+  const [liveSubTab, setLiveSubTab] = useState('all'); // 'all' | 'best' | 'singles' | 'bestsingle'
+  const [historySubTab, setHistorySubTab] = useState('all'); // 'all' | 'best' | 'singles' | 'bestsingle'
+
+  // Helper to extract the single highest-probability tip for a match
+  const getBestSingleTip = (pred) => {
+    const options = [];
+    
+    if (pred.predictedOutcomeProb !== undefined && pred.predictedOutcomeProb !== null) {
+      const label = pred.predictedOutcome === 'H' ? 'Home Win' : pred.predictedOutcome === 'A' ? 'Away Win' : 'Draw';
+      options.push({
+        market: 'Outcome',
+        prediction: label,
+        prob: pred.predictedOutcomeProb,
+        color: 'var(--accent-neon)'
+      });
+    }
+    if (pred.predictedBttsProb !== undefined && pred.predictedBttsProb !== null) {
+      options.push({
+        market: 'BTTS',
+        prediction: pred.predictedBtts,
+        prob: pred.predictedBttsProb,
+        color: pred.predictedBtts === 'GG' ? '#00FF88' : '#FFD700'
+      });
+    }
+    if (pred.predictedOver15Prob !== undefined && pred.predictedOver15Prob !== null && pred.predictedOver15) {
+      options.push({
+        market: 'O/U 1.5',
+        prediction: `${pred.predictedOver15} 1.5`,
+        prob: pred.predictedOver15Prob,
+        color: '#00E5FF'
+      });
+    }
+    if (pred.predictedOver25Prob !== undefined && pred.predictedOver25Prob !== null && pred.predictedOver25) {
+      options.push({
+        market: 'O/U 2.5',
+        prediction: `${pred.predictedOver25} 2.5`,
+        prob: pred.predictedOver25Prob,
+        color: '#A78BFA'
+      });
+    }
+    
+    // Sort descending by probability
+    options.sort((a, b) => b.prob - a.prob);
+    return options[0] || null;
+  };
+
+  // Helper to filter predictions dynamically based on selected sub-tab
+  const getFilteredPredictions = (predictions, subTab) => {
+    if (!predictions || predictions.length === 0) return [];
+    
+    if (subTab === 'all') {
+      return predictions;
+    }
+    if (subTab === 'best') {
+      return predictions.filter(p => p.confidence >= 75);
+    }
+    if (subTab === 'singles') {
+      return predictions; // Render handles single tip display
+    }
+    if (subTab === 'bestsingle') {
+      let topPred = null;
+      let topTipVal = -1;
+      
+      predictions.forEach(p => {
+        const bestTip = getBestSingleTip(p);
+        if (bestTip && bestTip.prob > topTipVal) {
+          topTipVal = bestTip.prob;
+          topPred = p;
+        }
+      });
+      
+      return topPred ? [topPred] : [];
+    }
+    return predictions;
+  };
+
   
   // History states
   const [historyList, setHistoryList] = useState([]);
@@ -148,9 +225,11 @@ export default function PredictionsDashboard() {
     return lg.substring(0, 3).toUpperCase();
   };
 
-  const renderPredictionCard = (pred) => {
+  const renderPredictionCard = (pred, subTab = 'all') => {
     const matchStatus = pred.status || 'UPCOMING';
     const cardLeague = pred.league || predictionResults?.league || '';
+    const isSingleView = subTab === 'singles' || subTab === 'bestsingle';
+    const bestTip = isSingleView ? getBestSingleTip(pred) : null;
     
     return (
       <div 
@@ -159,7 +238,7 @@ export default function PredictionsDashboard() {
         style={{ 
           padding: '16px', 
           border: '1px solid rgba(255,255,255,0.06)',
-          borderLeft: `4px solid ${pred.color || 'var(--accent-neon)'}`,
+          borderLeft: `4px solid ${bestTip?.color || pred.color || 'var(--accent-neon)'}`,
           display: 'flex', 
           flexDirection: 'column', 
           gap: '10px',
@@ -172,8 +251,8 @@ export default function PredictionsDashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ 
-              background: `${pred.color || 'var(--accent-neon)'}15`, 
-              color: (pred.color || 'var(--accent-neon)'), 
+              background: `${bestTip?.color || pred.color || 'var(--accent-neon)'}15`, 
+              color: (bestTip?.color || pred.color || 'var(--accent-neon)'), 
               width: '24px', 
               height: '24px', 
               display: 'flex', 
@@ -181,7 +260,7 @@ export default function PredictionsDashboard() {
               justifyContent: 'center', 
               borderRadius: '50%', 
               fontWeight: 800, 
-              border: `1px solid ${pred.color || 'var(--accent-neon)'}30`,
+              border: `1px solid ${bestTip?.color || pred.color || 'var(--accent-neon)'}30`,
               fontSize: '0.74rem'
             }}>
               {pred.position + 1}
@@ -244,56 +323,77 @@ export default function PredictionsDashboard() {
 
         {/* Badges */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <div style={{ 
-            background: `${pred.color || 'var(--accent-neon)'}10`,
-            border: `1px solid ${pred.color || 'var(--accent-neon)'}40`,
-            color: pred.color || 'var(--accent-neon)',
-            padding: '4px 10px',
-            borderRadius: '6px',
-            fontSize: '0.75rem',
-            fontWeight: 'bold'
-          }}>
-            Outcome: {pred.predictedOutcome === 'H' ? 'H' : pred.predictedOutcome === 'A' ? 'A' : 'D'}
-          </div>
-
-          <div style={{ 
-            background: pred.predictedBtts === 'GG' ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-            border: pred.predictedBtts === 'GG' ? '1px solid #00FF88' : '1px solid rgba(255,255,255,0.08)',
-            color: pred.predictedBtts === 'GG' ? '#00FF88' : 'white',
-            padding: '4px 10px',
-            borderRadius: '6px',
-            fontSize: '0.75rem',
-            fontWeight: 'bold'
-          }}>
-            BTTS: {pred.predictedBtts}
-          </div>
-
-          {pred.predictedOver15 && (
+          {isSingleView && bestTip ? (
             <div style={{ 
-              background: pred.predictedOver15 === 'Over' ? 'rgba(0, 229, 255, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-              border: pred.predictedOver15 === 'Over' ? '1px solid #00E5FF' : '1px solid rgba(255,255,255,0.08)',
-              color: pred.predictedOver15 === 'Over' ? '#00E5FF' : 'white',
-              padding: '4px 10px',
-              borderRadius: '6px',
-              fontSize: '0.75rem',
-              fontWeight: 'bold'
+              background: `${bestTip.color}12`,
+              border: `2px solid ${bestTip.color}`,
+              color: bestTip.color,
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: `0 0 10px ${bestTip.color}15`
             }}>
-              O/U 1.5: {pred.predictedOver15}
+              <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>🎯 BEST SINGLE TIP ({bestTip.market}):</span>
+              <span>{bestTip.prediction} ({bestTip.prob}%)</span>
             </div>
-          )}
+          ) : (
+            <>
+              <div style={{ 
+                background: `${pred.color || 'var(--accent-neon)'}10`,
+                border: `1px solid ${pred.color || 'var(--accent-neon)'}40`,
+                color: pred.color || 'var(--accent-neon)',
+                padding: '4px 10px',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: 'bold'
+              }}>
+                Outcome: {pred.predictedOutcome === 'H' ? 'H' : pred.predictedOutcome === 'A' ? 'A' : 'D'}{pred.predictedOutcomeProb !== undefined ? ` (${pred.predictedOutcomeProb}%)` : ''}
+              </div>
 
-          {pred.predictedOver25 && (
-            <div style={{ 
-              background: pred.predictedOver25 === 'Over' ? 'rgba(167, 139, 250, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-              border: pred.predictedOver25 === 'Over' ? '1px solid #A78BFA' : '1px solid rgba(255,255,255,0.08)',
-              color: pred.predictedOver25 === 'Over' ? '#A78BFA' : 'white',
-              padding: '4px 10px',
-              borderRadius: '6px',
-              fontSize: '0.75rem',
-              fontWeight: 'bold'
-            }}>
-              O/U 2.5: {pred.predictedOver25}
-            </div>
+              <div style={{ 
+                background: pred.predictedBtts === 'GG' ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                border: pred.predictedBtts === 'GG' ? '1px solid #00FF88' : '1px solid rgba(255,255,255,0.08)',
+                color: pred.predictedBtts === 'GG' ? '#00FF88' : 'white',
+                padding: '4px 10px',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: 'bold'
+              }}>
+                BTTS: {pred.predictedBtts}{pred.predictedBttsProb !== undefined ? ` (${pred.predictedBttsProb}%)` : ''}
+              </div>
+
+              {pred.predictedOver15 && (
+                <div style={{ 
+                  background: pred.predictedOver15 === 'Over' ? 'rgba(0, 229, 255, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                  border: pred.predictedOver15 === 'Over' ? '1px solid #00E5FF' : '1px solid rgba(255,255,255,0.08)',
+                  color: pred.predictedOver15 === 'Over' ? '#00E5FF' : 'white',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  fontWeight: 'bold'
+                }}>
+                  O/U 1.5: {pred.predictedOver15}{pred.predictedOver15Prob !== undefined ? ` (${pred.predictedOver15Prob}%)` : ''}
+                </div>
+              )}
+
+              {pred.predictedOver25 && (
+                <div style={{ 
+                  background: pred.predictedOver25 === 'Over' ? 'rgba(167, 139, 250, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                  border: pred.predictedOver25 === 'Over' ? '1px solid #A78BFA' : '1px solid rgba(255,255,255,0.08)',
+                  color: pred.predictedOver25 === 'Over' ? '#A78BFA' : 'white',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  fontWeight: 'bold'
+                }}>
+                  O/U 2.5: {pred.predictedOver25}{pred.predictedOver25Prob !== undefined ? ` (${pred.predictedOver25Prob}%)` : ''}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -555,9 +655,54 @@ export default function PredictionsDashboard() {
                   </button>
                 </div>
 
+                {/* Sub-tabs selector for Live Predictor */}
+                <div style={{ display: 'flex', gap: '8px', background: 'rgba(255, 255, 255, 0.01)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.04)', alignSelf: 'flex-start', flexWrap: 'wrap' }}>
+                  {[
+                    { id: 'all', label: 'As Predicted', emoji: '📋' },
+                    { id: 'best', label: 'Best Picks', emoji: '⭐️' },
+                    { id: 'singles', label: 'Single Tip / Match', emoji: '🎯' },
+                    { id: 'bestsingle', label: 'Best Single Pick', emoji: '🔥' }
+                  ].map(sub => {
+                    const isSelected = liveSubTab === sub.id;
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => setLiveSubTab(sub.id)}
+                        style={{
+                          background: isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                          color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                          border: isSelected ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid transparent',
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: isSelected ? 'bold' : 'normal',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        <span>{sub.emoji}</span>
+                        <span>{sub.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 {/* Cards Grid */}
                 <div ref={predictionsRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', padding: '16px', background: '#0A0F1E', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                  {predictionResults.predictions.map(pred => renderPredictionCard(pred))}
+                  {getFilteredPredictions(predictionResults.predictions, liveSubTab).length === 0 ? (
+                    <div style={{ gridColumn: '1 / -1', padding: '60px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                      <span style={{ fontSize: '2rem', display: 'block', marginBottom: '8px' }}>🔍</span>
+                      <strong>No predictions found.</strong>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        No matches met the filter criteria for this round.
+                      </p>
+                    </div>
+                  ) : (
+                    getFilteredPredictions(predictionResults.predictions, liveSubTab).map(pred => renderPredictionCard(pred, liveSubTab))
+                  )}
                 </div>
               </div>
             )}
@@ -595,6 +740,43 @@ export default function PredictionsDashboard() {
               </div>
             )}
 
+            {/* Sub-tabs selector for History Log */}
+            {!loadingHistory && !historyError && historyList.length > 0 && (
+              <div style={{ display: 'flex', gap: '8px', background: 'rgba(255, 255, 255, 0.01)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.04)', alignSelf: 'flex-start', flexWrap: 'wrap' }}>
+                {[
+                  { id: 'all', label: 'As Predicted', emoji: '📋' },
+                  { id: 'best', label: 'Best Picks', emoji: '⭐️' },
+                  { id: 'singles', label: 'Single Tip / Match', emoji: '🎯' },
+                  { id: 'bestsingle', label: 'Best Single Pick', emoji: '🔥' }
+                ].map(sub => {
+                  const isSelected = historySubTab === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      onClick={() => setHistorySubTab(sub.id)}
+                      style={{
+                        background: isSelected ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                        color: isSelected ? 'var(--accent-neon)' : 'var(--text-secondary)',
+                        border: isSelected ? '1px solid rgba(0, 229, 255, 0.2)' : '1px solid transparent',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        fontSize: '0.75rem',
+                        fontWeight: isSelected ? 'bold' : 'normal',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <span>{sub.emoji}</span>
+                      <span>{sub.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {/* History List */}
             {!loadingHistory && !historyError && (
               historyList.length === 0 ? (
@@ -607,228 +789,315 @@ export default function PredictionsDashboard() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-                  {historyList.map(round => {
-                    const resolvedPreds = round.predictions.filter(p => p.resolved);
-                    const totalResolved = resolvedPreds.length;
-                    const correctOutcome = resolvedPreds.filter(p => p.outcomeCorrect).length;
-                    const correctBtts = resolvedPreds.filter(p => p.bttsCorrect).length;
-                    const correctOver15 = resolvedPreds.filter(p => p.over15Correct).length;
-                    const correctOver25 = resolvedPreds.filter(p => p.over25Correct).length;
+                  {(() => {
+                    const roundsToRender = historyList.map(round => {
+                      const filteredRoundPreds = getFilteredPredictions(round.predictions, historySubTab);
+                      if (filteredRoundPreds.length === 0) return null;
 
-                    const outcomePct = totalResolved > 0 ? Math.round((correctOutcome / totalResolved) * 100) : null;
-                    const bttsPct = totalResolved > 0 ? Math.round((correctBtts / totalResolved) * 100) : null;
-                    const over15Pct = totalResolved > 0 ? Math.round((correctOver15 / totalResolved) * 100) : null;
-                    const over25Pct = totalResolved > 0 ? Math.round((correctOver25 / totalResolved) * 100) : null;
+                      const resolvedPreds = filteredRoundPreds.filter(p => p.resolved);
+                      const totalResolved = resolvedPreds.length;
+                      
+                      let correctOutcome = 0;
+                      let correctBtts = 0;
+                      let correctOver15 = 0;
+                      let correctOver25 = 0;
+                      let correctSingleCount = 0;
+                      
+                      filteredRoundPreds.forEach(p => {
+                        if (p.resolved) {
+                          if (p.outcomeCorrect) correctOutcome++;
+                          if (p.bttsCorrect) correctBtts++;
+                          if (p.over15Correct) correctOver15++;
+                          if (p.over25Correct) correctOver25++;
+                          
+                          const bestTip = getBestSingleTip(p);
+                          if (bestTip) {
+                            let isCorrect = false;
+                            if (bestTip.market === 'Outcome') isCorrect = p.outcomeCorrect;
+                            else if (bestTip.market === 'BTTS') isCorrect = p.bttsCorrect;
+                            else if (bestTip.market === 'O/U 1.5') isCorrect = p.over15Correct;
+                            else if (bestTip.market === 'O/U 2.5') isCorrect = p.over25Correct;
+                            if (isCorrect) correctSingleCount++;
+                          }
+                        }
+                      });
 
-                    return (
-                      <div 
-                        key={round.id} 
-                        className="glass-panel" 
-                        style={{ 
-                          padding: '20px', 
-                          border: '1px solid rgba(255,255,255,0.06)',
-                          borderLeft: `4px solid ${totalResolved > 0 ? 'var(--accent-success)' : 'var(--accent-gold)'}`,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '16px'
-                        }}
-                      >
-                        {/* Header details */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px' }}>
-                          <div>
-                            <strong style={{ color: 'white', fontSize: '1.05rem', display: 'block' }}>
-                              Round: {round.league}
-                            </strong>
-                            <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-                              📅 Date: {round.date} | Captured: {new Date(round.capturedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
+                      const isSingleView = historySubTab === 'singles' || historySubTab === 'bestsingle';
+                      const outcomePct = totalResolved > 0 ? Math.round((correctOutcome / totalResolved) * 100) : null;
+                      const bttsPct = totalResolved > 0 ? Math.round((correctBtts / totalResolved) * 100) : null;
+                      const over15Pct = totalResolved > 0 ? Math.round((correctOver15 / totalResolved) * 100) : null;
+                      const over25Pct = totalResolved > 0 ? Math.round((correctOver25 / totalResolved) * 100) : null;
+                      const singlePct = totalResolved > 0 ? Math.round((correctSingleCount / totalResolved) * 100) : null;
+
+                      return (
+                        <div 
+                          key={round.id} 
+                          className="glass-panel" 
+                          style={{ 
+                            padding: '20px', 
+                            border: '1px solid rgba(255,255,255,0.06)',
+                            borderLeft: `4px solid ${totalResolved > 0 ? 'var(--accent-success)' : 'var(--accent-gold)'}`,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '16px'
+                          }}
+                        >
+                          {/* Header details */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px' }}>
+                            <div>
+                              <strong style={{ color: 'white', fontSize: '1.05rem', display: 'block' }}>
+                                Round: {round.league}
+                              </strong>
+                              <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                                📅 Date: {round.date} | Captured: {new Date(round.capturedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+
+                            {/* Accuracy badges */}
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              {totalResolved > 0 ? (
+                                isSingleView ? (
+                                  <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '85px' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Single Tip Acc</span>
+                                    <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctSingleCount}/{totalResolved} ({singlePct}%)</strong>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Outcome</span>
+                                      <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctOutcome}/{totalResolved} ({outcomePct}%)</strong>
+                                    </div>
+                                    <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>BTTS</span>
+                                      <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctBtts}/{totalResolved} ({bttsPct}%)</strong>
+                                    </div>
+                                    <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>O/U 1.5</span>
+                                      <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctOver15}/{totalResolved} ({over15Pct}%)</strong>
+                                    </div>
+                                    <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
+                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>O/U 2.5</span>
+                                      <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctOver25}/{totalResolved} ({over25Pct}%)</strong>
+                                    </div>
+                                  </>
+                                )
+                              ) : (
+                                <div style={{ background: 'rgba(255, 215, 0, 0.06)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.74rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
+                                  ⏳ Pending Match Completion
+                                </div>
+                              )}
+                            </div>
                           </div>
 
-                          {/* Accuracy badges */}
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            {totalResolved > 0 ? (
-                              <>
-                                <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
-                                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>Outcome</span>
-                                  <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctOutcome}/{totalResolved} ({outcomePct}%)</strong>
-                                </div>
-                                <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
-                                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>BTTS</span>
-                                  <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctBtts}/{totalResolved} ({bttsPct}%)</strong>
-                                </div>
-                                <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
-                                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>O/U 1.5</span>
-                                  <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctOver15}/{totalResolved} ({over15Pct}%)</strong>
-                                </div>
-                                <div style={{ background: 'rgba(0, 255, 136, 0.05)', border: '1px solid rgba(0, 255, 136, 0.15)', padding: '4px 8px', borderRadius: '4px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '70px' }}>
-                                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.55rem', textTransform: 'uppercase' }}>O/U 2.5</span>
-                                  <strong style={{ color: 'var(--accent-success)', fontSize: '0.85rem' }}>{correctOver25}/{totalResolved} ({over25Pct}%)</strong>
-                                </div>
-                              </>
-                            ) : (
-                              <div style={{ background: 'rgba(255, 215, 0, 0.06)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.74rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
-                                ⏳ Pending Match Completion
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                          {/* Predictions cards list */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                            {filteredRoundPreds.map(pred => {
+                              const bestTip = isSingleView ? getBestSingleTip(pred) : null;
+                              
+                              let isBestTipCorrect = false;
+                              if (bestTip) {
+                                if (bestTip.market === 'Outcome') isBestTipCorrect = pred.outcomeCorrect;
+                                else if (bestTip.market === 'BTTS') isBestTipCorrect = pred.bttsCorrect;
+                                else if (bestTip.market === 'O/U 1.5') isBestTipCorrect = pred.over15Correct;
+                                else if (bestTip.market === 'O/U 2.5') isBestTipCorrect = pred.over25Correct;
+                              }
 
-                        {/* Predictions cards list */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
-                          {round.predictions.map(pred => {
-                            return (
-                              <div 
-                                key={pred.position}
-                                className="glass-panel"
-                                style={{
-                                  padding: '12px 14px',
-                                  background: 'rgba(0,0,0,0.2)',
-                                  border: '1px solid rgba(255,255,255,0.03)',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: '10px'
-                                }}
-                              >
-                                {/* Time & Code */}
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <span style={{ background: 'rgba(255,255,255,0.05)', color: 'white', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontWeight: 'bold', fontSize: '0.65rem' }}>
-                                      {pred.position + 1}
-                                    </span>
-                                    {pred.time && (
-                                      <span style={{ fontSize: '0.6rem', background: 'rgba(255,255,255,0.03)', color: 'var(--text-secondary)', padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace' }}>
-                                        {pred.time}
+                              return (
+                                <div 
+                                  key={pred.position}
+                                  className="glass-panel"
+                                  style={{
+                                    padding: '12px 14px',
+                                    background: 'rgba(0,0,0,0.2)',
+                                    border: '1px solid rgba(255,255,255,0.03)',
+                                    borderLeft: isSingleView && bestTip && pred.resolved
+                                      ? `4px solid ${isBestTipCorrect ? 'var(--accent-success)' : 'var(--accent-live)'}`
+                                      : '1px solid rgba(255,255,255,0.03)',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '10px'
+                                  }}
+                                >
+                                  {/* Time & Code */}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span style={{ background: 'rgba(255,255,255,0.05)', color: 'white', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', fontWeight: 'bold', fontSize: '0.65rem' }}>
+                                        {pred.position + 1}
                                       </span>
-                                    )}
+                                      {pred.time && (
+                                        <span style={{ fontSize: '0.6rem', background: 'rgba(255,255,255,0.03)', color: 'var(--text-secondary)', padding: '2px 4px', borderRadius: '4px', fontFamily: 'monospace' }}>
+                                          {pred.time}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Conf: {pred.confidence}%</span>
                                   </div>
-                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Conf: {pred.confidence}%</span>
-                                </div>
 
-                                <strong style={{ color: 'white', fontSize: '0.85rem' }}>{pred.match}</strong>
-
-                                {/* Verifications */}
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                  <strong style={{ color: 'white', fontSize: '0.85rem' }}>{pred.match}</strong>
                                   
-                                  {/* 1. OUTCOME VERIFICATION */}
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
-                                    <div>
-                                      <span style={{ color: 'var(--text-secondary)' }}>Winner: </span>
-                                      <strong style={{ color: getOutcomeColor(pred.predictedOutcome) }}>{pred.predictedOutcome}</strong>
-                                    </div>
-                                    {pred.resolved ? (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOutcome}</span>
-                                        <span style={{ 
-                                          color: pred.outcomeCorrect ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                          fontWeight: 'bold',
-                                          background: pred.outcomeCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                          padding: '1px 4px',
-                                          borderRadius: '3px',
-                                          fontSize: '0.65rem'
-                                        }}>
-                                          {pred.outcomeCorrect ? '✓' : '✗'}
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
-                                    )}
-                                  </div>
-
-                                  {/* 2. BTTS VERIFICATION */}
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
-                                    <div>
-                                      <span style={{ color: 'var(--text-secondary)' }}>BTTS: </span>
-                                      <strong style={{ color: pred.predictedBtts === 'GG' ? 'var(--accent-success)' : 'white' }}>{pred.predictedBtts}</strong>
-                                    </div>
-                                    {pred.resolved ? (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualBtts}</span>
-                                        <span style={{ 
-                                          color: pred.bttsCorrect ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                          fontWeight: 'bold',
-                                          background: pred.bttsCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                          padding: '1px 4px',
-                                          borderRadius: '3px',
-                                          fontSize: '0.65rem'
-                                        }}>
-                                          {pred.bttsCorrect ? '✓' : '✗'}
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
-                                    )}
-                                  </div>
-
-                                  {/* 3. O/U 1.5 VERIFICATION */}
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
-                                    <div>
-                                      <span style={{ color: 'var(--text-secondary)' }}>O/U 1.5: </span>
-                                      <strong style={{ color: pred.predictedOver15 === 'Over' ? 'var(--accent-neon)' : 'white' }}>{pred.predictedOver15}</strong>
-                                    </div>
-                                    {pred.resolved ? (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOver15}</span>
-                                        <span style={{ 
-                                          color: pred.over15Correct ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                          fontWeight: 'bold',
-                                          background: pred.over15Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                          padding: '1px 4px',
-                                          borderRadius: '3px',
-                                          fontSize: '0.65rem'
-                                        }}>
-                                          {pred.over15Correct ? '✓' : '✗'}
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
-                                    )}
-                                  </div>
-
-                                  {/* 4. O/U 2.5 VERIFICATION */}
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
-                                    <div>
-                                      <span style={{ color: 'var(--text-secondary)' }}>O/U 2.5: </span>
-                                      <strong style={{ color: pred.predictedOver25 === 'Over' ? 'var(--accent-purple)' : 'white' }}>{pred.predictedOver25}</strong>
-                                    </div>
-                                    {pred.resolved ? (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOver25}</span>
-                                        <span style={{ 
-                                          color: pred.over25Correct ? 'var(--accent-success)' : 'var(--accent-live)', 
-                                          fontWeight: 'bold',
-                                          background: pred.over25Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
-                                          padding: '1px 4px',
-                                          borderRadius: '3px',
-                                          fontSize: '0.65rem'
-                                        }}>
-                                          {pred.over25Correct ? '✓' : '✗'}
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
-                                    )}
-                                  </div>
-
-                                  {/* Actual Score */}
-                                  {pred.resolved && (
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
-                                      <span style={{ color: 'var(--text-secondary)' }}>Score:</span>
-                                      <strong style={{ color: 'white', fontFamily: 'monospace' }}>{pred.actualScore}</strong>
+                                  {isSingleView && bestTip && (
+                                    <div style={{ 
+                                      background: `${bestTip.color}10`,
+                                      border: `1px solid ${bestTip.color}30`,
+                                      color: bestTip.color,
+                                      padding: '4px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: 'bold',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      alignSelf: 'flex-start'
+                                    }}>
+                                      🎯 Single Tip ({bestTip.market}): {bestTip.prediction} ({bestTip.prob}%)
                                     </div>
                                   )}
+
+                                  {/* Verifications */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    
+                                    {/* 1. OUTCOME VERIFICATION */}
+                                    {(!isSingleView || bestTip?.market === 'Outcome') && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <div>
+                                          <span style={{ color: 'var(--text-secondary)' }}>Winner: </span>
+                                          <strong style={{ color: getOutcomeColor(pred.predictedOutcome) }}>{pred.predictedOutcome}{pred.predictedOutcomeProb !== undefined ? ` (${pred.predictedOutcomeProb}%)` : ''}</strong>
+                                        </div>
+                                        {pred.resolved ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOutcome}</span>
+                                            <span style={{ 
+                                              color: pred.outcomeCorrect ? 'var(--accent-success)' : 'var(--accent-live)', 
+                                              fontWeight: 'bold',
+                                              background: pred.outcomeCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
+                                              padding: '1px 4px',
+                                              borderRadius: '3px',
+                                              fontSize: '0.65rem'
+                                            }}>
+                                              {pred.outcomeCorrect ? '✓' : '✗'}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* 2. BTTS VERIFICATION */}
+                                    {(!isSingleView || bestTip?.market === 'BTTS') && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <div>
+                                          <span style={{ color: 'var(--text-secondary)' }}>BTTS: </span>
+                                          <strong style={{ color: pred.predictedBtts === 'GG' ? 'var(--accent-success)' : 'white' }}>{pred.predictedBtts}{pred.predictedBttsProb !== undefined ? ` (${pred.predictedBttsProb}%)` : ''}</strong>
+                                        </div>
+                                        {pred.resolved ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualBtts}</span>
+                                            <span style={{ 
+                                              color: pred.bttsCorrect ? 'var(--accent-success)' : 'var(--accent-live)', 
+                                              fontWeight: 'bold',
+                                              background: pred.bttsCorrect ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
+                                              padding: '1px 4px',
+                                              borderRadius: '3px',
+                                              fontSize: '0.65rem'
+                                            }}>
+                                              {pred.bttsCorrect ? '✓' : '✗'}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* 3. O/U 1.5 VERIFICATION */}
+                                    {(!isSingleView || bestTip?.market === 'O/U 1.5') && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <div>
+                                          <span style={{ color: 'var(--text-secondary)' }}>O/U 1.5: </span>
+                                          <strong style={{ color: pred.predictedOver15 === 'Over' ? 'var(--accent-neon)' : 'white' }}>{pred.predictedOver15}{pred.predictedOver15Prob !== undefined ? ` (${pred.predictedOver15Prob}%)` : ''}</strong>
+                                        </div>
+                                        {pred.resolved ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOver15}</span>
+                                            <span style={{ 
+                                              color: pred.over15Correct ? 'var(--accent-success)' : 'var(--accent-live)', 
+                                              fontWeight: 'bold',
+                                              background: pred.over15Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
+                                              padding: '1px 4px',
+                                              borderRadius: '3px',
+                                              fontSize: '0.65rem'
+                                            }}>
+                                              {pred.over15Correct ? '✓' : '✗'}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* 4. O/U 2.5 VERIFICATION */}
+                                    {(!isSingleView || bestTip?.market === 'O/U 2.5') && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <div>
+                                          <span style={{ color: 'var(--text-secondary)' }}>O/U 2.5: </span>
+                                          <strong style={{ color: pred.predictedOver25 === 'Over' ? 'var(--accent-purple)' : 'white' }}>{pred.predictedOver25}{pred.predictedOver25Prob !== undefined ? ` (${pred.predictedOver25Prob}%)` : ''}</strong>
+                                        </div>
+                                        {pred.resolved ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Act: {pred.actualOver25}</span>
+                                            <span style={{ 
+                                              color: pred.over25Correct ? 'var(--accent-success)' : 'var(--accent-live)', 
+                                              fontWeight: 'bold',
+                                              background: pred.over25Correct ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 51, 85, 0.08)',
+                                              padding: '1px 4px',
+                                              borderRadius: '3px',
+                                              fontSize: '0.65rem'
+                                            }}>
+                                              {pred.over25Correct ? '✓' : '✗'}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.65rem' }}>Pending</span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Actual Score */}
+                                    {pred.resolved && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', padding: '4px 8px', borderRadius: '4px', fontSize: '0.74rem' }}>
+                                        <span style={{ color: 'var(--text-secondary)' }}>Score:</span>
+                                        <strong style={{ color: 'white', fontFamily: 'monospace' }}>{pred.actualScore}</strong>
+                                      </div>
+                                    )}
+                                  </div>
+                                  
+                                  {/* Reasoning */}
+                                  <div style={{ background: 'rgba(255,255,255,0.01)', padding: '6px 8px', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.02)', fontStyle: 'italic', marginTop: '2px' }}>
+                                    🧠 AI: "{pred.reasoning}"
+                                  </div>
                                 </div>
-                                
-                                {/* Reasoning */}
-                                <div style={{ background: 'rgba(255,255,255,0.01)', padding: '6px 8px', borderRadius: '4px', fontSize: '0.68rem', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.02)', fontStyle: 'italic', marginTop: '2px' }}>
-                                  🧠 AI: "{pred.reasoning}"
-                                </div>
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    }).filter(Boolean);
+
+                    if (roundsToRender.length === 0) {
+                      return (
+                        <div className="glass-panel" style={{ padding: '60px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          <span style={{ fontSize: '2rem', display: 'block', marginBottom: '8px' }}>🔍</span>
+                          <strong>No predictions found.</strong>
+                          <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            No history rounds have matches meeting the filter criteria.
+                          </p>
+                        </div>
+                      );
+                    }
+                    return roundsToRender;
+                  })()}
                 </div>
               )
             )}

@@ -643,21 +643,41 @@ export default function DailyTips() {
                                                     
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
                                                         <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>👑 Winner</span>
-                                                        <span style={{ color: NEON, fontWeight: 700, fontSize: '0.95rem' }}>{match.match_winner}</span>
+                                                        <span style={{ color: NEON, fontWeight: 700, fontSize: '0.95rem' }}>
+                                                            {match.match_winner}
+                                                            {match.match_winner_pct !== undefined && (
+                                                                <span style={{ color: GOLD, fontSize: '0.8rem', marginLeft: '6px', fontWeight: 'bold' }}>({match.match_winner_pct}%)</span>
+                                                            )}
+                                                        </span>
                                                     </div>
 
                                                     <div style={{ display: 'flex', gap: '8px' }}>
                                                         <div style={{ flex: 1, textAlign: 'center', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px', borderRadius: '6px' }}>
                                                             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>O 1.5</div>
-                                                            <div style={{ fontSize: '0.9rem', color: match.over_1_5?.toLowerCase().includes('yes') ? GREEN : RED, fontWeight: 700, marginTop: '2px' }}>{match.over_1_5}</div>
+                                                            <div style={{ fontSize: '0.9rem', color: match.over_1_5?.toLowerCase().includes('yes') ? GREEN : RED, fontWeight: 700, marginTop: '2px' }}>
+                                                                {match.over_1_5}
+                                                                {match.over_1_5_pct !== undefined && (
+                                                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginLeft: '4px', fontWeight: 'normal' }}>({match.over_1_5_pct}%)</span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                         <div style={{ flex: 1, textAlign: 'center', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px', borderRadius: '6px' }}>
                                                             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>O 2.5</div>
-                                                            <div style={{ fontSize: '0.9rem', color: match.over_2_5?.toLowerCase().includes('yes') ? GREEN : RED, fontWeight: 700, marginTop: '2px' }}>{match.over_2_5}</div>
+                                                            <div style={{ fontSize: '0.9rem', color: match.over_2_5?.toLowerCase().includes('yes') ? GREEN : RED, fontWeight: 700, marginTop: '2px' }}>
+                                                                {match.over_2_5}
+                                                                {match.over_2_5_pct !== undefined && (
+                                                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginLeft: '4px', fontWeight: 'normal' }}>({match.over_2_5_pct}%)</span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                         <div style={{ flex: 1, textAlign: 'center', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', padding: '8px', borderRadius: '6px' }}>
                                                             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>GG</div>
-                                                            <div style={{ fontSize: '0.9rem', color: match.gg?.toLowerCase().includes('yes') ? GREEN : RED, fontWeight: 700, marginTop: '2px' }}>{match.gg}</div>
+                                                            <div style={{ fontSize: '0.9rem', color: match.gg?.toLowerCase().includes('yes') ? GREEN : RED, fontWeight: 700, marginTop: '2px' }}>
+                                                                {match.gg}
+                                                                {match.gg_pct !== undefined && (
+                                                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginLeft: '4px', fontWeight: 'normal' }}>({match.gg_pct}%)</span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>

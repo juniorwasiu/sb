@@ -416,7 +416,8 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
                     hasNextPage = false;
                 }
 
-                if (pageNum > 20) break; // Hard limit
+                const maxPages = options.scrapeAllPages ? 50 : 20;
+                if (pageNum > maxPages) break;
             }
 
             if (allMatches.length === 0) {

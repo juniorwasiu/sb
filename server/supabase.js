@@ -167,31 +167,71 @@ async function getMatchesFromDb() {
 
 // 2. Save matches
 async function saveMatchesToDb(newMatches) {
-    // Synchronously write to local JSON first
-    const localStats = saveToLocalJson(newMatches);
+    console.log(`[SUPABASE] [DEBUG] saveMatchesToDb: processing ${newMatches.length} matches...`);
+    
+    if (!supabaseClient) {
+        const errMsg = 'Supabase client is not initialized! Scraping requires active Supabase configuration.';
+        console.error(`[SUPABASE] [DEBUG] ❌ ${errMsg}`);
+        throw new Error(errMsg);
+    }
 
-    if (supabaseClient) {
-        try {
-            console.log(`[SUPABASE] [DEBUG] Mapping and deduplicating ${newMatches.length} matches for Supabase...`);
-            const dbRows = [];
-            const seenIds = new Set();
-            for (const match of newMatches) {
-                const row = mapMatchToDb(match);
-                if (row.id && !seenIds.has(row.id)) {
-                    seenIds.add(row.id);
-                    dbRows.push(row);
-                }
+    let added = 0;
+    let dupes = 0;
+    let total = 0;
+
+    try {
+        console.log(`[SUPABASE] [DEBUG] Mapping and deduplicating ${newMatches.length} incoming matches...`);
+        const dbRows = [];
+        const seenIds = new Set();
+        for (const match of newMatches) {
+            const row = mapMatchToDb(match);
+            if (row.id && !seenIds.has(row.id)) {
+                seenIds.add(row.id);
+                dbRows.push(row);
             }
-
-            console.log(`[SUPABASE] [DEBUG] Upserting ${dbRows.length} unique matches to Supabase...`);
-            const { error } = await supabaseClient
-                .from('vfootball_results')
-                .upsert(dbRows, { onConflict: 'id' });
-            if (error) throw error;
-            console.log(`[SUPABASE] [DEBUG] Successfully upserted ${dbRows.length} matches to Supabase.`);
-        } catch (err) {
-            console.error('[SUPABASE] [DEBUG] Failed to upsert matches to Supabase:', err.message);
         }
+
+        const idsToInsert = dbRows.map(r => r.id);
+        console.log(`[SUPABASE] [DEBUG] Checking ID existence for ${idsToInsert.length} matches in Supabase...`);
+        
+        let existingIds = new Set();
+        if (idsToInsert.length > 0) {
+            const { data: existingRows, error: fetchErr } = await supabaseClient
+                .from('vfootball_results')
+                .select('id')
+                .in('id', idsToInsert);
+            
+            if (fetchErr) throw fetchErr;
+            if (existingRows) {
+                existingRows.forEach(row => existingIds.add(row.id));
+            }
+        }
+
+        const rowsToInsert = dbRows.filter(r => !existingIds.has(r.id));
+        added = rowsToInsert.length;
+        dupes = dbRows.length - added;
+
+        if (added > 0) {
+            console.log(`[SUPABASE] [DEBUG] Inserting ${added} new matches into Supabase...`);
+            const { error: insertErr } = await supabaseClient
+                .from('vfootball_results')
+                .insert(rowsToInsert);
+            if (insertErr) throw insertErr;
+            console.log(`[SUPABASE] [DEBUG] Successfully inserted ${added} matches into Supabase.`);
+        } else {
+            console.log('[SUPABASE] [DEBUG] No new matches to insert. All matches are duplicate.');
+        }
+
+        // Query total count of results from Supabase
+        const { count: countVal, error: countErr } = await supabaseClient
+            .from('vfootball_results')
+            .select('*', { count: 'exact', head: true });
+        if (countErr) throw countErr;
+        total = countVal || 0;
+
+    } catch (err) {
+        console.error('[SUPABASE] [DEBUG] ❌ Failed to save matches to Supabase:', err.message);
+        throw err;
     }
 
     // Auto-resolve pending predictions after new results are saved
@@ -201,7 +241,7 @@ async function saveMatchesToDb(newMatches) {
         });
     }, 1500);
 
-    return localStats;
+    return { added, dupes, total };
 }
 
 // 3. Get predictions history
@@ -427,15 +467,7 @@ const abbreviateTeamBackend = (name) => {
 
 function resolvePredictionOutcomes(predictions, date, finishedMatches = []) {
     if (!finishedMatches || finishedMatches.length === 0) {
-        if (fs.existsSync(LOCAL_DB_PATH)) {
-            try {
-                finishedMatches = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
-            } catch (e) {
-                return predictions;
-            }
-        } else {
-            return predictions;
-        }
+        return predictions;
     }
     
     return predictions.map(pred => {
