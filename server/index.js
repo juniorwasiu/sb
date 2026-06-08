@@ -5138,6 +5138,49 @@ app.post('/api/local-vfootball/wipe', express.json(), async (req, res) => {
 const predictionsExportRouter = require('./predictions_export');
 app.use('/api/public/predictions/export', predictionsExportRouter);
 
+// 8.4. POST endpoint to sync (scrape) today's results for a specific league
+// Called by the client "Check Outcomes" button BEFORE resolving pending predictions
+app.post('/api/local-vfootball/sync-league', async (req, res) => {
+    const { league } = req.query;
+    if (!league) {
+        return res.status(400).json({ success: false, error: 'Missing ?league= query parameter' });
+    }
+    console.log(`[DEBUG] [Local API] POST /api/local-vfootball/sync-league → Scraping today's results for: "${league}"`);
+    
+    const today = new Date().toISOString().split('T')[0];
+    let totalAdded = 0;
+    let totalDupes = 0;
+    
+    try {
+        const { nativeCaptureLeagueResults } = require('./native_scraper');
+        const result = await nativeCaptureLeagueResults(league, today, {
+            onPageCaptured: async (err, matchRows, pageNum) => {
+                if (err) {
+                    console.error(`[Sync League] Page ${pageNum} error: ${err.message}`);
+                    return;
+                }
+                if (matchRows && matchRows.length > 0) {
+                    const stats = await saveMatchesToDb(matchRows);
+                    totalAdded += stats.added || 0;
+                    totalDupes += stats.dupes || 0;
+                    console.log(`[Sync League] Page ${pageNum}: Added ${stats.added} new results for "${league}".`);
+                    // Stop early if all dupes for 3 consecutive pages
+                    if (stats.added === 0 && stats.dupes > 0) {
+                        return { stop: true };
+                    }
+                }
+            }
+        });
+        
+        console.log(`[Sync League] ✅ Finished scraping "${league}" for ${today}. Added: ${totalAdded}, Dupes: ${totalDupes}, Pages: ${result.totalPages}`);
+        res.json({ success: true, league, date: today, added: totalAdded, dupes: totalDupes, pages: result.totalPages });
+    } catch (err) {
+        console.error(`[Sync League] ❌ Scrape failed for "${league}": ${err.message}`);
+        // Return partial success so client can still proceed to resolve
+        res.status(200).json({ success: false, league, date: today, error: err.message, added: totalAdded });
+    }
+});
+
 // 8.5. POST endpoint to trigger manual predictions resolution
 app.post('/api/predictions/resolve-pending', async (req, res) => {
     console.log('[DEBUG] [Local API] POST /api/predictions/resolve-pending requested (manual check)');

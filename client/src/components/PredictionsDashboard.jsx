@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -14,6 +14,7 @@ export default function PredictionsDashboard() {
   const [capturing, setCapturing] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
   const [resolvingPending, setResolvingPending] = useState(false);
+  const [resolveStatus, setResolveStatus] = useState(''); // Human-readable status during resolve
 
   // Sub-tabs states
   const [liveSubTab, setLiveSubTab] = useState('all'); // 'all' | 'best' | 'best15' | 'singlehome' | 'singleaway' | 'besthomeaway' | 'bestsingle'
@@ -136,14 +137,15 @@ export default function PredictionsDashboard() {
     { id: 'France League',     label: 'France',    emoji: '🇫🇷' }
   ];
 
-  // Fetch prediction history logs
-  const fetchPredictionsHistory = async (league = selectedLeague) => {
+  // Fetch prediction history logs — stabilized with useCallback to prevent re-render loops
+  const fetchPredictionsHistory = useCallback(async (league) => {
+    const targetLeague = league || selectedLeague;
     setLoadingHistory(true);
     setHistoryError(null);
-    console.log(`[PredictionsDashboard] [DEBUG] 📜 Querying prediction history logs for league: "${league}"`);
+    console.log(`[PredictionsDashboard] [DEBUG] 📜 Querying prediction history logs for league: "${targetLeague}"`);
     
     try {
-      const response = await fetch(`/api/local-vfootball/predictions-history?league=${encodeURIComponent(league)}`);
+      const response = await fetch(`/api/local-vfootball/predictions-history?league=${encodeURIComponent(targetLeague)}`);
       if (!response.ok) {
         throw new Error(`Server returned status ${response.status} (${response.statusText})`);
       }
@@ -163,43 +165,83 @@ export default function PredictionsDashboard() {
     } finally {
       setLoadingHistory(false);
     }
-  };
+  // selectedLeague used as fallback — stable ref via useCallback
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLeague]);
 
+  // ── Resolve Pending: first scrapes fresh results for today, then resolves outcomes ──
   const handleResolvePending = async () => {
     if (resolvingPending) return;
     setResolvingPending(true);
-    console.log('[PredictionsDashboard] [DEBUG] Triggering manual predictions resolution check...');
+    setResolveStatus('🔄 Step 1/3: Scraping fresh match results for today...');
+    console.log('[PredictionsDashboard] [DEBUG] ⚙️ Manual resolve started — Step 1: triggering fresh results scrape for all leagues...');
+
+    const leaguesToScrape = ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League'];
+    
     try {
+      // Step 1: Scrape today's results for all leagues before resolving
+      for (const league of leaguesToScrape) {
+        console.log(`[PredictionsDashboard] [DEBUG] 🔍 Scraping results for: ${league}`);
+        setResolveStatus(`🔄 Scraping: ${league}...`);
+        try {
+          const scrapeRes = await fetch(`/api/local-vfootball/sync-league?league=${encodeURIComponent(league)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          if (scrapeRes.ok) {
+            const scrapeData = await scrapeRes.json();
+            console.log(`[PredictionsDashboard] [DEBUG] ✅ Scraped ${league}: added ${scrapeData.added || 0} new results.`);
+          } else {
+            console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape returned ${scrapeRes.status} for ${league} — continuing...`);
+          }
+        } catch (scrapeErr) {
+          console.warn(`[PredictionsDashboard] [DEBUG] ⚠️ Scrape error for ${league}: ${scrapeErr.message} — continuing...`);
+        }
+      }
+
+      // Step 2: Resolve all pending predictions against fresh results
+      setResolveStatus('⚙️ Step 2/3: Resolving pending outcomes against scraped results...');
+      console.log('[PredictionsDashboard] [DEBUG] ⚙️ Step 2: Calling resolve-pending endpoint...');
       const res = await fetch('/api/predictions/resolve-pending', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
       const data = await res.json();
+
       if (data.success) {
-        console.log('[PredictionsDashboard] [DEBUG] Manual predictions resolution triggered successfully. Re-fetching history logs...');
+        // Step 3: Re-fetch updated history
+        setResolveStatus('📥 Step 3/3: Refreshing history log with updated results...');
+        console.log('[PredictionsDashboard] [DEBUG] ✅ Resolve complete. Re-fetching updated history...');
         await fetchPredictionsHistory(selectedLeague);
+        setResolveStatus(`✅ Done! History updated.`);
+        setTimeout(() => setResolveStatus(''), 4000);
       } else {
-        alert(`Failed to resolve predictions: ${data.error || 'Unknown error'}`);
+        setResolveStatus(`❌ Resolve failed: ${data.error || 'Unknown error'}`);
+        console.error('[PredictionsDashboard] [DEBUG] ❌ Resolve endpoint returned failure:', data.error);
+        setTimeout(() => setResolveStatus(''), 5000);
       }
     } catch (err) {
-      console.error('[PredictionsDashboard] [DEBUG] Error triggering manual resolution:', err);
-      alert(`Error: ${err.message}`);
+      console.error('[PredictionsDashboard] [DEBUG] ❌ Error during manual resolve:', err);
+      setResolveStatus(`❌ Error: ${err.message}`);
+      setTimeout(() => setResolveStatus(''), 5000);
     } finally {
       setResolvingPending(false);
     }
   };
 
-  // Fetch history when view is toggled to history or league changes, with auto-refresh interval
+  // Fetch history when view is toggled to history or league changes
+  // Uses a stable useCallback ref — no infinite re-render loop
   useEffect(() => {
     let intervalId;
     if (activeView === 'history') {
       fetchPredictionsHistory(selectedLeague);
       
-      // Auto-refresh history logs every 30 seconds to fetch completed matches outcomes
-      console.log('[PredictionsDashboard] [DEBUG] 🔄 Initializing auto-refresh interval for predictions history (30s)...');
+      // Auto-refresh every 60s (not 30s to reduce server load) — only when on history tab
+      console.log('[PredictionsDashboard] [DEBUG] 🔄 Initializing auto-refresh interval for predictions history (60s)...');
       intervalId = setInterval(() => {
+        console.log('[PredictionsDashboard] [DEBUG] ⏱️ Auto-refresh triggered for history...');
         fetchPredictionsHistory(selectedLeague);
-      }, 30000);
+      }, 60000);
     }
     
     return () => {
@@ -208,8 +250,7 @@ export default function PredictionsDashboard() {
         clearInterval(intervalId);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView, selectedLeague]);
+  }, [activeView, selectedLeague, fetchPredictionsHistory]);
 
   // Trigger DeepSeek live predictions
   const handlePredictLiveList = async (predictAll = false) => {
@@ -1147,7 +1188,8 @@ export default function PredictionsDashboard() {
                       const isSingleAwayView = historySubTab === 'singleaway';
                       const isBestHomeAwayView = historySubTab === 'besthomeaway';
                       const isBestSingleView = historySubTab === 'bestsingle';
-                      const isSingleView = isSingleHomeView || isSingleAwayView || isBestHomeAwayView || isBestSingleView;
+                      // isSingleView is ONLY for single-tip focused views (home/away tab), NOT besthomeaway or bestsingle
+                      const isSingleView = isSingleHomeView || isSingleAwayView;
                       const isBest15View = historySubTab === 'best15';
 
                       const outcomePct = totalResolved > 0 ? Math.round((correctOutcome / totalResolved) * 100) : null;
@@ -1243,43 +1285,71 @@ export default function PredictionsDashboard() {
                                     </div>
                                   </>
                                 )
-                              ) : (
-                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              ) : null}
+                              {/* Always show check outcome button — even for resolved rounds */}
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                {totalResolved === 0 && (
                                   <div style={{ background: 'rgba(255, 215, 0, 0.06)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.74rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
                                     ⏳ Pending Match Completion
                                   </div>
-                                  <button
-                                    onClick={handleResolvePending}
-                                    disabled={resolvingPending}
-                                    style={{
-                                      background: 'rgba(167, 139, 250, 0.15)',
-                                      border: '1px solid rgba(167, 139, 250, 0.35)',
-                                      color: 'var(--accent-purple)',
-                                      borderRadius: '4px',
-                                      padding: '6px 12px',
-                                      fontSize: '0.74rem',
-                                      fontWeight: 'bold',
-                                      cursor: resolvingPending ? 'not-allowed' : 'pointer',
-                                      transition: 'all 0.2s ease',
-                                      outline: 'none',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      gap: '4px'
-                                    }}
-                                    onMouseEnter={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.25)')}
-                                    onMouseLeave={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.15)')}
-                                  >
-                                    {resolvingPending ? '⏳ Checking...' : '🔄 Check Outcomes'}
-                                  </button>
-                                </div>
-                              )}
+                                )}
+                                {totalResolved > 0 && totalResolved < filteredRoundPreds.length && (
+                                  <div style={{ background: 'rgba(255, 215, 0, 0.06)', border: '1px solid rgba(255, 215, 0, 0.2)', padding: '6px 12px', borderRadius: '4px', fontSize: '0.74rem', color: 'var(--accent-gold)', fontWeight: 'bold' }}>
+                                    ⚡ {filteredRoundPreds.length - totalResolved} still pending
+                                  </div>
+                                )}
+                                <button
+                                  onClick={handleResolvePending}
+                                  disabled={resolvingPending}
+                                  style={{
+                                    background: resolvingPending ? 'rgba(167, 139, 250, 0.05)' : 'rgba(167, 139, 250, 0.15)',
+                                    border: '1px solid rgba(167, 139, 250, 0.35)',
+                                    color: 'var(--accent-purple)',
+                                    borderRadius: '4px',
+                                    padding: '6px 12px',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 'bold',
+                                    cursor: resolvingPending ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.2s ease',
+                                    outline: 'none',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    opacity: resolvingPending ? 0.7 : 1
+                                  }}
+                                  onMouseEnter={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.25)')}
+                                  onMouseLeave={e => !resolvingPending && (e.currentTarget.style.background = 'rgba(167, 139, 250, 0.15)')}
+                                >
+                                  {resolvingPending ? '⏳ Scraping & Resolving...' : '🔄 Check Outcomes'}
+                                </button>
+                              </div>
                             </div>
                           </div>
+
+                            {/* Resolve status banner — shown while running or after completion */}
+                            {resolvingPending && resolveStatus && (
+                              <div style={{ background: 'rgba(167, 139, 250, 0.08)', border: '1px solid rgba(167, 139, 250, 0.25)', padding: '8px 12px', borderRadius: '6px', fontSize: '0.76rem', color: 'var(--accent-purple)', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', gridColumn: '1 / -1' }}>
+                                <span className="spinner" style={{ width: '12px', height: '12px', borderWidth: '2px' }} />
+                                {resolveStatus}
+                              </div>
+                            )}
+                            {!resolvingPending && resolveStatus && (
+                              <div style={{ background: resolveStatus.startsWith('✅') ? 'rgba(0, 255, 136, 0.06)' : 'rgba(255, 51, 85, 0.06)', border: `1px solid ${resolveStatus.startsWith('✅') ? 'rgba(0,255,136,0.2)' : 'rgba(255,51,85,0.2)'}`, padding: '8px 12px', borderRadius: '6px', fontSize: '0.76rem', color: resolveStatus.startsWith('✅') ? 'var(--accent-success)' : 'var(--accent-live)', fontWeight: 'bold' }}>
+                                {resolveStatus}
+                              </div>
+                            )}
 
                           {/* Predictions cards list */}
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
                             {filteredRoundPreds.map(pred => {
-                              const bestTip = isSingleView ? getBestSingleTip(pred) : null;
+                              const isSingleHomeView = historySubTab === 'singlehome';
+                              const isSingleAwayView = historySubTab === 'singleaway';
+                              const isBestHomeAwayView = historySubTab === 'besthomeaway';
+                              const isBestSingleView = historySubTab === 'bestsingle';
+                              const isBest15View = historySubTab === 'best15';
+                              const isSingleView = isSingleHomeView || isSingleAwayView;
+                              
+                              const bestTip = isBestSingleView ? getBestSingleTip(pred) : null;
                               
                               let isHomeTipCorrect = pred.homeTipCorrect;
                               let isAwayTipCorrect = pred.awayTipCorrect;
@@ -1302,6 +1372,8 @@ export default function PredictionsDashboard() {
                                 (isBestHomeAwayView && isHomeOrAwayCorrect) ||
                                 (isBest15View && pred.over15Correct) ||
                                 (isBestSingleView && isBestTipCorrect);
+                              // Note: bestTip is only used for bestsingle/singlehome/singleaway display logic
+                              const showSingleTipBadge = isSingleHomeView || isSingleAwayView || isBestSingleView;
 
                               return (
                                 <div 
