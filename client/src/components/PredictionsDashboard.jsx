@@ -16,6 +16,40 @@ export default function PredictionsDashboard() {
   const [resolvingPending, setResolvingPending] = useState(false);
   const [resolveStatus, setResolveStatus] = useState(''); // Human-readable status during resolve
 
+  const fetchLastPrediction = useCallback(async (league) => {
+    const targetLeague = league || selectedLeague;
+    console.log(`[PredictionsDashboard] [DEBUG] 📡 Fetching last prediction round for league: "${targetLeague}"...`);
+    try {
+      const response = await fetch(`/api/local-vfootball/predictions-history?league=${encodeURIComponent(targetLeague)}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.history && data.history.length > 0) {
+          const lastRound = data.history[0];
+          console.log(`[PredictionsDashboard] [DEBUG] ✅ Found last prediction round from ${lastRound.capturedAt}. Loading into display.`);
+          setPredictionResults({
+            success: true,
+            provider: lastRound.provider || 'deepseek',
+            league: lastRound.league,
+            predictions: lastRound.predictions,
+            isLoadedFromHistory: true
+          });
+        } else {
+          console.log('[PredictionsDashboard] [DEBUG] ℹ️ No historical predictions found for this league.');
+          setPredictionResults(null);
+        }
+      }
+    } catch (err) {
+      console.warn('[PredictionsDashboard] [DEBUG] ⚠️ Failed to fetch last prediction:', err.message);
+    }
+  }, [selectedLeague]);
+
+  // Fetch last prediction on mount and when selected league changes
+  useEffect(() => {
+    if (activeView === 'live') {
+      fetchLastPrediction(selectedLeague);
+    }
+  }, [activeView, selectedLeague, fetchLastPrediction]);
+
   // Sub-tabs states
   const [liveSubTab, setLiveSubTab] = useState('all'); // 'all' | 'best' | 'best15' | 'singlehome' | 'singleaway' | 'besthomeaway' | 'bestsingle'
   const [historySubTab, setHistorySubTab] = useState('all'); // 'all' | 'best' | 'best15' | 'singlehome' | 'singleaway' | 'besthomeaway' | 'bestsingle'
@@ -166,7 +200,6 @@ export default function PredictionsDashboard() {
       setLoadingHistory(false);
     }
   // selectedLeague used as fallback — stable ref via useCallback
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLeague]);
 
   // ── Resolve Pending for a SPECIFIC league: scrapes only that league then resolves ──
@@ -370,84 +403,382 @@ export default function PredictionsDashboard() {
     }
   };
 
-  // Capture multi-page PDF report of live predictions by sequentially rendering all sub-tabs
+  // Capture professional PDF report of live predictions with Overview & Detailed Match breakdown
   const handleExportPDF = async () => {
-    if (!predictionsRef.current || exportingPDF) return;
+    if (!predictionResults || exportingPDF) return;
     setExportingPDF(true);
-    console.log('[PredictionsDashboard] [DEBUG] 📄 Starting multi-page PDF generation...');
-    
-    // Save current sub-tab state
-    const originalSubTab = liveSubTab;
-    const pdfSubTabs = [
-      { id: 'all', label: 'As Predicted' },
-      { id: 'best', label: 'Best Picks' },
-      { id: 'best15', label: 'Best 1.5' },
-      { id: 'singlehome', label: 'Single Tip (Home)' },
-      { id: 'singleaway', label: 'Single Tip (Away)' },
-      { id: 'besthomeaway', label: 'Best Home/Away Pick (Double Chance)' },
-      { id: 'bestsingle', label: 'Best Single Pick' }
-    ];
-    
+    console.log('[PredictionsDashboard] [DEBUG] 📄 Starting professional PDF report generation...');
+
     try {
-      const images = [];
-      
-      // Step-by-step transition, render, and capture of each tab
-      for (let i = 0; i < pdfSubTabs.length; i++) {
-        const tab = pdfSubTabs[i];
-        console.log(`[PredictionsDashboard] [DEBUG] 📸 Capturing tab: "${tab.label}" (${i + 1}/${pdfSubTabs.length})...`);
-        
-        // Update tab state to force React update
-        setLiveSubTab(tab.id);
-        
-        // Wait for React rendering & CSS transition effects to finish
-        await new Promise(r => setTimeout(r, 200));
-        
-        const canvas = await html2canvas(predictionsRef.current, {
-          useCORS: true,
-          backgroundColor: '#0A0F1E',
-          scale: 1.5, // optimal resolution without huge file sizes
-          logging: false
-        });
-        
-        images.push({
-          label: tab.label,
-          dataUrl: canvas.toDataURL('image/jpeg', 0.92), // high-quality JPEG compression
-          width: canvas.width,
-          height: canvas.height
-        });
-      }
-      
-      console.log('[PredictionsDashboard] [DEBUG] 📄 Stitching captured sub-tabs into a unified PDF document...');
-      
-      // Initialize landscape orientation PDF using the dimensions of the first captured tab
-      const firstImg = images[0];
+      const preds = predictionResults.predictions || [];
+      console.log(`[PredictionsDashboard] [DEBUG] 📋 Predictions count: ${preds.length}`);
+      console.log('[PredictionsDashboard] [DEBUG] 📊 Calculating stats: total matches, average confidence, high confidence picks...');
+
+      // Calculate executive statistics
+      const totalPredictions = preds.length;
+      const avgConfidence = totalPredictions > 0
+        ? Math.round(preds.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / totalPredictions)
+        : 0;
+      const highConfidenceCount = preds.filter(p => p.confidence >= 75).length;
+      const leagueName = predictionResults.league || 'All Leagues';
+      const providerName = (predictionResults.provider || 'AI').toUpperCase();
+      const timestamp = new Date().toLocaleString();
+
+      console.log(`[PredictionsDashboard] [DEBUG] ⚡ Calculated stats: Avg Conf = ${avgConfidence}%, High Conf Count = ${highConfidenceCount}`);
+
+      // Initialize landscape orientation A4 PDF (297mm x 210mm)
+      console.log('[PredictionsDashboard] [DEBUG] 🖋️ Initializing jsPDF document...');
       const pdf = new jsPDF({
         orientation: 'landscape',
-        unit: 'px',
-        format: [firstImg.width, firstImg.height]
+        unit: 'mm',
+        format: 'a4'
       });
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // PAGE 1: HEADER & EXECUTIVE SUMMARY & OVERVIEW TABLE
+      // ─────────────────────────────────────────────────────────────────────────
+      console.log('[PredictionsDashboard] [DEBUG] 🖋️ Drawing Page 1 components...');
       
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i];
-        if (i > 0) {
-          pdf.addPage([img.width, img.height], 'landscape');
+      // 1. Header Bar
+      pdf.setFillColor(15, 23, 42); // slate-900
+      pdf.rect(10, 10, 277, 22, 'F');
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(14);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("MANGO LIVE SPORTS DASHBOARD", 15, 24);
+      
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.setTextColor(0, 229, 255); // Cyan neon accent
+      pdf.text("🔮 AI LIVE PREDICTIONS REPORT", 210, 24);
+
+      // 2. Info Cards (4 columns layout)
+      const cardY = 37;
+      const cardH = 18;
+      const cardW = 64;
+      const cardGap = 7;
+      const cardLabels = [
+        { title: "LEAGUE / ROUND", val: leagueName.substring(0, 28) },
+        { title: "TOTAL MATCHES", val: `${totalPredictions}` },
+        { title: "AVG CONFIDENCE", val: `${avgConfidence}%` },
+        { title: "HIGH CONFIDENCE (>=75%)", val: `${highConfidenceCount} Picks` }
+      ];
+
+      cardLabels.forEach((c, i) => {
+        const cardX = 10 + i * (cardW + cardGap);
+        // Draw card background
+        pdf.setFillColor(248, 250, 252); // slate-50
+        pdf.setDrawColor(226, 232, 240); // slate-200
+        pdf.setLineWidth(0.25);
+        pdf.rect(cardX, cardY, cardW, cardH, 'FD');
+
+        // Draw top label
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(100, 116, 139); // slate-500
+        pdf.text(c.title, cardX + 4, cardY + 6);
+
+        // Draw bottom value
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(10);
+        pdf.setTextColor(15, 23, 42); // slate-900
+        pdf.text(c.val, cardX + 4, cardY + 13);
+      });
+
+      // 3. Draw Overview Table
+      let currentY = 60;
+      pdf.setFillColor(30, 41, 59); // slate-800
+      pdf.rect(10, currentY, 277, 8, 'F');
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text("#", 12, currentY + 5.5);
+      pdf.text("Match Fixture", 20, currentY + 5.5);
+      pdf.text("Outcome Prediction", 94, currentY + 5.5);
+      pdf.text("Goal Markets (BTTS / Over-Under)", 142, currentY + 5.5);
+      pdf.text("Best Tips & Double Chance", 210, currentY + 5.5);
+      pdf.text("Conf.", 274, currentY + 5.5);
+
+      currentY += 8;
+
+      preds.forEach((pred, idx) => {
+        // Dynamic page-break inside overview table if we overflow page 1 height (192mm limit)
+        if (currentY + 9 > 192) {
+          pdf.addPage();
+          
+          // Draw continuation header bar
+          pdf.setFillColor(15, 23, 42);
+          pdf.rect(10, 10, 277, 8, 'F');
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(7.5);
+          pdf.setTextColor(255, 255, 255);
+          pdf.text(`Predictions Table (Continued) - League: ${leagueName}`, 14, 15.5);
+
+          // Draw table header
+          pdf.setFillColor(51, 65, 85);
+          pdf.rect(10, 18, 277, 7, 'F');
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(7.5);
+          pdf.text("#", 12, 23);
+          pdf.text("Match Fixture", 20, 23);
+          pdf.text("Outcome Prediction", 94, 23);
+          pdf.text("Goal Markets (BTTS / Over-Under)", 142, 23);
+          pdf.text("Best Tips & Double Chance", 210, 23);
+          pdf.text("Conf.", 274, 23);
+
+          currentY = 25;
         }
-        pdf.setPage(i + 1);
+
+        // Zebra striping row background
+        pdf.setFillColor(idx % 2 === 0 ? 248 : 255, idx % 2 === 0 ? 250 : 255, idx % 2 === 0 ? 252 : 255);
+        pdf.rect(10, currentY, 277, 9, 'F');
+
+        // Draw row bottom border line
+        pdf.setDrawColor(226, 232, 240);
+        pdf.setLineWidth(0.15);
+        pdf.line(10, currentY + 9, 277, currentY + 9);
+        pdf.line(10, currentY, 10, currentY + 9);
+        pdf.line(277, currentY, 277, currentY + 9);
+
+        // Print row values
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(8);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(`${idx + 1}`, 12, currentY + 6);
+
+        // Match Name
+        pdf.text(pred.match || 'Unknown Match', 20, currentY + 6);
+
+        // Core Outcome
+        pdf.setFont("helvetica", "normal");
+        const outcomeLabel = pred.predictedOutcome === 'H' ? 'Home Win' : pred.predictedOutcome === 'A' ? 'Away Win' : pred.predictedOutcome === 'D' ? 'Draw' : 'N/A';
+        pdf.text(`${outcomeLabel} (${pred.predictedOutcomeProb || 0}%)`, 94, currentY + 6);
+
+        // Goal Markets
+        const bttsVal = `BTTS: ${pred.predictedBtts || 'N/A'} (${pred.predictedBttsProb || 0}%)`;
+        const overVal = `O1.5: ${pred.predictedOver15 || 'N/A'} (${pred.predictedOver15Prob || 0}%)`;
+        pdf.text(`${bttsVal}  |  ${overVal}`, 142, currentY + 6);
+
+        // Best Single Tip & DC
+        const dcVal = `DC: ${pred.predictedHomeOrAwayProb || 0}%`;
+        const bestTip = getBestSingleTip(pred);
+        const bestTipText = bestTip ? `Tip: ${bestTip.prediction} (${bestTip.prob}%)` : 'N/A';
+        pdf.text(`${dcVal}  |  ${bestTipText}`, 210, currentY + 6);
+
+        // Confidence
+        pdf.setFont("helvetica", "bold");
+        const conf = pred.confidence || 0;
+        if (conf >= 75) {
+          pdf.setTextColor(16, 185, 129); // emerald-500 (green)
+        } else if (conf >= 55) {
+          pdf.setTextColor(245, 158, 11); // amber-500
+        } else {
+          pdf.setTextColor(99, 102, 241); // indigo-500
+        }
+        pdf.text(`${conf}%`, 274, currentY + 6);
+
+        currentY += 9;
+      });
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // PAGE 2+: DETAILED BREAKDOWN (ONE MATCH PER PAGE)
+      // ─────────────────────────────────────────────────────────────────────────
+      console.log('[PredictionsDashboard] [DEBUG] 📄 Drawing Detailed AI Breakdown (1 match per page)...');
+
+      preds.forEach((pred, idx) => {
+        console.log(`[PredictionsDashboard] [DEBUG] 🏟️ Drawing Match detailed page: "${pred.match}" (${idx + 1}/${preds.length})...`);
+        pdf.addPage();
+
+        // Top Section Bar
+        pdf.setFillColor(30, 41, 59); // slate-800
+        pdf.rect(10, 10, 277, 10, 'F');
         
-        // Draw captured tab image to full page
-        pdf.addImage(img.dataUrl, 'JPEG', 0, 0, img.width, img.height);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(255, 255, 255);
+        pdf.text(`MATCH DETAILED AI ANALYSIS (${idx + 1} OF ${preds.length})`, 15, 16.5);
+
+        // Main Detailed Card boundary
+        const boxHeight = 168;
+        const boxWidth = 277;
+        const startX = 10;
+        const startY = 24;
+
+        const conf = pred.confidence || 0;
+        let accentColor = [99, 102, 241]; // Indigo-500
+        if (conf >= 75) {
+          accentColor = [16, 185, 129]; // Emerald-500
+        } else if (conf >= 55) {
+          accentColor = [245, 158, 11]; // Amber-500
+        }
+
+        // Draw Card border & fill
+        pdf.setFillColor(255, 255, 255);
+        pdf.setDrawColor(226, 232, 240); // slate-200
+        pdf.setLineWidth(0.3);
+        pdf.rect(startX, startY, boxWidth, boxHeight, 'FD');
+
+        // Draw left highlight bar
+        pdf.setFillColor(accentColor[0], accentColor[1], accentColor[2]);
+        pdf.rect(startX, startY, 3.5, boxHeight, 'F');
+
+        // 1. Title block inside card
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(14.5);
+        pdf.setTextColor(15, 23, 42); // slate-900
+        pdf.text(pred.match || 'Unknown Match', startX + 8, startY + 12);
+
+        // Subtitle: league, time
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(100, 116, 139); // slate-500
+        pdf.text(`${pred.league || leagueName}  |  Kickoff Time: ${pred.time || 'N/A'}  |  Round Status: ${pred.status || 'UPCOMING'}`, startX + 8, startY + 18);
+
+        // Right-aligned Confidence Badge inside card
+        pdf.setFillColor(accentColor[0], accentColor[1], accentColor[2]);
+        pdf.rect(startX + boxWidth - 50, startY + 5, 42, 16, 'F');
+        
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("CONFIDENCE", startX + boxWidth - 48, startY + 11);
+        
+        pdf.setFontSize(12);
+        pdf.text(`${conf}%`, startX + boxWidth - 48, startY + 19);
+
+        // Separator line
+        pdf.setDrawColor(241, 245, 249);
+        pdf.setLineWidth(0.25);
+        pdf.line(startX + 8, startY + 23, startX + boxWidth - 8, startY + 23);
+
+        // 2. Metrics Grid (3 columns cards layout)
+        const gridY = startY + 28;
+        const gridH = 34;
+        const gridW = 78;
+        const gridGap = 8;
+
+        // Card A: Outcome probabilities
+        const cardAX = startX + 8;
+        pdf.setFillColor(248, 250, 252);
+        pdf.setDrawColor(226, 232, 240);
+        pdf.rect(cardAX, gridY, gridW, gridH, 'FD');
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("CORE OUTCOMES", cardAX + 4, gridY + 6);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(51, 65, 85);
+        const outcomeLabel = pred.predictedOutcome === 'H' ? 'Home Win' : pred.predictedOutcome === 'A' ? 'Away Win' : 'Draw';
+        pdf.text(`Outcome: ${outcomeLabel} (${pred.predictedOutcomeProb || 0}%)`, cardAX + 4, gridY + 14);
+        pdf.text(`Double Chance: H/A (${pred.predictedHomeOrAwayProb || 0}%)`, cardAX + 4, gridY + 21);
+        pdf.text(`BTTS GG: ${pred.predictedBttsProb || 0}% (${pred.predictedBtts})`, cardAX + 4, gridY + 28);
+
+        // Card B: Goal Markets
+        const cardBX = cardAX + gridW + gridGap;
+        pdf.setFillColor(248, 250, 252);
+        pdf.rect(cardBX, gridY, gridW, gridH, 'FD');
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("GOAL MARKETS", cardBX + 4, gridY + 6);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(51, 65, 85);
+        pdf.text(`Over 1.5 Goals: ${pred.predictedOver15 === 'Over' ? 'Over' : 'Under'} (${pred.predictedOver15Prob || 0}%)`, cardBX + 4, gridY + 14);
+        pdf.text(`Over 2.5 Goals: ${pred.predictedOver25 === 'Over' ? 'Over' : 'Under'} (${pred.predictedOver25Prob || 0}%)`, cardBX + 4, gridY + 21);
+        pdf.text(`BTTS NG: ${100 - (pred.predictedBttsProb || 0)}%`, cardBX + 4, gridY + 28);
+
+        // Card C: Algorithmic tips
+        const cardCX = cardBX + gridW + gridGap;
+        pdf.setFillColor(248, 250, 252);
+        pdf.rect(cardCX, gridY, gridW, gridH, 'FD');
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("ALGORITHMIC TIPS", cardCX + 4, gridY + 6);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(51, 65, 85);
+        pdf.text(`Home Tip: ${pred.predictedHomeTip || 'N/A'} (${pred.predictedHomeTipProb || 0}%)`, cardCX + 4, gridY + 14);
+        pdf.text(`Away Tip: ${pred.predictedAwayTip || 'N/A'} (${pred.predictedAwayTipProb || 0}%)`, cardCX + 4, gridY + 21);
+        const bestTip = getBestSingleTip(pred);
+        const bestTipLabel = bestTip ? `Best Single: ${bestTip.prediction} (${bestTip.prob}%)` : 'Best Single: N/A';
+        pdf.text(bestTipLabel, cardCX + 4, gridY + 28);
+
+        // Separator line
+        pdf.setDrawColor(241, 245, 249);
+        pdf.setLineWidth(0.25);
+        pdf.line(startX + 8, gridY + gridH + 5, startX + boxWidth - 8, gridY + gridH + 5);
+
+        // 3. AI Reasoning Box
+        const reasoningY = gridY + gridH + 10;
+        const reasoningH = 82;
+        pdf.setFillColor(248, 250, 252); // slate-50 background
+        pdf.rect(startX + 8, reasoningY, boxWidth - 16, reasoningH, 'FD');
+
+        // Blockquote accent line
+        pdf.setFillColor(accentColor[0], accentColor[1], accentColor[2]);
+        pdf.rect(startX + 11, reasoningY + 4, 2, reasoningH - 8, 'F');
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("🧠 AI RECOMMENDATION CONTEXT & LOGICAL REASONING", startX + 18, reasoningY + 8);
+
+        // Split text and wrap
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9.5);
+        pdf.setTextColor(51, 65, 85); // slate-700
+        const reasoningText = pred.reasoning || "No detailed reasoning analysis provided by the AI for this match.";
+        
+        const splitLines = pdf.splitTextToSize(reasoningText, boxWidth - 36);
+        let textY = reasoningY + 16;
+        for (let lineIdx = 0; lineIdx < Math.min(splitLines.length, 11); lineIdx++) {
+          pdf.text(splitLines[lineIdx], startX + 18, textY);
+          textY += 5.5; // line spacing
+        }
+      });
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // STITCH FOOTERS & PAGE NUMBERS (TWO-PASS DRAW)
+      // ─────────────────────────────────────────────────────────────────────────
+      console.log('[PredictionsDashboard] [DEBUG] 📑 Drawing unified footers and page numbers...');
+      const totalPages = pdf.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        
+        // Footer line
+        pdf.setDrawColor(241, 245, 249);
+        pdf.setLineWidth(0.25);
+        pdf.line(10, 202, 287, 202);
+
+        // Footer Text
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(148, 163, 184); // slate-400
+        pdf.text("Mango Live Sports Dashboard  |  AI Live Predictions Report", 10, 206);
+        pdf.text(`Generated: ${timestamp}  |  AI Provider: ${providerName}`, 95, 206);
+        pdf.text(`Page ${i} of ${totalPages}`, 266, 206);
       }
-      
-      const leagueName = predictionResults?.league ? predictionResults.league.replace(/[^a-zA-Z0-9]/g, '_') : 'round';
-      const filename = `predictions_report_${leagueName}.pdf`;
+
+      // Save the generated document
+      const leagueFileName = predictionResults?.league ? predictionResults.league.replace(/[^a-zA-Z0-9]/g, '_') : 'round';
+      const filename = `predictions_report_${leagueFileName}.pdf`;
       pdf.save(filename);
-      
+
       console.log(`[PredictionsDashboard] [DEBUG] ✅ PDF export complete! Saved as: ${filename}`);
     } catch (err) {
       console.error('[PredictionsDashboard] [DEBUG] ❌ PDF Export Failed:', err);
     } finally {
-      // Restore original subtab state
-      setLiveSubTab(originalSubTab);
       setExportingPDF(false);
     }
   };
@@ -788,6 +1119,55 @@ export default function PredictionsDashboard() {
         }}>
           🧠 <strong>Analysis:</strong> "{pred.reasoning}"
         </div>
+
+        {/* Resolved Results Checkmarks (Visible if loaded round is historically resolved) */}
+        {pred.resolved && (
+          <div style={{ 
+            background: 'rgba(255,255,255,0.02)', 
+            padding: '8px 10px', 
+            borderRadius: '6px', 
+            border: '1px solid rgba(255,255,255,0.04)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            marginTop: '4px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                Result: <strong style={{ color: 'white' }}>{pred.actualScore || 'N/A'}</strong> (Winner: {pred.actualOutcome || 'N/A'})
+              </span>
+              <span style={{ 
+                fontSize: '0.74rem', 
+                color: pred.outcomeCorrect ? 'var(--accent-success)' : 'var(--accent-live)',
+                fontWeight: 'bold'
+              }}>
+                {pred.outcomeCorrect ? 'Outcome Won ✅' : 'Outcome Lost ❌'}
+              </span>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '0.68rem' }}>
+              <span style={{ color: pred.bttsCorrect ? 'var(--accent-success)' : 'var(--accent-live)' }}>
+                BTTS: {pred.bttsCorrect ? '✓' : '✗'}
+              </span>
+              <span style={{ color: pred.over15Correct ? 'var(--accent-success)' : 'var(--accent-live)' }}>
+                O/U 1.5: {pred.over15Correct ? '✓' : '✗'}
+              </span>
+              <span style={{ color: pred.over25Correct ? 'var(--accent-success)' : 'var(--accent-live)' }}>
+                O/U 2.5: {pred.over25Correct ? '✓' : '✗'}
+              </span>
+              {pred.predictedHomeTip && (
+                <span style={{ color: pred.homeTipCorrect ? 'var(--accent-success)' : 'var(--accent-live)' }}>
+                  Home Tip: {pred.homeTipCorrect ? '✓' : '✗'}
+                </span>
+              )}
+              {pred.predictedAwayTip && (
+                <span style={{ color: pred.awayTipCorrect ? 'var(--accent-success)' : 'var(--accent-live)' }}>
+                  Away Tip: {pred.awayTipCorrect ? '✓' : '✗'}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -1007,8 +1387,22 @@ export default function PredictionsDashboard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                   <div>
-                    <h2 style={{ fontSize: '1.25rem', margin: 0 }}>
+                    <h2 style={{ fontSize: '1.25rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                       Generated predictions for round: <span className="glow-text">{predictionResults.league}</span>
+                      {predictionResults.isLoadedFromHistory && (
+                        <span style={{
+                          fontSize: '0.62rem',
+                          background: 'rgba(255, 215, 0, 0.1)',
+                          border: '1px solid rgba(255, 215, 0, 0.3)',
+                          color: '#FFD700',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontWeight: 'bold',
+                          letterSpacing: '0.05em'
+                        }}>
+                          LAST PREDICTION
+                        </span>
+                      )}
                     </h2>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                       AI Provider: <strong style={{ color: 'var(--accent-purple)' }}>{predictionResults.provider?.toUpperCase()}</strong> • Predictions mapped to alphabetical visual positions.
@@ -1267,8 +1661,6 @@ export default function PredictionsDashboard() {
                       const isSingleAwayView = historySubTab === 'singleaway';
                       const isBestHomeAwayView = historySubTab === 'besthomeaway';
                       const isBestSingleView = historySubTab === 'bestsingle';
-                      // isSingleView is ONLY for single-tip focused views (home/away tab), NOT besthomeaway or bestsingle
-                      const isSingleView = isSingleHomeView || isSingleAwayView;
                       const isBest15View = historySubTab === 'best15';
 
                       const outcomePct = totalResolved > 0 ? Math.round((correctOutcome / totalResolved) * 100) : null;
@@ -1447,8 +1839,6 @@ export default function PredictionsDashboard() {
                                 (isBestHomeAwayView && isHomeOrAwayCorrect) ||
                                 (isBest15View && pred.over15Correct) ||
                                 (isBestSingleView && isBestTipCorrect);
-                              // Note: bestTip is only used for bestsingle/singlehome/singleaway display logic
-                              const showSingleTipBadge = isSingleHomeView || isSingleAwayView || isBestSingleView;
 
                               return (
                                 <div 

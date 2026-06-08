@@ -336,14 +336,32 @@ function resolvePredictionOutcomes(predictions, date, finishedMatches = []) {
             const homeOrAwayCorrect = hg !== ag;
 
             let homeTipCorrect = false;
-            if      (pred.predictedHomeTip === 'Home Win')         homeTipCorrect = hg > ag;
-            else if (pred.predictedHomeTip === 'Home Win or Draw') homeTipCorrect = hg >= ag;
-            else if (pred.predictedHomeTip === 'Home or Away')     homeTipCorrect = hg !== ag;
+            if (pred.predictedHomeTip) {
+                const hTip = pred.predictedHomeTip.toLowerCase();
+                if (hTip.includes('win or draw') || hTip.includes('win/draw') || hTip.includes('1x')) {
+                    homeTipCorrect = hg >= ag;
+                } else if (hTip.includes('win')) {
+                    homeTipCorrect = hg > ag;
+                } else if (hTip.includes('home or away') || hTip.includes('112') || hTip.includes('12')) {
+                    homeTipCorrect = hg !== ag;
+                } else if (hTip.includes('score') || hTip.includes('goal') || hTip.includes('over 0.5') || hTip.includes('sore')) {
+                    homeTipCorrect = hg >= 1;
+                }
+            }
 
             let awayTipCorrect = false;
-            if      (pred.predictedAwayTip === 'Away Win')         awayTipCorrect = hg < ag;
-            else if (pred.predictedAwayTip === 'Away Win or Draw') awayTipCorrect = hg <= ag;
-            else if (pred.predictedAwayTip === 'Home or Away')     awayTipCorrect = hg !== ag;
+            if (pred.predictedAwayTip) {
+                const aTip = pred.predictedAwayTip.toLowerCase();
+                if (aTip.includes('win or draw') || aTip.includes('win/draw') || aTip.includes('x2')) {
+                    awayTipCorrect = hg <= ag;
+                } else if (aTip.includes('win')) {
+                    awayTipCorrect = hg < ag;
+                } else if (aTip.includes('home or away') || aTip.includes('112') || aTip.includes('12')) {
+                    awayTipCorrect = hg !== ag;
+                } else if (aTip.includes('score') || aTip.includes('goal') || aTip.includes('over 0.5') || aTip.includes('sore')) {
+                    awayTipCorrect = ag >= 1;
+                }
+            }
 
             console.log(`[DEBUG] [resolvePredictionOutcomes] "${pred.match || pred.homeTeam + ' vs ' + pred.awayTeam}" → Score: ${score} (HG:${hg}, AG:${ag})`);
             console.log(`  → Winner: ${pred.predictedOutcome} vs ${actualOutcome} = ${pred.predictedOutcome === actualOutcome ? 'WON ✅' : 'LOST ❌'}`);
