@@ -344,7 +344,7 @@ function resolvePredictionOutcomes(predictions, date, finishedMatches = []) {
                     homeTipCorrect = hg > ag;
                 } else if (hTip.includes('home or away') || hTip.includes('112') || hTip.includes('12')) {
                     homeTipCorrect = hg !== ag;
-                } else if (hTip.includes('score') || hTip.includes('goal') || hTip.includes('over 0.5') || hTip.includes('sore')) {
+                } else if (hTip.includes('score') || hTip.includes('goal') || hTip.includes('over 0.5') || hTip.includes('sore') || hTip.includes('0.5')) {
                     homeTipCorrect = hg >= 1;
                 }
             }
@@ -358,7 +358,7 @@ function resolvePredictionOutcomes(predictions, date, finishedMatches = []) {
                     awayTipCorrect = hg < ag;
                 } else if (aTip.includes('home or away') || aTip.includes('112') || aTip.includes('12')) {
                     awayTipCorrect = hg !== ag;
-                } else if (aTip.includes('score') || aTip.includes('goal') || aTip.includes('over 0.5') || aTip.includes('sore')) {
+                } else if (aTip.includes('score') || aTip.includes('goal') || aTip.includes('over 0.5') || aTip.includes('sore') || aTip.includes('0.5')) {
                     awayTipCorrect = ag >= 1;
                 }
             }

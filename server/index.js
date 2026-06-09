@@ -4916,9 +4916,9 @@ Each object must contain the following keys:
 - "predictedOver25": string ("Over" or "Under")
 - "predictedOver25Prob": number (0 to 100 representing probability percentage of the Over/Under 2.5 choice)
 - "predictedHomeOrAwayProb": number (0 to 100 representing probability percentage of either Home or Away winning, i.e. the match not ending in a Draw)
-- "predictedHomeTip": string (The best single tip favoring the Home team. MUST be one of: "Home Win", "Home Win or Draw", "Home score at least 1", "Home or Away")
+- "predictedHomeTip": string (The best single tip favoring the Home team. MUST be one of: "Home 0.5", "Home to score")
 - "predictedHomeTipProb": number (0 to 100 representing probability percentage of the Home tip)
-- "predictedAwayTip": string (The best single tip favoring the Away team. MUST be one of: "Away Win", "Away Win or Draw", "Away score at least 1", "Home or Away")
+- "predictedAwayTip": string (The best single tip favoring the Away team. MUST be one of: "Away 0.5", "Away to score")
 - "predictedAwayTipProb": number (0 to 100 representing probability percentage of the Away tip)
 - "confidence": number (0 to 100 representing confidence score)
 - "reasoning": string (Brief 1-sentence expert prediction reasoning combining matchup, row statistics, and Markov transitions)
@@ -4930,10 +4930,17 @@ ${fixturesDataStr}
 
             console.log(`[DEBUG] [Predict Live] [${leagueName}] Dispatching prompt to DeepSeek Chat API...`);
             const aiResponse = await callPredictionAI(prompt, 'deepseek', { temperature: 0.2 });
+            console.log(`[DEBUG] [Predict Live] [${leagueName}] Received response from DeepSeek Chat API. Length: ${aiResponse?.content?.length || 0} characters.`);
             let predictions = parseAIJson(aiResponse.content);
             
             if (Array.isArray(predictions) && predictions.length > 0) {
+                console.log(`[DEBUG] [Predict Live] [${leagueName}] Successfully parsed ${predictions.length} predictions.`);
                 predictions.sort((a, b) => (a.position || 0) - (b.position || 0));
+                
+                // Log the first prediction details as a sample to verify prompt compliance
+                const samplePred = predictions[0];
+                console.log(`[DEBUG] [Predict Live] [${leagueName}] Sample Row 1: match="${samplePred.match || '?'}" HomeTip="${samplePred.predictedHomeTip}" AwayTip="${samplePred.predictedAwayTip}"`);
+
                 predictions.forEach((pred) => {
                     const match = sortedMatches[pred.position];
                     if (match) {
@@ -4943,6 +4950,7 @@ ${fixturesDataStr}
                 });
                 
                 try {
+                    console.log(`[DEBUG] [Predict Live] [${leagueName}] Saving ${predictions.length} predictions to history...`);
                     await savePredictionsToHistory(targetGroup.league, sortedMatches, predictions);
                 } catch (saveErr) {
                     console.error(`[DEBUG] [Predict Live] [${leagueName}] Failed to save predictions to history (non-fatal):`, saveErr.message);
@@ -4956,7 +4964,7 @@ ${fixturesDataStr}
                     predictions
                 };
             } else {
-                console.warn(`[DEBUG] [Predict Live] [${leagueName}] AI did not return a valid predictions array.`);
+                console.warn(`[DEBUG] [Predict Live] [${leagueName}] AI did not return a valid predictions array. Raw response:`, aiResponse?.content);
                 return {
                     success: false,
                     error: 'AI did not return a valid predictions array.'
