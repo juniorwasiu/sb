@@ -5081,7 +5081,7 @@ async function savePredictionsToHistory(league, matches, predictions) {
 app.get('/api/local-vfootball/predictions-history', async (req, res) => {
     console.log('[DEBUG] [Local API] GET /api/local-vfootball/predictions-history requested');
     const leagueQuery    = req.query.league || 'England League';
-    const targetDbLeague = toDbLeague(leagueQuery);
+    const targetDbLeague = (leagueQuery === 'all' || leagueQuery === 'All Leagues' || leagueQuery === 'All') ? null : toDbLeague(leagueQuery);
 
     try {
         console.log(`[DEBUG] [Predictions History] Fetching history for league: "${leagueQuery}" (db key: "${targetDbLeague}")`);
