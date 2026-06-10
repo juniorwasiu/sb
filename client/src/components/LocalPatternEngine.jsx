@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 
 import './../index.css';
 
@@ -470,9 +471,9 @@ export default function LocalPatternEngine() {
       {/* HEADER SECTION */}
       <header>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>💾 Local Storage Store</span>
+          <Link to="/" className="hover-lift" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textDecoration: 'none', transition: 'color 0.2s' }} onMouseEnter={(e) => e.target.style.color = 'var(--accent-neon)'} onMouseLeave={(e) => e.target.style.color = 'var(--text-secondary)'}>🔮 Live Predictor</Link>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
-          <span style={{ color: 'var(--accent-neon)', fontSize: '0.8rem', fontWeight: 700 }}>🧬 {selectedLeague} Row Patterns</span>
+          <span style={{ color: 'var(--accent-neon)', fontSize: '0.8rem', fontWeight: 700 }}>📊 Positional Trace Dashboard</span>
         </div>
 
         <h1 className="pattern-engine-title" style={{ margin: '0 0 10px 0', display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>

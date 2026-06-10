@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { Link } from 'react-router-dom';
 
 export default function PredictionsDashboard() {
   const [selectedLeague, setSelectedLeague] = useState('all');
@@ -15,6 +16,7 @@ export default function PredictionsDashboard() {
   const [exportingPDF, setExportingPDF] = useState(false);
   const [resolvingPending, setResolvingPending] = useState(false);
   const [resolveStatus, setResolveStatus] = useState(''); // Human-readable status during resolve
+  const [caseStudyStats, setCaseStudyStats] = useState(null);
 
   const fetchLastPrediction = useCallback(async (league) => {
     const targetLeague = league || selectedLeague;
@@ -122,6 +124,77 @@ export default function PredictionsDashboard() {
     return options[0] || null;
   };
 
+  const getHistoryReliabilityScore = useCallback((pred) => {
+    // We learn from history:
+    // Some tips have high historical accuracy even with moderate probability.
+    // Confidence alone is sometimes unreliable.
+    // We compute a weighted score based on the historical success rate of each prediction component.
+    // The components are: Outcome, Double Chance, Home Tip, Away Tip, Over 1.5 Goals.
+    // We use caseStudyStats (dynamic) if available with sufficient sample size (say, >= 5 entries),
+    // otherwise we use the baseline historical accuracies (from 1,093 picks):
+    //   Double Chance: 77%
+    //   Home Tip: 77%
+    //   Over 1.5 Goals: 74%
+    //   Straight Win (>=80%): 83%
+    //   Straight Win (<80%): 59% (unreliable!)
+    //   Away Tip: 68% (default baseline if not specified)
+    
+    let scores = [];
+    
+    // 1. Outcome / Straight Win component
+    const outcomeProb = pred.predictedOutcomeProb || 0;
+    const isStraightWin = pred.predictedOutcome === 'H' || pred.predictedOutcome === 'A';
+    if (isStraightWin) {
+      if (outcomeProb >= 80) {
+        const histAcc = (caseStudyStats?.straightWin80?.total >= 5) ? caseStudyStats.straightWin80.accuracy : 83;
+        scores.push({ weight: 0.35, val: histAcc });
+      } else {
+        // Less than 80% straight win is historically risky! (hits at 59% overall)
+        const histAcc = (caseStudyStats && caseStudyStats.highConf?.total >= 5) ? Math.min(caseStudyStats.highConf.accuracy, 59) : 59;
+        scores.push({ weight: 0.3, val: histAcc });
+      }
+    } else {
+      // Draw outcome
+      scores.push({ weight: 0.1, val: 30 }); // Draws are extremely hard to hit (30% accuracy baseline)
+    }
+    
+    // 2. Double Chance component
+    if (pred.predictedHomeOrAwayProb !== undefined && pred.predictedHomeOrAwayProb !== null) {
+      const dcProb = pred.predictedHomeOrAwayProb;
+      if (dcProb >= 65) {
+        const histAcc = (caseStudyStats?.doubleChance?.total >= 5) ? caseStudyStats.doubleChance.accuracy : 77;
+        scores.push({ weight: 0.35, val: histAcc });
+      }
+    }
+    
+    // 3. Home/Away Tips component
+    if (pred.predictedHomeTip && pred.predictedHomeTipProb >= 65) {
+      const histAcc = (caseStudyStats?.homeTip?.total >= 5) ? caseStudyStats.homeTip.accuracy : 77;
+      scores.push({ weight: 0.25, val: histAcc });
+    }
+    if (pred.predictedAwayTip && pred.predictedAwayTipProb >= 65) {
+      const histAcc = (caseStudyStats?.awayTip?.total >= 5) ? caseStudyStats.awayTip.accuracy : 68;
+      scores.push({ weight: 0.25, val: histAcc });
+    }
+    
+    // 4. Goals Over 1.5 component
+    if (pred.predictedOver15 === 'Over' && pred.predictedOver15Prob >= 65) {
+      const histAcc = (caseStudyStats?.over15?.total >= 5) ? caseStudyStats.over15.accuracy : 74;
+      scores.push({ weight: 0.3, val: histAcc });
+    }
+    
+    if (scores.length === 0) {
+      return pred.confidence || 50; // Fallback to general confidence
+    }
+    
+    // Calculate weighted average
+    const totalWeight = scores.reduce((sum, s) => sum + s.weight, 0);
+    const weightedSum = scores.reduce((sum, s) => sum + (s.val * s.weight), 0);
+    const reliabilityScore = Math.round(weightedSum / totalWeight);
+    
+    return reliabilityScore;
+  }, [caseStudyStats]);
+
   // ─────────────────────────────────────────────────────────────────────────
   // DATA-DRIVEN THRESHOLDS from historical analysis of 1,093 resolved picks:
   //   doubleChance ≥65%  → 77% historical accuracy
@@ -138,6 +211,18 @@ export default function PredictionsDashboard() {
 
     if (subTab === 'all') {
       return predictions;
+    }
+    if (subTab === 'historyelite') {
+      console.log('[PredictionsDashboard] [DEBUG] 🧬 Filtering and sorting by History Elite reliability score...');
+      const filtered = predictions
+        .map(p => {
+          const score = getHistoryReliabilityScore(p);
+          return { ...p, reliabilityScore: score };
+        })
+        .filter(p => p.reliabilityScore >= 74);
+      
+      // Sort descending by reliability score
+      return filtered.sort((a, b) => b.reliabilityScore - a.reliabilityScore);
     }
     if (subTab === 'best') {
       // High-confidence picks (≥75% confidence score)
@@ -394,6 +479,76 @@ export default function PredictionsDashboard() {
       }
     };
   }, [activeView, selectedLeague, fetchPredictionsHistory]);
+
+  // Effect to analyze prediction history for dynamic case studies
+  useEffect(() => {
+    if (historyList && historyList.length > 0) {
+      console.log('[PredictionsDashboard] [DEBUG] 📊 Analyzing prediction history database for Case Study insights...');
+      
+      const resolvedPredictions = [];
+      historyList.forEach(round => {
+        if (round.predictions) {
+          round.predictions.forEach(p => {
+            if (p.resolved) {
+              resolvedPredictions.push({
+                ...p,
+                league: round.league,
+                date: round.date,
+                time: round.time
+              });
+            }
+          });
+        }
+      });
+      
+      console.log(`[PredictionsDashboard] [DEBUG] Found ${resolvedPredictions.length} resolved predictions in local database history.`);
+      
+      if (resolvedPredictions.length > 0) {
+        // 1. Calculate accuracy of High Confidence (>=75%) picks
+        const highConfPicks = resolvedPredictions.filter(p => p.confidence >= 75);
+        const highConfCorrect = highConfPicks.filter(p => p.outcomeCorrect);
+        const highConfAcc = highConfPicks.length > 0 ? Math.round((highConfCorrect.length / highConfPicks.length) * 100) : null;
+
+        // 2. Calculate accuracy of Double Chance (>=65% predictedHomeOrAwayProb)
+        const dcPicks = resolvedPredictions.filter(p => (p.predictedHomeOrAwayProb || 0) >= 65);
+        const dcCorrect = dcPicks.filter(p => p.homeOrAwayCorrect);
+        const dcAcc = dcPicks.length > 0 ? Math.round((dcCorrect.length / dcPicks.length) * 100) : null;
+
+        // 3. Calculate accuracy of Home/Away Tip (>=65% prob)
+        const homeTipPicks = resolvedPredictions.filter(p => p.predictedHomeTip && (p.predictedHomeTipProb || 0) >= 65);
+        const homeTipCorrect = homeTipPicks.filter(p => p.homeTipCorrect);
+        const homeTipAcc = homeTipPicks.length > 0 ? Math.round((homeTipCorrect.length / homeTipPicks.length) * 100) : null;
+
+        const awayTipPicks = resolvedPredictions.filter(p => p.predictedAwayTip && (p.predictedAwayTipProb || 0) >= 65);
+        const awayTipCorrect = awayTipPicks.filter(p => p.awayTipCorrect);
+        const awayTipAcc = awayTipPicks.length > 0 ? Math.round((awayTipCorrect.length / awayTipPicks.length) * 100) : null;
+        
+        // 4. Calculate accuracy of Over 1.5 Goals (>=65% prob)
+        const o15Picks = resolvedPredictions.filter(p => p.predictedOver15 === 'Over' && (p.predictedOver15Prob || 0) >= 65);
+        const o15Correct = o15Picks.filter(p => p.over15Correct);
+        const o15Acc = o15Picks.length > 0 ? Math.round((o15Correct.length / o15Picks.length) * 100) : null;
+
+        // 5. Calculate accuracy of Straight Win >= 80% outcome probability
+        const straightWin80Picks = resolvedPredictions.filter(p => (p.predictedOutcome === 'H' || p.predictedOutcome === 'A') && (p.predictedOutcomeProb || 0) >= 80);
+        const straightWin80Correct = straightWin80Picks.filter(p => p.outcomeCorrect);
+        const straightWin80Acc = straightWin80Picks.length > 0 ? Math.round((straightWin80Correct.length / straightWin80Picks.length) * 100) : null;
+
+        // 6. Overall breakdown
+        const stats = {
+          totalResolved: resolvedPredictions.length,
+          highConf: { total: highConfPicks.length, correct: highConfCorrect.length, accuracy: highConfAcc },
+          doubleChance: { total: dcPicks.length, correct: dcCorrect.length, accuracy: dcAcc },
+          homeTip: { total: homeTipPicks.length, correct: homeTipCorrect.length, accuracy: homeTipAcc },
+          awayTip: { total: awayTipPicks.length, correct: awayTipCorrect.length, accuracy: awayTipAcc },
+          over15: { total: o15Picks.length, correct: o15Correct.length, accuracy: o15Acc },
+          straightWin80: { total: straightWin80Picks.length, correct: straightWin80Correct.length, accuracy: straightWin80Acc }
+        };
+        
+        console.log('[PredictionsDashboard] [DEBUG] 📡 dynamic case study analysis complete:', stats);
+        setCaseStudyStats(stats);
+      }
+    }
+  }, [historyList]);
 
   // Trigger DeepSeek live predictions
   const handlePredictLiveList = async (predictAll = false) => {
@@ -870,9 +1025,12 @@ export default function PredictionsDashboard() {
     const isBest15View = subTab === 'best15';
     const isBestStraightWin = subTab === 'beststraightwin';
     const isBestPerforming = subTab === 'bestperforming';
+    const isHistoryElite = subTab === 'historyelite';
 
     let borderLeftColor = 'var(--accent-neon)';
-    if (isBestStraightWin) {
+    if (isHistoryElite) {
+      borderLeftColor = '#FFD700';
+    } else if (isBestStraightWin) {
       borderLeftColor = '#00FF88';
     } else if (isBestPerforming) {
       // Use the best-scoring market color
@@ -979,12 +1137,21 @@ export default function PredictionsDashboard() {
             )}
           </div>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Confidence:</span>
-            <strong style={{ 
-              fontSize: '0.85rem', 
-              color: pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA'
-            }}>{pred.confidence}%</strong>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>Confidence:</span>
+              <strong style={{ 
+                fontSize: '0.85rem', 
+                color: pred.confidence >= 75 ? '#00FF88' : pred.confidence >= 55 ? '#FFD700' : '#A78BFA'
+              }}>{pred.confidence}%</strong>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Reliability:</span>
+              <strong style={{ 
+                fontSize: '0.8rem', 
+                color: getHistoryReliabilityScore(pred) >= 75 ? '#FFD700' : getHistoryReliabilityScore(pred) >= 65 ? '#00E5FF' : '#A78BFA'
+              }}>🧠 {getHistoryReliabilityScore(pred)}%</strong>
+            </div>
           </div>
         </div>
 
@@ -995,6 +1162,24 @@ export default function PredictionsDashboard() {
 
         {/* Badges */}
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {isHistoryElite && (
+            <div style={{
+              background: 'rgba(255, 215, 0, 0.12)',
+              border: '2px solid #FFD700',
+              color: '#FFD700',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 0 10px rgba(255, 215, 0, 0.15)'
+            }}>
+              <span style={{ textTransform: 'uppercase', fontSize: '0.62rem', opacity: 0.8, letterSpacing: '0.05em' }}>🧠 HISTORY ELITE:</span>
+              <span>Reliability Score: {getHistoryReliabilityScore(pred)}%</span>
+            </div>
+          )}
           {isBestStraightWin ? (
             <div style={{
               background: 'rgba(0, 255, 136, 0.12)',
@@ -1288,13 +1473,111 @@ export default function PredictionsDashboard() {
     );
   };
 
+  const renderHistoryCaseStudyWidget = () => {
+    const isDynamic = caseStudyStats && caseStudyStats.totalResolved >= 5;
+    const totalCount = isDynamic ? caseStudyStats.totalResolved : 1093;
+    
+    const dcAcc = isDynamic ? caseStudyStats.doubleChance.accuracy : 77;
+    const o15Acc = isDynamic ? caseStudyStats.over15.accuracy : 74;
+    const homeTipAcc = isDynamic ? caseStudyStats.homeTip.accuracy : 77;
+    const straightWin80Acc = isDynamic ? caseStudyStats.straightWin80.accuracy : 83;
+    const highConfAcc = isDynamic ? caseStudyStats.highConf.accuracy : 73;
+
+    return (
+      <div className="glass-panel ultra-glass" style={{
+        padding: '18px 20px',
+        border: '1px solid rgba(255, 215, 0, 0.15)',
+        borderRadius: '12px',
+        background: 'linear-gradient(135deg, rgba(10,15,30,0.7), rgba(255, 215, 0, 0.02))',
+        marginBottom: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+          <h4 style={{ margin: 0, color: '#FFD700', fontSize: '0.88rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>🧠</span> Dynamic History Case Study & Reliability Model
+          </h4>
+          <span style={{
+            fontSize: '0.66rem',
+            background: isDynamic ? 'rgba(0, 255, 136, 0.08)' : 'rgba(255, 255, 255, 0.04)',
+            color: isDynamic ? '#00FF88' : 'var(--text-secondary)',
+            padding: '3px 8px',
+            borderRadius: '4px',
+            border: isDynamic ? '1px solid rgba(0, 255, 136, 0.2)' : '1px solid rgba(255,255,255,0.06)',
+            fontWeight: 'bold'
+          }}>
+            {isDynamic ? `📡 ACTIVE DYNAMIC FEEDBACK (Based on ${totalCount} database outcomes)` : `📚 BASELINE BENCHMARK (Based on ${totalCount} historical picks)`}
+          </span>
+        </div>
+        
+        <p style={{ margin: 0, fontSize: '0.8rem', lineHeight: '1.4', color: 'var(--text-secondary)' }}>
+          <strong>The "Learn from History" Approach:</strong> While a prediction round might assign high general confidence (e.g. 75%+), history shows that straight outcomes often regress to the mean. Our reliability model weights predictions by the <em>actual historical success rate</em> of their component tips.
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', marginTop: '4px' }}>
+          {[
+            { label: 'DC Tip (>=65%)', val: dcAcc, baselineVal: 77, color: '#F43F5E', emoji: '🤝' },
+            { label: 'Home Tip (>=65%)', val: homeTipAcc, baselineVal: 77, color: '#3B82F6', emoji: '🏠' },
+            { label: 'Over 1.5 Goals (>=65%)', val: o15Acc, baselineVal: 74, color: '#00E5FF', emoji: '⚽' },
+            { label: 'Elite Win (>=80%)', val: straightWin80Acc, baselineVal: 83, color: '#00FF88', emoji: '🏆' },
+            { label: 'General Conf (>=75%)', val: highConfAcc, baselineVal: 73, color: '#A78BFA', emoji: '⭐️', isConf: true }
+          ].map(stat => {
+            const hasData = stat.val !== null && stat.val !== undefined;
+            const displayVal = hasData ? stat.val : stat.baselineVal;
+            return (
+              <div key={stat.label} style={{
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.04)',
+                borderRadius: '8px',
+                padding: '8px 10px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '2px',
+                borderLeft: `3px solid ${stat.color}`
+              }}>
+                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                  {stat.emoji} {stat.label}
+                </span>
+                <strong style={{ fontSize: '1.1rem', color: stat.color }}>{displayVal}%</strong>
+                <span style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>
+                  {stat.isConf ? 'Failure Band Indicator' : 'Accuracy Rate'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {isDynamic && highConfAcc !== null && dcAcc !== null && highConfAcc < dcAcc && (
+          <div style={{
+            fontSize: '0.74rem',
+            color: '#FFD700',
+            background: 'rgba(255, 215, 0, 0.05)',
+            border: '1px solid rgba(255, 215, 0, 0.2)',
+            padding: '8px 10px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span>💡</span>
+            <span>
+              <strong>Case Study Proof:</strong> In your actual results history, general high-confidence picks hit at <strong>{highConfAcc}%</strong>, while Double Chance picks hit at <strong>{dcAcc}%</strong>. Relying on Double Chance & Goals percentages is statistically safer!
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="pattern-engine-root" style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px 20px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
       {/* HEADER SECTION */}
       <header>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>🧠 Positional Trace Dashboard</span>
+          <Link to="/local-engine" className="hover-lift" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textDecoration: 'none', transition: 'color 0.2s' }} onMouseEnter={(e) => e.target.style.color = 'var(--accent-neon)'} onMouseLeave={(e) => e.target.style.color = 'var(--text-secondary)'}>🧠 Positional Trace Dashboard</Link>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>/</span>
           <span style={{ color: 'var(--accent-neon)', fontSize: '0.8rem', fontWeight: 700 }}>🔮 Live Predictor & History Log</span>
         </div>
@@ -1603,6 +1886,7 @@ export default function PredictionsDashboard() {
                 <div style={{ display: 'flex', gap: '8px', background: 'rgba(255, 255, 255, 0.01)', padding: '4px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.04)', alignSelf: 'flex-start', flexWrap: 'wrap' }}>
                   {[
                     { id: 'all',            label: 'As Predicted',         emoji: '📋' },
+                    { id: 'historyelite',   label: 'History Elite',        emoji: '🧠', highlight: true },
                     { id: 'best',           label: 'High Confidence',      emoji: '⭐️' },
                     { id: 'beststraightwin',label: 'Best Straight Win',     emoji: '🏆', highlight: true },
                     { id: 'bestperforming', label: 'Best Performing',       emoji: '🔬', highlight: true },
@@ -1615,6 +1899,7 @@ export default function PredictionsDashboard() {
                     const isSelected = liveSubTab === sub.id;
                     const activeColor = sub.id === 'beststraightwin' ? '#00FF88' :
                                        sub.id === 'bestperforming'  ? '#F43F5E' :
+                                       sub.id === 'historyelite'    ? '#FFD700' :
                                        'var(--accent-neon)';
                     return (
                       <button
@@ -1649,6 +1934,35 @@ export default function PredictionsDashboard() {
                     );
                   })}
                 </div>
+
+                {/* Case Study Reliability Widget */}
+                {predictionResults && liveSubTab === 'historyelite' && renderHistoryCaseStudyWidget()}
+                {predictionResults && liveSubTab !== 'historyelite' && (
+                  <div style={{ marginBottom: '12px' }}>
+                    <button 
+                      onClick={() => setLiveSubTab('historyelite')}
+                      style={{
+                        background: 'rgba(255, 215, 0, 0.05)',
+                        border: '1px solid rgba(255, 215, 0, 0.25)',
+                        borderRadius: '8px',
+                        padding: '10px 14px',
+                        color: '#FFD700',
+                        fontSize: '0.8rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        width: '100%',
+                        justifyContent: 'center',
+                        transition: 'all 0.2s'
+                      }}
+                      className="hover-lift"
+                    >
+                      🧠 View History Case Study & Reliability Model Insights
+                    </button>
+                  </div>
+                )}
 
                 {/* Cards Grid */}
                 <div ref={predictionsRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', padding: '16px', background: '#0A0F1E', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>

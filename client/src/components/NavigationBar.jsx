@@ -33,7 +33,8 @@ export default function NavigationBar() {
   const navItems = [
     { path: '/', label: 'Pattern Intel', icon: '🔮' },
     { path: '/predictions', label: 'Live Predictor & History', icon: '⚡' },
-    { path: '/results', label: 'Match Results', icon: '📊' }
+    { path: '/local-engine', label: 'Positional Trace', icon: '📊' },
+    { path: '/results', label: 'Match Results', icon: '⚽' }
   ];
 
   // Auto-close menu when route changes
