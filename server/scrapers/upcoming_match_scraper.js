@@ -34,9 +34,20 @@ function buildLaunchOptions() {
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--no-zygote',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-breakpad',
+            '--mute-audio',
+            '--no-first-run',
             '--disable-blink-features=AutomationControlled',
             '--disable-infobars',
-            '--window-size=1366,768'
+            '--js-flags=--max-old-space-size=128',
+            '--window-size=1280,720'
         ]
     };
 }

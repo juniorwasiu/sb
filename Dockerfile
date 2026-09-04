@@ -58,9 +58,9 @@ COPY server/ ./
 # Copy built React frontend from stage 1 into server/public
 COPY --from=client-builder /app/client/dist ./public
 
-# Railway injects PORT at runtime
+# Railway and Render inject PORT at runtime
 ENV NODE_ENV=production
 
 EXPOSE 3001
 
-CMD ["node", "index.js"]
+CMD ["node", "--max-old-space-size=256", "index.js"]

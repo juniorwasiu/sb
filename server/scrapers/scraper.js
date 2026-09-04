@@ -48,10 +48,34 @@ function buildLaunchOptions() {
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',   // ← critical for Railway/Docker containers
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--no-zygote',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-breakpad',
+            '--disable-component-update',
+            '--disable-default-apps',
+            '--disable-domain-reliability',
+            '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
+            '--disable-hang-monitor',
+            '--disable-ipc-flooding-protection',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-renderer-backgrounding',
+            '--disable-sync',
+            '--force-color-profile=srgb',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-first-run',
+            '--safebrowsing-disable-auto-update',
             '--disable-blink-features=AutomationControlled',
             '--disable-infobars',
-            '--window-size=1366,768',
+            '--js-flags=--max-old-space-size=128',
+            '--window-size=1280,720',
         ],
     };
 }
@@ -256,9 +280,24 @@ async function startContinuousScraper(updateCallback) {
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             });
 
+            // Block heavy media/fonts/images to save up to 200MB of RAM in Chrome
+            try {
+                await page.setRequestInterception(true);
+                page.on('request', (interceptedReq) => {
+                    const resourceType = interceptedReq.resourceType();
+                    if (['image', 'media', 'font'].includes(resourceType)) {
+                        interceptedReq.abort();
+                    } else {
+                        interceptedReq.continue();
+                    }
+                });
+            } catch (interceptErr) {
+                console.warn('[Live Scraper] Request interception warning:', interceptErr.message);
+            }
+
             console.log('[DEBUG] [Live Scraper] Navigating to vFootball live odds page...');
             await page.goto(_livePageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            console.log('[DEBUG] [Live Scraper] Navigation complete. Starting 5-second poll loop...');
+            console.log('[DEBUG] [Live Scraper] Navigation complete. Starting poll loop...');
 
         } catch (launchErr) {
             console.error('[Firebase Index Debug/Error Details]: [Live Scraper] Browser launch/nav failed:', launchErr.message);
@@ -272,6 +311,7 @@ async function startContinuousScraper(updateCallback) {
 
         // ─── Inner poll loop: Multi-League Extraction (England, Spain, Italy, Germany, France) ──
         let shouldRestart = false;
+        let pollCount = 0;
         const LEAGUE_NAMES = ['England', 'Spain', 'Italy', 'Germany', 'France'];
 
         while (!shouldRestart && !_scraperCtrl.shouldStop) {
@@ -400,6 +440,17 @@ async function startContinuousScraper(updateCallback) {
                     shouldRestart = true;
                     break;
                 }
+            }
+
+            // Periodically recycle Chrome every 100 polls (~25 mins) to prevent memory accumulation
+            pollCount++;
+            if (pollCount >= 100) {
+                console.log('[DEBUG] [Live Scraper] ♻️ Periodic Chrome recycling to prevent memory leak (100 polls reached). Restarting browser...');
+                try { await browser.close(); } catch (_) { }
+                _scraperCtrl.browser = null;
+                _livePage = null;
+                shouldRestart = true;
+                break;
             }
 
             await new Promise(r => setTimeout(r, 10000));

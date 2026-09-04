@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node --max-old-space-size=256 index.js",
     "dev": "nodemon --ignore testdownloadpage/ --ignore '*.json' --ignore '*.png' --ignore '*.txt' --ignore '*.sql' --ignore 'database/data/' --ignore 'public/' index.js",
     "debug": "node --inspect index.js",
     "debug-brk": "node --inspect-brk index.js",

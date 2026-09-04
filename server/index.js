@@ -585,15 +585,21 @@ setInterval(() => {
     runDailyAutoSync();
 }, AUTO_SYNC_INTERVAL_MS);
 
-// Start the single long-lived Chrome window immediately on server boot
+// Start the single long-lived Chrome window immediately on server boot (unless disabled via ENABLE_LIVE_SCRAPER=false)
+const enableLiveScraper = process.env.ENABLE_LIVE_SCRAPER !== 'false';
 console.log('[DEBUG] [Server] Booting vFootball Terminal API...');
-startContinuousScraper((newData) => {
-    globalData = newData;
-    // Push update immediately to all connected SSE clients
-    // replacing the need for the frontend to poll on a timer
-    broadcastLiveScores(newData, 'live');
-    console.log(`[DEBUG] [Server] 📡 Broadcasted live scores to SSE clients (${newData.length} groups).`);
-});
+if (enableLiveScraper) {
+    console.log('[DEBUG] [Server] 🚀 Launching continuous live scraper...');
+    startContinuousScraper((newData) => {
+        globalData = newData;
+        // Push update immediately to all connected SSE clients
+        // replacing the need for the frontend to poll on a timer
+        broadcastLiveScores(newData, 'live');
+        console.log(`[DEBUG] [Server] 📡 Broadcasted live scores to SSE clients (${newData.length} groups).`);
+    });
+} else {
+    console.log('[DEBUG] [Server] ⏸️ ENABLE_LIVE_SCRAPER=false. Chrome scraper is disabled to preserve memory on low-RAM instances.');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/scores  — Live vFootball odds (polled every 2s by frontend)
