@@ -31,11 +31,13 @@ export default function NavigationBar() {
   }, []);
 
   const navItems = [
+    { path: '/matches', label: 'Live & Played Matches', icon: '⚽' },
     { path: '/', label: 'Pattern Intel', icon: '🔮' },
     { path: '/predictions', label: 'Live Predictor & History', icon: '⚡' },
     { path: '/local-engine', label: 'Positional Trace', icon: '📊' },
-    { path: '/results', label: 'Match Results', icon: '⚽' }
+    { path: '/results', label: 'Match Results', icon: '📋' }
   ];
+
 
   // Auto-close menu when route changes
   useEffect(() => {

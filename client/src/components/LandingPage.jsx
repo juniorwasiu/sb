@@ -377,6 +377,10 @@ export default function LandingPage() {
               </p>
             </div>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <Link to="/matches" style={{ textDecoration: 'none', background: 'rgba(0, 255, 136, 0.15)', border: '1px solid #00FF88', color: '#00FF88', padding: '8px 16px', borderRadius: 8, fontWeight: 800, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>⚡</span>
+                <span>Live & Played Matches</span>
+              </Link>
               <div style={{ display: 'flex', gap: '8px' }}>
                 {/* Leagues count — always visible, uses allLeagues which is fetched independently */}
                 <div style={{

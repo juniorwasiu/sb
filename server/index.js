@@ -11,11 +11,11 @@ const fs = require('fs');
 const crypto = require('crypto');
 const Jimp = require('jimp');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { startContinuousScraper, stopContinuousScraper, reloadContinuousScraper, getHistoricalResults, getHistoryStoreInfo, scrapeLiveListOnDemand } = require('./scraper');
-const { captureLeagueResults } = require('./screenshot_scraper');
-const { nativeCaptureLeagueResults } = require('./native_scraper');
-const { uploadMatchesToDatabase, syncMatchesToDatabase, getDatabaseHistoryLog, setDatabaseHistoryLog, dbEvents } = require('./db_uploader');
-const { fetchResultsFromDatabase, fetchTodayResultsFromDatabase, todayDDMMYYYY, fetchFullDayRawResults, fetchTeamHistoryFromDatabase, fetchAvailableDates, fetchAvailableLeagues, fetchAllHistoryLogs, computeTeamForm, computeH2HForm, computeVenueAdvantage, computeAllLeagueBaselines, getLeagueBaseline, getCachedDocs } = require('./db_reader');
+const { startContinuousScraper, stopContinuousScraper, reloadContinuousScraper, getHistoricalResults, getHistoryStoreInfo, scrapeLiveListOnDemand } = require('./scrapers/scraper');
+const { captureLeagueResults } = require('./scrapers/screenshot_result_scraper');
+const { nativeCaptureLeagueResults } = require('./scrapers/result_scraper');
+const { uploadMatchesToDatabase, syncMatchesToDatabase, getDatabaseHistoryLog, setDatabaseHistoryLog, dbEvents } = require('./database/db_uploader');
+const { fetchResultsFromDatabase, fetchTodayResultsFromDatabase, todayDDMMYYYY, fetchFullDayRawResults, fetchTeamHistoryFromDatabase, fetchAvailableDates, fetchAvailableLeagues, fetchAllHistoryLogs, computeTeamForm, computeH2HForm, computeVenueAdvantage, computeAllLeagueBaselines, getLeagueBaseline, getCachedDocs } = require('./database/db_reader');
 const { toDbLeague, SUPPORTED_LEAGUES } = require('./constants');
 const {
     getMatchesFromDb,
@@ -26,10 +26,10 @@ const {
     autoResolvePendingPredictions,
     checkAndUpdatePendingPredictions,
     wipeDbData
-} = require('./supabase');
-const { saveAnalysis, getRecentContext, getLog, deleteEntry, getEntryById, clearLog, getStrategy, updateStrategy, fetchStrategyHistory, getLeagueIntelligence, updateLeagueIntelligence, getAnalysisByScopeAndDate, saveDailyTip, getDailyTip, getAllDailyTips } = require('./ai_memory');
-const { deleteLeagueData } = require('./db_admin');
-const { connectDb, PatternSnapshot } = require('./db_init');
+} = require('./database/supabase');
+const { saveAnalysis, getRecentContext, getLog, deleteEntry, getEntryById, clearLog, getStrategy, updateStrategy, fetchStrategyHistory, getLeagueIntelligence, updateLeagueIntelligence, getAnalysisByScopeAndDate, saveDailyTip, getDailyTip, getAllDailyTips } = require('./ai/ai_memory');
+const { deleteLeagueData } = require('./database/db_admin');
+const { connectDb, PatternSnapshot } = require('./database/db_init');
 const {
     detectBehaviourPatterns,
     saveBehaviourSignals,
@@ -38,7 +38,7 @@ const {
     buildLeagueBaselinePromptInjection,
     computeLeagueStreakProfile,
     compareScreenshotResults
-} = require('./behaviour_pattern_engine');
+} = require('./analytics/behaviour_pattern_engine');
 const {
     callPredictionAI,
     parseAIJson,
@@ -46,7 +46,7 @@ const {
     setActivePredictionProvider,
     getPredictionProviderStatus,
     PREDICTION_PROVIDERS,
-} = require('./prediction_ai');
+} = require('./ai/prediction_ai');
 
 const EventEmitter = require('events');
 const aiStatusEmitter = new EventEmitter();
@@ -1986,7 +1986,7 @@ app.post('/api/vfootball/behaviour-patterns/analyse', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 app.get('/api/vfootball/league-baselines', async (req, res) => {
     try {
-        const { LeagueBaseline } = require('./db_init');
+        const { LeagueBaseline } = require('./database/db_init');
         const { league } = req.query;
         console.log(`[/api/vfootball/league-baselines] Fetching baselines — league=${league || 'ALL'}`);
 
@@ -2992,8 +2992,8 @@ app.post('/api/screenshots/process-pending', async (req, res) => {
         let skippedCount   = 0;
         const errors       = [];
 
-        const { extractMatchDataFromImage } = require('./ai_router');
-        const { uploadMatchesToDatabase }   = require('./db_uploader');
+        const { extractMatchDataFromImage } = require('./ai/ai_router');
+        const { uploadMatchesToDatabase }   = require('./database/db_uploader');
 
         for (const filename of files) {
             const filePath = path.join(dir, filename);
@@ -3056,7 +3056,7 @@ app.post('/api/screenshots/process-pending', async (req, res) => {
 app.get('/api/ai-provider', (req, res) => {
     try {
         console.log('[DEBUG] [GET /api/ai-provider] Reading AI config...');
-        const { readConfig } = require('./ai_router');
+        const { readConfig } = require('./ai/ai_router');
         const config = readConfig();
         console.log(`[DEBUG] [GET /api/ai-provider] Current provider: ${config.provider}`);
         res.json({ success: true, ...config });
@@ -3076,7 +3076,7 @@ app.post('/api/ai-provider', express.json(), (req, res) => {
             return res.status(400).json({ success: false, error: `Invalid provider. Must be one of: ${VALID.join(', ')}` });
         }
 
-        const { writeConfig } = require('./ai_router');
+        const { writeConfig } = require('./ai/ai_router');
         const updates = { provider: provider.toLowerCase() };
         if (claudeModel) updates.claudeModel = claudeModel;
         if (openaiModel) updates.openaiModel = openaiModel;
@@ -3436,9 +3436,9 @@ app.post('/api/ai-predict-pattern', express.json(), async (req, res) => {
             return res.status(400).json({ success: false, error: 'Pattern data is required' });
         }
 
-        const { callPredictionAI, getActivePredictionProvider } = require('./prediction_ai');
-        const { computeTeamForm, getLeagueBaseline } = require('./db_reader');
-        const { getLeagueIntelligence } = require('./ai_memory');
+        const { callPredictionAI, getActivePredictionProvider } = require('./ai/prediction_ai');
+        const { computeTeamForm, getLeagueBaseline } = require('./database/db_reader');
+        const { getLeagueIntelligence } = require('./ai/ai_memory');
         
         const activeProvider = getActivePredictionProvider();
 
@@ -3524,7 +3524,7 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
 
         // ── TRIGGER CHECK (fast single-pass map approach) ─────────────────────
         // Step 1: Fetch all DB docs once — use cached copy (5-min TTL)
-        const { getCachedDocs, parseDDMMYYYY } = require('./db_reader');
+        const { getCachedDocs, parseDDMMYYYY } = require('./database/db_reader');
         const allDocs = await getCachedDocs();
 
         // Step 2: Build a lastResultMap in ONE pass (sort once, set once per team)
@@ -3837,9 +3837,9 @@ app.get('/api/pattern-intel/upcoming-ai-analysis', async (req, res) => {
         }
         
         // 4. Send to AI
-        const { callPredictionAI, getActivePredictionProvider, parseAIJson } = require('./prediction_ai');
-        const { computeTeamForm, getLeagueBaseline, computeH2HForm } = require('./db_reader');
-        const { getLeagueIntelligence } = require('./ai_memory');
+        const { callPredictionAI, getActivePredictionProvider, parseAIJson } = require('./ai/prediction_ai');
+        const { computeTeamForm, getLeagueBaseline, computeH2HForm } = require('./database/db_reader');
+        const { getLeagueIntelligence } = require('./ai/ai_memory');
         const activeProvider = getActivePredictionProvider();
         
         // Fetch team form, opponent form, H2H, and league DNA for each match concurrently
@@ -4274,7 +4274,7 @@ ${h2hText}
 
 Write a short, sharp paragraph (3-4 sentences max) identifying the highest value bet and explaining your reasoning. Keep it highly analytical.`;
 
-        const { queryAI } = require('./ai_router');
+        const { queryAI } = require('./ai/ai_router');
         const aiResponse = await queryAI(prompt);
 
         res.json({
@@ -4383,7 +4383,7 @@ app.post('/api/local-vfootball/scrape', express.json(), async (req, res) => {
     };
     
     try {
-        const { nativeCaptureLeagueResults } = require('./native_scraper');
+        const { nativeCaptureLeagueResults } = require('./scrapers/result_scraper');
         
         const targetLeagues = league === 'all' 
             ? ['England League', 'Spain League', 'Italy League', 'Germany League', 'France League']
@@ -4710,7 +4710,7 @@ app.get('/api/local-vfootball/predict-live', async (req, res) => {
     
     try {
         // Step 1: Scrape real-time live list vFootball games on SportyBet
-        const { scrapeLiveListOnDemand } = require('./scraper');
+        const { scrapeLiveListOnDemand } = require('./scrapers/scraper');
         console.log('[DEBUG] [Local API] Step 1: Scraping SportyBet live list on-demand...');
         let liveListGames = await scrapeLiveListOnDemand();
         
@@ -4891,7 +4891,7 @@ Visual Row Position Markov Over 2.5 Transition Probabilities:
             const matchesCount = fixturesDataList.length;
 
             // Send structured prompt to DeepSeek
-            const { callPredictionAI, parseAIJson } = require('./prediction_ai');
+            const { callPredictionAI, parseAIJson } = require('./ai/prediction_ai');
             
             const prompt = `
 You are DeepSeek Chat, an elite sports betting Virtual Football prediction model. 
@@ -5128,7 +5128,7 @@ app.post('/api/local-vfootball/wipe', express.json(), async (req, res) => {
 });
 
 // 8. GET public endpoint for predictions export (Telegram, etc.)
-const predictionsExportRouter = require('./predictions_export');
+const predictionsExportRouter = require('./analytics/predictions_export');
 app.use('/api/public/predictions/export', predictionsExportRouter);
 
 // 8.4. POST endpoint to sync (scrape) today's results for a specific league
@@ -5145,7 +5145,7 @@ app.post('/api/local-vfootball/sync-league', async (req, res) => {
     let totalDupes = 0;
 
     try {
-        const { nativeCaptureLeagueResults } = require('./native_scraper');
+        const { nativeCaptureLeagueResults } = require('./scrapers/result_scraper');
         const result = await nativeCaptureLeagueResults(league, today, {
             onPageCaptured: async (err, matchRows, pageNum) => {
                 if (err) {
@@ -5240,7 +5240,7 @@ async function runAutoScrapeResults() {
     console.log(`[Auto Scrape] 🔄 Starting automatic results scraper for ALL leagues on ${today}...`);
     
     try {
-        const { nativeCaptureLeagueResults } = require('./native_scraper');
+        const { nativeCaptureLeagueResults } = require('./scrapers/result_scraper');
         
         for (const targetLeague of LEAGUES_TO_SCRAPE) {
             console.log(`[Auto Scrape] 🔄 Scraping results for league: "${targetLeague}"...`);
@@ -5321,6 +5321,245 @@ app.get('/api/positional-trace/results', (req, res) => {
     console.log('[DEBUG] [Positional Trace API] GET /api/positional-trace/results requested');
     res.redirect(307, `/api/local-vfootball/results?${new URLSearchParams(req.query).toString()}`);
 });
+
+// ── UPCOMING & PLAYED MATCHES REST APIs ───────────────────────────────────────
+const {
+    getUpcomingMatchesFromDb,
+    getPlayedMatchesFromDb,
+    getH2HMatchesFromDb,
+    saveEnginePredictionsToDb,
+    getEnginePredictionsFromDb
+} = require('./database/supabase');
+const { analyzeH2H } = require('./analytics/multi_engine_analyzer');
+const { associateMatches } = require('./analytics/match_lifecycle_engine');
+const {
+    autoRunEnginePredictions,
+    autoEvaluateEnginePredictions
+} = require('./analytics/engine_prediction_pipeline');
+
+// Autonomous lifecycle association: runs continuously every 15 seconds and immediately on boot
+setTimeout(() => {
+    associateMatches().catch(err => {
+        console.warn('[Match Lifecycle] Boot auto-association note:', err.message);
+    });
+}, 5000);
+
+setInterval(() => {
+    associateMatches().catch(err => {
+        console.warn('[Match Lifecycle] Autonomous association note:', err.message);
+    });
+}, 15 * 1000);
+
+// Autonomous Multi-Engine Prediction & Evaluation Pipeline:
+// Runs auto-prediction generation and auto-evaluation loops continuously in background
+setTimeout(() => {
+    autoRunEnginePredictions().catch(err => {
+        console.warn('[Engine Pipeline] Boot auto-prediction note:', err.message);
+    });
+    autoEvaluateEnginePredictions().catch(err => {
+        console.warn('[Engine Pipeline] Boot auto-evaluation note:', err.message);
+    });
+}, 8000);
+
+setInterval(() => {
+    autoRunEnginePredictions().catch(err => {
+        console.warn('[Engine Pipeline] Autonomous prediction note:', err.message);
+    });
+}, 20 * 1000); // Every 20 seconds
+
+setInterval(() => {
+    autoEvaluateEnginePredictions().catch(err => {
+        console.warn('[Engine Pipeline] Autonomous evaluation note:', err.message);
+    });
+}, 25 * 1000); // Every 25 seconds
+
+
+
+// 1. Get in-play (live underway) matches
+app.get('/api/matches/in-play', async (req, res) => {
+    try {
+        const league = req.query.league || 'ALL';
+        const limit = parseInt(req.query.limit, 10) || 50;
+        const matches = await getUpcomingMatchesFromDb({ league, status: 'IN_PLAY', limit });
+        res.json({ success: true, count: matches.length, data: matches });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 2. Get upcoming (not started yet) matches with pre-match DOM odds
+app.get('/api/matches/upcoming', async (req, res) => {
+    try {
+        const league = req.query.league || 'ALL';
+        const limit = parseInt(req.query.limit, 10) || 100;
+        const matches = await getUpcomingMatchesFromDb({ league, status: 'UPCOMING', limit });
+        res.json({ success: true, count: matches.length, data: matches });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 3. Get played matches with full details (names, odds, score, winner, winning outcomes)
+app.get('/api/matches/played', async (req, res) => {
+    try {
+        const league = req.query.league || 'ALL';
+        const date = req.query.date || null;
+        const limit = parseInt(req.query.limit, 10) || 50;
+        const offset = parseInt(req.query.offset, 10) || 0;
+        const matches = await getPlayedMatchesFromDb({ league, date, limit, offset });
+        res.json({ success: true, count: matches.length, data: matches });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 4. Unified dashboard endpoint returning In-Play, Upcoming (Not Started), and Played separately on the same request
+app.get('/api/matches/dashboard', async (req, res) => {
+    try {
+        const league = req.query.league || 'ALL';
+        const [inPlay, upcoming, played] = await Promise.all([
+            getUpcomingMatchesFromDb({ league, status: 'IN_PLAY', limit: 100 }),
+            getUpcomingMatchesFromDb({ league, status: 'UPCOMING', limit: 100 }),
+            getPlayedMatchesFromDb({ league, limit: 100 })
+        ]);
+
+        res.json({
+            success: true,
+            league,
+            in_play: { count: inPlay.length, data: inPlay },
+            upcoming: { count: upcoming.length, data: upcoming },
+            played: { count: played.length, data: played }
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
+// 5. Head-to-Head (H2H) Multi-Engine Analysis & Complete Historical Clashes
+app.get('/api/matches/h2h-analysis', async (req, res) => {
+    try {
+        const homeTeam = (req.query.homeTeam || req.query.home || '').trim();
+        const awayTeam = (req.query.awayTeam || req.query.away || '').trim();
+        const league = req.query.league || 'ALL';
+        const matchTime = req.query.matchTime || req.query.time || '--:--';
+
+        let odds = {};
+        if (req.query.odds) {
+            try {
+                odds = typeof req.query.odds === 'string' ? JSON.parse(req.query.odds) : req.query.odds;
+            } catch (_) {}
+        }
+        if (!odds.home_win && req.query.home_win) {
+            odds = {
+                home_win: parseFloat(req.query.home_win) || 2.2,
+                draw: parseFloat(req.query.draw) || 3.3,
+                away_win: parseFloat(req.query.away_win) || 3.1
+            };
+        }
+
+        if (!homeTeam || !awayTeam) {
+            return res.status(400).json({ success: false, error: 'homeTeam and awayTeam query parameters are required.' });
+        }
+
+        // Query all historical clashes between these two exact teams from Supabase database
+        const h2hMatches = await getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit: 500 });
+
+        // Run all 6 specialized predictive and statistical engines in parallel
+        const analysis = analyzeH2H(h2hMatches, {
+            homeTeam,
+            awayTeam,
+            league,
+            odds,
+            matchTime
+        });
+
+        // Persist on-demand analysis to engine predictions database so user-initiated checks are also tracked
+        try {
+            const sampleCount = h2hMatches ? h2hMatches.length : 0;
+            const predDate = req.query.date || new Date().toISOString().slice(0, 10);
+            const predId = `engpred_${predDate}_${homeTeam.replace(/\s+/g, '')}_vs_${awayTeam.replace(/\s+/g, '')}_${matchTime.replace(':', '')}`;
+            saveEnginePredictionsToDb([{
+                id: predId,
+                match_id: req.query.matchId || predId,
+                game_id: req.query.gameId || '',
+                league,
+                match_date: predDate,
+                match_time: matchTime,
+                home_team: homeTeam,
+                away_team: awayTeam,
+                odds,
+                h2h_sample_count: sampleCount,
+                is_low_sample: sampleCount < 5,
+                consensus: analysis.consensus || {},
+                engines: analysis.engines || [],
+                evaluation: { status: 'PENDING' },
+                status: 'PENDING'
+            }]).catch(err => {
+                console.warn('[Engine Predictions] Note on on-demand saving:', err.message);
+            });
+        } catch (_) {}
+
+        res.json({
+            success: true,
+            data: analysis
+        });
+    } catch (err) {
+        console.error('[API /api/matches/h2h-analysis] Error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 6. Multi-Engine Predictions REST APIs
+app.get('/api/engine-predictions', async (req, res) => {
+    try {
+        const league = req.query.league || 'ALL';
+        const status = req.query.status || 'ALL'; // ALL | PENDING | EVALUATED | WON | LOST
+        const limit = parseInt(req.query.limit, 10) || 100;
+        const offset = parseInt(req.query.offset, 10) || 0;
+
+        const predictions = await getEnginePredictionsFromDb({ league, status, limit, offset });
+        res.json({
+            success: true,
+            count: predictions.length,
+            data: predictions
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/engine-predictions/auto-run', async (req, res) => {
+    try {
+        const result = await autoRunEnginePredictions();
+        res.json({ success: true, result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/engine-predictions/evaluate', async (req, res) => {
+    try {
+        const result = await autoEvaluateEnginePredictions();
+        res.json({ success: true, result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 4. Manual trigger for association engine
+app.post('/api/matches/associate', async (req, res) => {
+    try {
+        const result = await associateMatches();
+        // Also trigger prediction auto-evaluation immediately following association
+        autoEvaluateEnginePredictions().catch(() => {});
+        res.json({ success: true, result });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
 
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, '0.0.0.0', () => {

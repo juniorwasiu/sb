@@ -10,18 +10,24 @@ yarn-error.log*
 .env.*.local
 
 # ── Firebase service account key — contains private credentials
-server/serviceAccountKey*.json
+**/serviceAccountKey*.json
+*serviceAccountKey*.json
 
 # ── Built output ───────────────────────────────────────────────
 client/dist/
 server/public/
 
 # ── Runtime data files (regenerated at runtime) ────────────────
+server/database/data/
+**/data/*.json
 server/processed_images_hash.json
 server/processed_visual_hashes.json
 server/extracted_league_data.json
 server/ai_analysis_log.json
 server/local_predictions_history.json
+server/reports/bulk_scrape_progress.json
+server/scrapers/bulk_scrape_progress.json
+**/bulk_scrape_progress.json
 
 # ── Screenshots cache ──────────────────────────────────────────
 server/testdownloadpage/

@@ -15,6 +15,7 @@ import AdvancedPredictionEngine from './components/AdvancedPredictionEngine';
 import LocalPatternEngine from './components/LocalPatternEngine';
 import ApiConsole from './components/ApiConsole';
 import PredictionsDashboard from './components/PredictionsDashboard';
+import UnifiedMatchCenter from './components/UnifiedMatchCenter';
 import './index.css';
 
 // ── Live scores SSE hook ──────────────────────────────────────────────────────
@@ -432,6 +433,7 @@ export default function App() {
         <Route path="/results" element={<LandingPage />} />
         <Route path="/local-engine" element={<LocalPatternEngine />} />
         <Route path="/api-console" element={<ApiConsole />} />
+        <Route path="/matches"   element={<UnifiedMatchCenter />} />
         <Route path="*"          element={<Navigate to="/" replace />} />
       </Routes>
     </div>

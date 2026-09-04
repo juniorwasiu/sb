@@ -1,0 +1,22 @@
+{
+  "watch": [
+    "index.js",
+    "scrapers/",
+    "analytics/",
+    "database/supabase.js",
+    "ai/"
+  ],
+  "ignore": [
+    "database/data/**",
+    "testdownloadpage/**",
+    "screenshots/**",
+    "public/**",
+    "*.json",
+    "*.png",
+    "*.txt",
+    "*.sql",
+    "*.log"
+  ],
+  "ext": "js,mjs,cjs",
+  "delay": 1500
+}
