@@ -1,0 +1,13 @@
+{
+  "name": "live-sports-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live Sports Dashboard — Multi-engine predictive betting dashboard & AI terminal",
+  "scripts": {
+    "build": "cd client && npm install && npm run build",
+    "client:build": "cd client && npm run build",
+    "client:dev": "cd client && npm run dev",
+    "server:dev": "cd server && npm run dev",
+    "server:start": "cd server && npm start"
+  }
+}
