@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import H2HAnalysisModal from './H2HAnalysisModal';
 import RecurringOddsDetailModal from './RecurringOddsDetailModal';
@@ -214,6 +214,12 @@ export default function UnifiedMatchCenter() {
   const [taskLogs, setTaskLogs] = useState([]);
   const [showTelemetryLog, setShowTelemetryLog] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
+  const telemetryRef = useRef(null);
+  const isFetchingRef = useRef(false);
+
+  useEffect(() => {
+    telemetryRef.current = telemetry;
+  }, [telemetry]);
 
   // Dedicated Button Loading States
   const [isSyncing, setIsSyncing] = useState(false);
@@ -429,11 +435,11 @@ export default function UnifiedMatchCenter() {
     });
   }, [recurringOddsStats, recurringMarket, recurringMinSamples, recurringLeagueFilter, activeLeague, recurringOnlyWinning]);
 
-  // Step-by-step console & terminal logger
+  // Step-by-step console & terminal logger (stable reference)
   const logTaskStep = useCallback((taskName, stepDescription, details = '', memData = null) => {
     const timestamp = new Date();
     const timeStr = timestamp.toLocaleTimeString();
-    const currentMem = memData || telemetry;
+    const currentMem = memData || telemetryRef.current;
     const memStr = currentMem
       ? `RAM: ${currentMem.rssMB}MB / ${currentMem.limitMB || 512}MB (${currentMem.usagePercent}%) | Heap: ${currentMem.heapUsedMB}MB`
       : 'RAM: tracking...';
@@ -460,7 +466,7 @@ export default function UnifiedMatchCenter() {
       },
       ...prev.slice(0, 49)
     ]);
-  }, [telemetry]);
+  }, []);
 
   // Periodic health check (every 12 seconds)
   const checkHealth = useCallback(async () => {
@@ -474,6 +480,7 @@ export default function UnifiedMatchCenter() {
         setIsOnline(true);
         if (json.telemetry) {
           setTelemetry(json.telemetry);
+          telemetryRef.current = json.telemetry;
         }
       } else {
         setIsOnline(false);
@@ -498,6 +505,9 @@ export default function UnifiedMatchCenter() {
   }, []);
 
   const fetchDashboardData = useCallback(async (isManual = false) => {
+    if (isFetchingRef.current && !isManual) return;
+    isFetchingRef.current = true;
+
     if (isManual) {
       setIsSyncing(true);
       setActiveTask('Syncing In-Play, Upcoming & Played matches...');
@@ -523,16 +533,11 @@ export default function UnifiedMatchCenter() {
           if (Array.isArray(json.in_play?.data)) {
             setInPlayMatches(json.in_play.data);
           }
-          if (Array.isArray(json.upcoming?.data) && json.upcoming.data.length > 0) {
-            setUpcomingMatches(json.upcoming.data);
-          } else if (Array.isArray(json.upcoming?.data) && upcomingMatches.length === 0) {
-            setUpcomingMatches(json.upcoming.data);
+          if (Array.isArray(json.upcoming?.data)) {
+            setUpcomingMatches(prev => (json.upcoming.data.length > 0 ? json.upcoming.data : prev));
           }
-
-          if (Array.isArray(json.played?.data) && json.played.data.length > 0) {
-            setPlayedMatches(json.played.data);
-          } else if (Array.isArray(json.played?.data) && playedMatches.length === 0) {
-            setPlayedMatches(json.played.data);
+          if (Array.isArray(json.played?.data)) {
+            setPlayedMatches(prev => (json.played.data.length > 0 ? json.played.data : prev));
           }
 
           if (json.telemetry) latestTelemetry = json.telemetry;
@@ -542,17 +547,14 @@ export default function UnifiedMatchCenter() {
       if (predRes.ok) {
         const predJson = await predRes.json();
         if (predJson.success && Array.isArray(predJson.data)) {
-          if (predJson.data.length > 0) {
-            setEnginePredictions(predJson.data);
-          } else if (enginePredictions.length === 0) {
-            setEnginePredictions(predJson.data);
-          }
+          setEnginePredictions(prev => (predJson.data.length > 0 ? predJson.data : prev));
           if (predJson.telemetry) latestTelemetry = predJson.telemetry;
         }
       }
 
       if (latestTelemetry) {
         setTelemetry(latestTelemetry);
+        telemetryRef.current = latestTelemetry;
       }
       setIsOnline(true);
       setLastUpdated(new Date());
@@ -567,21 +569,23 @@ export default function UnifiedMatchCenter() {
       console.warn('Match dashboard sync note:', err.message);
       setIsOnline(false);
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
       if (isManual) {
         setIsSyncing(false);
         setActiveTask(null);
       }
     }
-  }, [logTaskStep, upcomingMatches.length, playedMatches.length, enginePredictions.length]);
+  }, [logTaskStep]);
 
   useEffect(() => {
     fetchDashboardData();
     const interval = setInterval(() => {
       fetchDashboardData();
-    }, 6000); // 6s poll
+    }, 10000); // Clean 10s poll
     return () => clearInterval(interval);
   }, [fetchDashboardData]);
+
 
   const triggerAssociation = async () => {
     setIsAssociating(true);

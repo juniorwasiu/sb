@@ -36,7 +36,7 @@ if (supabaseUrl && supabaseKey) {
 }
 
 // ── Promise Timeout Helper (Ensures remote DB queries never block HTTP requests) ──
-function withTimeout(promise, timeoutMs = 9000) {
+function withTimeout(promise, timeoutMs = 3500) {
     let timer;
     const timeoutPromise = new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error(`Supabase query timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -99,7 +99,7 @@ async function getMatchesFromDb(limit = 300) {
     if (limit && typeof limit === 'number') {
         q = q.limit(limit);
     }
-    const { data, error } = await withTimeout(q, 9000);
+    const { data, error } = await withTimeout(q, 3500);
 
     if (error) {
         console.error('[SUPABASE] [DEBUG] ❌ Failed to fetch matches from Supabase:', error.message);
@@ -145,7 +145,7 @@ async function saveMatchesToDb(newMatches) {
                 .from('vfootball_results')
                 .select('id')
                 .in('id', idsToInsert),
-            9000
+            3500
         );
         if (fetchErr) throw fetchErr;
         if (existingRows) existingRows.forEach(r => existingIds.add(r.id));
@@ -161,7 +161,7 @@ async function saveMatchesToDb(newMatches) {
             supabaseClient
                 .from('vfootball_results')
                 .insert(rowsToInsert),
-            9000
+            3500
         );
         if (insertErr) throw insertErr;
         console.log(`[SUPABASE] [DEBUG] ✅ Successfully inserted ${added} matches into Supabase.`);
@@ -175,7 +175,7 @@ async function saveMatchesToDb(newMatches) {
             supabaseClient
                 .from('vfootball_results')
                 .select('*', { count: 'exact', head: true }),
-            9000
+            3500
         );
         if (!countErr && countVal !== null && countVal !== undefined) {
             total = countVal;
@@ -219,7 +219,7 @@ async function getPredictionsHistoryFromDb(leagueFilter = null) {
         query = query.ilike('league', `%${leagueFilter}%`);
     }
 
-    const { data, error } = await withTimeout(query, 9000);
+    const { data, error } = await withTimeout(query, 3500);
     if (error) {
         console.error('[SUPABASE] [DEBUG] ❌ Failed to fetch predictions history from Supabase:', error.message);
         throw error;
@@ -253,7 +253,7 @@ async function savePredictionToDb(roundData) {
         supabaseClient
             .from('predictions_history')
             .upsert(dbRow, { onConflict: 'id' }),
-        9000
+        3500
     );
     if (error) {
         console.error('[SUPABASE] [DEBUG] ❌ Failed to upsert prediction round to Supabase:', error.message);
@@ -277,7 +277,7 @@ async function wipeDbData(league, scope) {
                 q = targetDbLeague
                     ? q.ilike('league', `%${targetDbLeague.replace('_', ' ')}%`)
                     : q.neq('id', '');
-                const { error } = await withTimeout(q, 9000);
+                const { error } = await withTimeout(q, 3500);
                 if (error) throw error;
                 console.log('[SUPABASE] [DEBUG] ✅ Wiped Supabase results.');
             }
@@ -288,7 +288,7 @@ async function wipeDbData(league, scope) {
                 q = targetDbLeague
                     ? q.ilike('league', `%${targetDbLeague.replace('_', ' ')}%`)
                     : q.neq('id', '');
-                const { error } = await withTimeout(q, 9000);
+                const { error } = await withTimeout(q, 3500);
                 if (error) throw error;
                 console.log('[SUPABASE] [DEBUG] ✅ Wiped Supabase predictions history.');
             }
@@ -306,11 +306,11 @@ async function logStartupCounts() {
     try {
         const { count: resultCount } = await withTimeout(
             supabaseClient.from('vfootball_results').select('*', { count: 'exact', head: true }),
-            9000
+            3500
         );
         const { count: histCount } = await withTimeout(
             supabaseClient.from('predictions_history').select('*', { count: 'exact', head: true }),
-            9000
+            3500
         );
         console.log(`[SUPABASE] [DEBUG] 📊 Startup check: vfootball_results=${resultCount || 0} | predictions_history=${histCount || 0}`);
     } catch (err) {
@@ -677,7 +677,7 @@ async function saveUpcomingMatchesToDb(matches = []) {
         try {
             const { error } = await withTimeout(
                 supabaseClient.from('upcoming_matches').upsert(rows, { onConflict: 'id' }),
-                9000
+                3500
             );
             if (!error) {
                 console.log(`[SUPABASE] ✅ Saved/Updated ${rows.length} matches (In-play & Upcoming) with DOM odds.`);
@@ -688,7 +688,7 @@ async function saveUpcomingMatchesToDb(matches = []) {
                 const cleanRows = rows.map(({ live_score, ...rest }) => rest);
                 const { error: retryErr } = await withTimeout(
                     supabaseClient.from('upcoming_matches').upsert(cleanRows, { onConflict: 'id' }),
-                    9000
+                    3500
                 );
                 if (!retryErr) {
                     console.log(`[SUPABASE] ✅ Saved ${rows.length} matches (schema fallback without live_score).`);
@@ -718,7 +718,7 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 5
             else if (status === 'ALL_UNRESOLVED') q = q.neq('status', 'PLAYED').neq('status', 'FINISHED');
             else if (status === 'UPCOMING') q = q.neq('status', 'PLAYED').neq('status', 'FINISHED');
             q = q.order('scraped_at', { ascending: false }).limit(limit * 2);
-            const { data, error } = await withTimeout(q, 9000);
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
                 items = data;
                 saveToLocalCollection('upcoming_matches', data);
@@ -855,7 +855,7 @@ async function updateUpcomingMatchStatus(id, status = 'PLAYED') {
         try {
             await withTimeout(
                 supabaseClient.from('upcoming_matches').update({ status, updated_at: new Date().toISOString() }).eq('id', id),
-                9000
+                3500
             );
         } catch (_) {}
     }
@@ -892,7 +892,7 @@ async function savePlayedMatchesToDb(matches = []) {
         try {
             const { error } = await withTimeout(
                 supabaseClient.from('match_played').upsert(rows, { onConflict: 'id' }),
-                9000
+                3500
             );
             if (!error) {
                 console.log(`[SUPABASE] ✅ Saved/Updated ${rows.length} played matches with full details into match_played.`);
@@ -917,7 +917,7 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
             if (league && league !== 'ALL') q = q.eq('league', league);
             if (date) q = q.eq('match_date', date);
             q = q.order('associated_at', { ascending: false }).range(offset, offset + limit - 1);
-            const { data, error } = await withTimeout(q, 9000);
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
                 saveToLocalCollection('match_played', data);
                 return data;
@@ -937,7 +937,7 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
             if (league && league !== 'ALL') q = q.ilike('league', `%${league.replace(' - Virtual', '')}%`);
             if (date) q = q.eq('date', date);
             q = q.order('uploaded_at', { ascending: false }).range(offset, offset + limit - 1);
-            const { data, error } = await withTimeout(q, 9000);
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
                 const converted = data.map(r => {
                     const score = r.score || '0:0';
@@ -999,7 +999,7 @@ async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } =
                 .order('uploaded_at', { ascending: false })
                 .limit(limit);
 
-            const { data, error } = await withTimeout(q, 9000);
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
                 results = data.map(mapMatchFromDb);
             }
@@ -1066,7 +1066,7 @@ async function saveEnginePredictionsToDb(predictions = []) {
         try {
             const { error } = await withTimeout(
                 supabaseClient.from('engine_predictions').upsert(rows, { onConflict: 'id' }),
-                9000
+                3500
             );
             if (!error) {
                 console.log(`[SUPABASE] ✅ Saved/Updated ${rows.length} engine predictions in Supabase.`);
@@ -1091,7 +1091,7 @@ async function getEnginePredictionsFromDb({ league, status, limit = 500, offset 
             if (league && league !== 'ALL') q = q.eq('league', league);
             if (status && status !== 'ALL') q = q.eq('status', status);
             q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-            const { data, error } = await withTimeout(q, 9000);
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
                 saveToLocalCollection('engine_predictions', data);
                 return data;
@@ -1126,7 +1126,7 @@ async function updateEnginePredictionInDb(id, updates = {}) {
         try {
             await withTimeout(
                 supabaseClient.from('engine_predictions').update(patch).eq('id', id),
-                9000
+                3500
             );
         } catch (_) {}
     }
