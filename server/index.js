@@ -114,37 +114,72 @@ let isAutoScrapingActive = false;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// GET /api/health  — Server health check for Admin panel monitoring
-// Returns: uptime, memory, scraper status, Node version, environment
-// ─────────────────────────────────────────────────────────────────────────────
-app.get('/api/health', (req, res) => {
-    const memMB = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+// ── Server Memory & Health Telemetry Helper ──────────────────────────────────
+function getServerTelemetry() {
+    const mem = process.memoryUsage();
+    const heapUsedMB = parseFloat((mem.heapUsed / 1024 / 1024).toFixed(2));
+    const heapTotalMB = parseFloat((mem.heapTotal / 1024 / 1024).toFixed(2));
+    const rssMB = parseFloat((mem.rss / 1024 / 1024).toFixed(2));
+    const externalMB = parseFloat((mem.external / 1024 / 1024).toFixed(2));
+    const limitMB = 512; // Render Free Tier RAM limit
+    const usagePercent = parseFloat(((rssMB / limitMB) * 100).toFixed(1));
     const uptimeSec = Math.floor(process.uptime());
     const hours = Math.floor(uptimeSec / 3600);
     const mins  = Math.floor((uptimeSec % 3600) / 60);
     const secs  = uptimeSec % 60;
     const uptimeStr = `${hours}h ${mins}m ${secs}s`;
 
+    let healthStatus = 'healthy';
+    if (usagePercent > 80) healthStatus = 'critical';
+    else if (usagePercent > 60) healthStatus = 'warning';
+
     const scraperActive = globalData !== null && Array.isArray(globalData) && globalData.length > 0;
     const matchCount = scraperActive
         ? globalData.reduce((acc, g) => acc + (g.matches?.length || 0), 0)
         : 0;
 
-    console.log(`[DEBUG] [/api/health] uptime=${uptimeStr} mem=${memMB}MB scraper=${scraperActive}`);
-    res.json({
-        success: true,
-        status:  'ok',
-        uptime:  uptimeStr,
+    return {
+        healthStatus,
+        heapUsedMB,
+        heapTotalMB,
+        rssMB,
+        externalMB,
+        limitMB,
+        usagePercent,
+        uptimeStr,
         uptimeSec,
-        memoryMB: parseFloat(memMB),
         nodeVersion: process.version,
-        env:     process.env.NODE_ENV || 'development',
+        env: process.env.NODE_ENV || 'production',
+        host: 'Render Cloud (Web Service)',
         scraper: {
-            active:     scraperActive,
+            active: scraperActive,
             liveLeagues: globalData ? globalData.map(g => g.league) : [],
             liveMatches: matchCount,
         },
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
+    };
+}
+
+function logMemoryStep(taskName, details = '') {
+    const t = getServerTelemetry();
+    console.log(`[Memory Trace] 📊 [${new Date().toISOString().slice(11, 19)}] [Task: ${taskName}] RSS: ${t.rssMB}MB / ${t.limitMB}MB (${t.usagePercent}%) | Heap: ${t.heapUsedMB}MB | ${details}`);
+    return t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/health  — Server health check for Admin panel & telemetry monitoring
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+    const telemetry = logMemoryStep('GET /api/health');
+    res.json({
+        success: true,
+        status:  'ok',
+        uptime:  telemetry.uptimeStr,
+        uptimeSec: telemetry.uptimeSec,
+        memoryMB: telemetry.heapUsedMB,
+        rssMB: telemetry.rssMB,
+        telemetry,
+        timestamp: telemetry.timestamp,
     });
 });
 
@@ -5477,8 +5512,10 @@ app.get('/api/matches/dashboard', async (req, res) => {
         const cacheKey = `dashboard_${league}`;
         const cached = getCachedApiResponse(cacheKey, 3000);
         if (cached) {
-            return res.json(cached);
+            return res.json({ ...cached, telemetry: getServerTelemetry() });
         }
+
+        const telemetryStart = logMemoryStep('GET /api/matches/dashboard [START]', `League: ${league}`);
 
         const [inPlay, upcoming, played] = await Promise.all([
             getUpcomingMatchesFromDb({ league, status: 'IN_PLAY', limit: 100 }),
@@ -5486,17 +5523,21 @@ app.get('/api/matches/dashboard', async (req, res) => {
             getPlayedMatchesFromDb({ league, limit: 100 })
         ]);
 
+        const telemetryEnd = logMemoryStep('GET /api/matches/dashboard [DONE]', `InPlay: ${inPlay.length}, Upcoming: ${upcoming.length}, Played: ${played.length}`);
+
         const responseData = {
             success: true,
             league,
             in_play: { count: inPlay.length, data: inPlay },
             upcoming: { count: upcoming.length, data: upcoming },
-            played: { count: played.length, data: played }
+            played: { count: played.length, data: played },
+            telemetry: telemetryEnd
         };
         setCachedApiResponse(cacheKey, responseData);
         res.json(responseData);
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        logMemoryStep('GET /api/matches/dashboard [ERROR]', err.message);
+        res.status(500).json({ success: false, error: err.message, telemetry: getServerTelemetry() });
     }
 });
 
@@ -5526,6 +5567,8 @@ app.get('/api/matches/h2h-analysis', async (req, res) => {
         if (!homeTeam || !awayTeam) {
             return res.status(400).json({ success: false, error: 'homeTeam and awayTeam query parameters are required.' });
         }
+
+        logMemoryStep('GET /api/matches/h2h-analysis', `${homeTeam} vs ${awayTeam}`);
 
         // Query all historical clashes between these two exact teams from Supabase database
         const h2hMatches = await getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit: 500 });
@@ -5567,11 +5610,12 @@ app.get('/api/matches/h2h-analysis', async (req, res) => {
 
         res.json({
             success: true,
-            data: analysis
+            data: analysis,
+            telemetry: getServerTelemetry()
         });
     } catch (err) {
         console.error('[API /api/matches/h2h-analysis] Error:', err);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: err.message, telemetry: getServerTelemetry() });
     }
 });
 
@@ -5586,49 +5630,63 @@ app.get('/api/engine-predictions', async (req, res) => {
         const cacheKey = `eng_pred_${league}_${status}_${limit}_${offset}`;
         const cached = getCachedApiResponse(cacheKey, 3000);
         if (cached) {
-            return res.json(cached);
+            return res.json({ ...cached, telemetry: getServerTelemetry() });
         }
 
+        const telemetryStart = logMemoryStep('GET /api/engine-predictions [START]', `League: ${league}, Status: ${status}`);
         const predictions = await getEnginePredictionsFromDb({ league, status, limit, offset });
+        const telemetryEnd = logMemoryStep('GET /api/engine-predictions [DONE]', `Returned ${predictions.length} predictions`);
+
         const responseData = {
             success: true,
             count: predictions.length,
-            data: predictions
+            data: predictions,
+            telemetry: telemetryEnd
         };
         setCachedApiResponse(cacheKey, responseData);
         res.json(responseData);
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        logMemoryStep('GET /api/engine-predictions [ERROR]', err.message);
+        res.status(500).json({ success: false, error: err.message, telemetry: getServerTelemetry() });
     }
 });
 
 app.post('/api/engine-predictions/auto-run', async (req, res) => {
     try {
+        logMemoryStep('POST /api/engine-predictions/auto-run [START]');
         const result = await autoRunEnginePredictions();
-        res.json({ success: true, result });
+        const telemetryEnd = logMemoryStep('POST /api/engine-predictions/auto-run [DONE]', `Generated: ${result?.generated ?? 0}`);
+        res.json({ success: true, result, telemetry: telemetryEnd });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        logMemoryStep('POST /api/engine-predictions/auto-run [ERROR]', err.message);
+        res.status(500).json({ success: false, error: err.message, telemetry: getServerTelemetry() });
     }
 });
 
 app.post('/api/engine-predictions/evaluate', async (req, res) => {
     try {
+        logMemoryStep('POST /api/engine-predictions/evaluate [START]');
         const result = await autoEvaluateEnginePredictions();
-        res.json({ success: true, result });
+        const telemetryEnd = logMemoryStep('POST /api/engine-predictions/evaluate [DONE]', `Evaluated: ${result?.evaluated ?? 0}`);
+        res.json({ success: true, result, telemetry: telemetryEnd });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        logMemoryStep('POST /api/engine-predictions/evaluate [ERROR]', err.message);
+        res.status(500).json({ success: false, error: err.message, telemetry: getServerTelemetry() });
     }
 });
 
 // 4. Manual trigger for association engine
 app.post('/api/matches/associate', async (req, res) => {
     try {
+        logMemoryStep('POST /api/matches/associate [START]');
         const result = await associateMatches();
         // Also trigger prediction auto-evaluation immediately following association
         autoEvaluateEnginePredictions().catch(() => {});
-        res.json({ success: true, result });
+        const telemetryEnd = logMemoryStep('POST /api/matches/associate [DONE]', `Associated: ${result?.associated ?? 0}`);
+        res.json({ success: true, result, telemetry: telemetryEnd });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        logMemoryStep('POST /api/matches/associate [ERROR]', err.message);
+        res.status(500).json({ success: false, error: err.message, telemetry: getServerTelemetry() });
     }
 });
 
