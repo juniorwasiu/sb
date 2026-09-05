@@ -186,23 +186,6 @@ async function saveMatchesToDb(newMatches) {
         }
     } catch (_) {}
 
-    // Auto-resolve pending predictions in the background after new results are saved
-    setTimeout(() => {
-        autoResolvePendingPredictions().catch(err => {
-            console.error('[SUPABASE] [DEBUG] Error in auto-resolve task:', err.message);
-        });
-    }, 1500);
-
-    // Auto-associate newly finished results with upcoming/in-play odds automatically
-    setTimeout(() => {
-        try {
-            const { associateMatches } = require('../analytics/match_lifecycle_engine');
-            associateMatches().catch(err => {
-                console.warn('[SUPABASE] [Auto-Associate] Background association note:', err.message);
-            });
-        } catch (_) {}
-    }, 2000);
-
     return { added, dupes, total };
 }
 
@@ -544,13 +527,23 @@ function getLocalFilePath(col) {
     return path.join(dataDir, `${col}.json`);
 }
 
+const inMemoryCollections = new Map();
+const MAX_LOCAL_COLLECTION_SIZE = 150;
+
 function getFromLocalCollection(col) {
+    if (inMemoryCollections.has(col)) {
+        return inMemoryCollections.get(col);
+    }
     try {
         const fp = getLocalFilePath(col);
         if (fs.existsSync(fp)) {
-            return JSON.parse(fs.readFileSync(fp, 'utf8'));
+            const data = JSON.parse(fs.readFileSync(fp, 'utf8'));
+            const trimmed = Array.isArray(data) ? data.slice(-MAX_LOCAL_COLLECTION_SIZE) : [];
+            inMemoryCollections.set(col, trimmed);
+            return trimmed;
         }
     } catch (_) {}
+    inMemoryCollections.set(col, []);
     return [];
 }
 
@@ -560,8 +553,15 @@ function saveToLocalCollection(col, rows = []) {
         const map = new Map();
         existing.forEach(r => map.set(r.id, r));
         rows.forEach(r => map.set(r.id, { ...(map.get(r.id) || {}), ...r }));
-        const merged = Array.from(map.values());
-        fs.writeFileSync(getLocalFilePath(col), JSON.stringify(merged, null, 2), 'utf8');
+        const merged = Array.from(map.values()).slice(-MAX_LOCAL_COLLECTION_SIZE);
+        inMemoryCollections.set(col, merged);
+
+        // Asynchronous non-blocking file persist
+        setImmediate(() => {
+            try {
+                fs.writeFile(getLocalFilePath(col), JSON.stringify(merged), 'utf8', () => {});
+            } catch (_) {}
+        });
     } catch (e) {
         console.warn(`[Local DB] Failed writing collection ${col}:`, e.message);
     }
@@ -573,7 +573,7 @@ function updateLocalItem(col, id, updates) {
         const idx = existing.findIndex(r => r.id === id);
         if (idx !== -1) {
             existing[idx] = { ...existing[idx], ...updates };
-            fs.writeFileSync(getLocalFilePath(col), JSON.stringify(existing, null, 2), 'utf8');
+            inMemoryCollections.set(col, existing);
         }
     } catch (_) {}
 }
@@ -1003,13 +1003,22 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
 
 // ── HEAD-TO-HEAD (H2H) HISTORICAL CLASH QUERY ─────────────────────────────────
 const h2hMemoryCache = new Map();
+const MAX_H2H_CACHE_SIZE = 40;
 
-async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } = {}) {
+function pruneH2HCache() {
+    if (h2hMemoryCache.size > MAX_H2H_CACHE_SIZE) {
+        const keysToDelete = Array.from(h2hMemoryCache.keys()).slice(0, 15);
+        keysToDelete.forEach(k => h2hMemoryCache.delete(k));
+    }
+}
+
+async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 50 } = {}) {
     const h = (homeTeam || '').trim();
     const a = (awayTeam || '').trim();
     if (!h || !a) return [];
 
-    const cacheKey = `${h}_vs_${a}_${league || 'ALL'}_${limit}`;
+    const effectiveLimit = Math.min(parseInt(limit, 10) || 50, 50);
+    const cacheKey = `${h}_vs_${a}_${league || 'ALL'}`;
     const cached = h2hMemoryCache.get(cacheKey);
     if (cached && Date.now() < cached.exp) {
         return cached.data;
@@ -1043,10 +1052,10 @@ async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } =
         try {
             let q = supabaseClient
                 .from('vfootball_results')
-                .select('id, time, date, game_id, home_team, away_team, score, league, uploaded_at')
+                .select('id, time, date, home_team, away_team, score, league')
                 .or(`and(home_team.eq.${h},away_team.eq.${a}),and(home_team.eq.${a},away_team.eq.${h})`)
                 .order('uploaded_at', { ascending: false })
-                .limit(limit);
+                .limit(effectiveLimit);
 
             const { data, error } = await withTimeout(q, 4500);
             if (!error && data && data.length > 0) {
@@ -1062,9 +1071,10 @@ async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } =
         }
     }
 
-    // Cache in memory for 3 minutes (180,000ms) to eliminate redundant queries over 520k table
+    // Cache in memory for 3 minutes (180,000ms) with strict cache size bound
+    pruneH2HCache();
     h2hMemoryCache.set(cacheKey, { data: results, exp: Date.now() + 180000 });
-    h2hMemoryCache.set(`${a}_vs_${h}_${league || 'ALL'}_${limit}`, { data: results, exp: Date.now() + 180000 });
+    h2hMemoryCache.set(`${a}_vs_${h}_${league || 'ALL'}`, { data: results, exp: Date.now() + 180000 });
 
     return results;
 }
@@ -1171,14 +1181,22 @@ async function bulkUpdateEnginePredictionsInDb(updatesList = []) {
     if (!updatesList || updatesList.length === 0) return { updated: 0 };
     const now = new Date().toISOString();
 
-    // 1. Instant in-memory collection updates (0ms latency, zero GC overhead)
-    for (const u of updatesList) {
-        updateLocalItem('engine_predictions', u.id, {
-            evaluation: u.evaluation,
-            status: u.status || 'EVALUATED',
-            updated_at: now
-        });
+    // 1. Instant in-memory collection updates in one pass (0ms latency, zero GC overhead)
+    const existing = getFromLocalCollection('engine_predictions');
+    const updateMap = new Map(updatesList.map(u => [u.id, u]));
+
+    for (let i = 0; i < existing.length; i++) {
+        const u = updateMap.get(existing[i].id);
+        if (u) {
+            existing[i] = {
+                ...existing[i],
+                evaluation: u.evaluation,
+                status: u.status || 'EVALUATED',
+                updated_at: now
+            };
+        }
     }
+    inMemoryCollections.set('engine_predictions', existing);
 
     // 2. Chunker for bulk upsert to Supabase in chunks of 50
     if (supabaseClient) {

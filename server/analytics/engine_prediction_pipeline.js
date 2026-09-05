@@ -173,7 +173,7 @@ async function autoRunEnginePredictions() {
             existingPreds.map(p => `${p.match_date}_${(p.home_team || '').trim()}_vs_${(p.away_team || '').trim()}_${(p.match_time || '').trim()}`)
         );
 
-        // Filter to only matches needing prediction, capped at 20 per cycle for fast response
+        // Filter to only matches needing prediction, capped at 10 per cycle for fast response
         const candidateMatches = activeMatches.filter(m => {
             const h = (m.home_team || m.home || '').trim();
             const a = (m.away_team || m.away || '').trim();
@@ -181,14 +181,14 @@ async function autoRunEnginePredictions() {
             const d = (m.match_date || m.date || new Date().toISOString().slice(0, 10)).trim();
             if (!h || !a) return false;
             return !existingKeys.has(`${d}_${h}_vs_${a}_${t}`);
-        }).slice(0, 20);
+        }).slice(0, 10);
 
         if (candidateMatches.length === 0) {
             return { generated: 0, message: 'All active matches already predicted.' };
         }
 
         // 3. Pre-fetch recent league matches for league-context-aware scoreline analysis
-        const playedResults = await getMatchesFromDb(200).catch(() => []);
+        const playedResults = await getMatchesFromDb(100).catch(() => []);
         const leagueMatchesMap = new Map();
         for (const pr of (playedResults || [])) {
             const l = normalizeLeague(pr.league, pr.home_team, pr.away_team);
@@ -197,7 +197,7 @@ async function autoRunEnginePredictions() {
         }
 
         const newPredictions = [];
-        const chunkSize = 3;
+        const chunkSize = 2;
 
         for (let i = 0; i < candidateMatches.length; i += chunkSize) {
             const chunk = candidateMatches.slice(i, i + chunkSize);
@@ -210,7 +210,7 @@ async function autoRunEnginePredictions() {
 
                 try {
                     const normLeague = normalizeLeague(m.league, h, a);
-                    const h2hMatches = await getH2HMatchesFromDb(h, a, { league: m.league, limit: 500 });
+                    const h2hMatches = await getH2HMatchesFromDb(h, a, { league: m.league, limit: 50 });
                     const sampleCount = h2hMatches ? h2hMatches.length : 0;
                     const isLowSample = sampleCount < 5;
 
@@ -279,16 +279,16 @@ async function autoEvaluateEnginePredictions() {
     }
     isAutoEvalRunning = true;
     try {
-        // 1. Fetch pending predictions (up to 500)
-        const pendingPreds = await getEnginePredictionsFromDb({ status: 'PENDING', limit: 500 });
+        // 1. Fetch pending predictions (up to 150)
+        const pendingPreds = await getEnginePredictionsFromDb({ status: 'PENDING', limit: 150 });
         if (!pendingPreds || pendingPreds.length === 0) {
             return { evaluated: 0 };
         }
 
         // 2. Fetch played and recent finished results in parallel
         const [playedResults, rawResults] = await Promise.all([
-            getPlayedMatchesFromDb({ limit: 300 }).catch(() => []),
-            getMatchesFromDb(200).catch(() => [])
+            getPlayedMatchesFromDb({ limit: 100 }).catch(() => []),
+            getMatchesFromDb(100).catch(() => [])
         ]);
 
         // 3. Build fast O(1) Hash Map for finished match results
