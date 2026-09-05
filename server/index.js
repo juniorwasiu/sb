@@ -5589,14 +5589,19 @@ app.get('/api/matches/h2h-analysis', async (req, res) => {
         // Query all historical clashes between these two exact teams from Supabase database
         const h2hMatches = await getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit: 500 });
 
-        // Run all 6 specialized predictive and statistical engines in parallel
+        // Query recent league matches for league-specific empirical scoreline and form modeling
+        const playedMatches = await getMatchesFromDb(300).catch(() => []);
+        const normLeague = normalizeLeague(league, homeTeam, awayTeam);
+        const leagueMatches = playedMatches.filter(m => normalizeLeague(m.league, m.home_team, m.away_team) === normLeague);
+
+        // Run all specialized predictive and statistical engines in parallel
         const analysis = analyzeH2H(h2hMatches, {
             homeTeam,
             awayTeam,
             league,
             odds,
             matchTime
-        });
+        }, { matches: leagueMatches });
 
         // Persist on-demand analysis to engine predictions database so user-initiated checks are also tracked
         try {

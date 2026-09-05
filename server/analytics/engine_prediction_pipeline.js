@@ -40,6 +40,9 @@ function evaluatePrediction(pred, actualMatch) {
     const primaryBet = consensus.primaryBet || '';
     const primaryBetLabel = consensus.primaryBetLabel || '';
     const projectedScore = (consensus.projectedScore || '').replace('-', ':').trim();
+    const topScorelines = consensus.topScorelines || [];
+    const straightWin = consensus.straightWin || {};
+    const doubleChance = consensus.doubleChance || {};
 
     let primaryWon = false;
     let winningOdd = null;
@@ -67,6 +70,15 @@ function evaluatePrediction(pred, actualMatch) {
     } else if (primaryBet === 'NG') {
         primaryWon = homeScore === 0 || awayScore === 0;
         winningOdd = odds.ng || null;
+    } else if (primaryBet === '1X' || primaryBetLabel.includes('1X')) {
+        primaryWon = homeScore >= awayScore;
+        winningOdd = odds.dc_1x || null;
+    } else if (primaryBet === 'X2' || primaryBetLabel.includes('X2')) {
+        primaryWon = awayScore >= homeScore;
+        winningOdd = odds.dc_x2 || null;
+    } else if (primaryBet === '12' || primaryBetLabel.includes('12')) {
+        primaryWon = homeScore !== awayScore;
+        winningOdd = odds.dc_12 || null;
     } else {
         // Fallback: evaluate based on primary label or projected outcome
         if (primaryBetLabel.includes(pred.home_team)) primaryWon = homeScore > awayScore;
@@ -74,12 +86,33 @@ function evaluatePrediction(pred, actualMatch) {
         else primaryWon = totalGoals >= 2;
     }
 
-    // 2. Exact Score Evaluation
+    // 2. Straight Win (1X2) Specific Evaluation
+    const straightWinPick = (straightWin.pick || (primaryBet === 'HOME_WIN' ? '1' : primaryBet === 'AWAY_WIN' ? '2' : '')).trim();
+    let straightWinWon = false;
+    let straightWinOdd = straightWin.odd || (straightWinPick === '1' ? odds.home_win : straightWinPick === '2' ? odds.away_win : odds.draw);
+
+    if (straightWinPick === '1') {
+        straightWinWon = homeScore > awayScore;
+    } else if (straightWinPick === '2') {
+        straightWinWon = awayScore > homeScore;
+    } else if (straightWinPick === 'X') {
+        straightWinWon = homeScore === awayScore;
+    }
+
+    // 3. Double Chance Evaluation
+    const dcPick = doubleChance.pick || '';
+    let doubleChanceWon = false;
+    if (dcPick === '1X') doubleChanceWon = homeScore >= awayScore;
+    else if (dcPick === 'X2') doubleChanceWon = awayScore >= homeScore;
+    else if (dcPick === '12') doubleChanceWon = homeScore !== awayScore;
+
+    // 4. Exact Score & Top 3 Scorelines Evaluation
     const exactScoreHit = projectedScore === rawScore;
+    const top3ScoreHit = exactScoreHit || topScorelines.some(s => (s.score || '').replace('-', ':').trim() === rawScore);
     const projParts = projectedScore.split(':').map(Number);
     const scoreDiffHit = projParts.length === 2 && (projParts[0] - projParts[1]) === (homeScore - awayScore);
 
-    // 3. Markets Evaluation
+    // 5. Markets Evaluation
     const winner1x2 = homeScore > awayScore ? '1' : awayScore > homeScore ? '2' : 'X';
     const isOver15 = totalGoals >= 2;
     const isOver25 = totalGoals >= 3;
@@ -95,11 +128,19 @@ function evaluatePrediction(pred, actualMatch) {
         primaryWon,
         primaryVerdict: primaryWon ? 'WON' : 'LOST',
         winningOdd,
+        straightWinWon,
+        straightWinPick,
+        straightWinTeam: straightWin.team || (straightWinPick === '1' ? pred.home_team : straightWinPick === '2' ? pred.away_team : 'Draw'),
+        straightWinOdd,
+        doubleChanceWon,
         projectedScore,
         exactScoreHit,
+        top3ScoreHit,
         scoreDiffHit,
         outcomesWon: {
             winner1x2,
+            straightWin: straightWinWon,
+            doubleChance: doubleChanceWon,
             over15: isOver15,
             over25: isOver25,
             gg: isGg
@@ -146,6 +187,15 @@ async function autoRunEnginePredictions() {
             return { generated: 0, message: 'All active matches already predicted.' };
         }
 
+        // 3. Pre-fetch recent league matches for league-context-aware scoreline analysis
+        const playedResults = await getMatchesFromDb(500).catch(() => []);
+        const leagueMatchesMap = new Map();
+        for (const pr of (playedResults || [])) {
+            const l = normalizeLeague(pr.league, pr.home_team, pr.away_team);
+            if (!leagueMatchesMap.has(l)) leagueMatchesMap.set(l, []);
+            leagueMatchesMap.get(l).push(pr);
+        }
+
         const newPredictions = [];
         const chunkSize = 5;
 
@@ -159,17 +209,22 @@ async function autoRunEnginePredictions() {
                 const matchKey = `${d}_${h}_vs_${a}_${t}`;
 
                 try {
+                    const normLeague = normalizeLeague(m.league, h, a);
                     const h2hMatches = await getH2HMatchesFromDb(h, a, { league: m.league, limit: 500 });
                     const sampleCount = h2hMatches ? h2hMatches.length : 0;
                     const isLowSample = sampleCount < 5;
 
+                    const leagueContext = {
+                        matches: leagueMatchesMap.get(normLeague) || []
+                    };
+
                     const analysis = analyzeH2H(h2hMatches, {
                         homeTeam: h,
                         awayTeam: a,
-                        league: m.league,
+                        league: m.league || 'England - Virtual',
                         odds: m.odds || {},
                         matchTime: t
-                    });
+                    }, leagueContext);
 
                     return {
                         id: `engpred_${m.id || matchKey}`,
@@ -204,7 +259,6 @@ async function autoRunEnginePredictions() {
             await saveEnginePredictionsToDb(newPredictions);
             console.log(`[Engine Pipeline] 🚀 Auto-generated & saved ${newPredictions.length} multi-engine predictions.`);
         }
-
 
         return { generated: newPredictions.length };
     } catch (err) {

@@ -1391,16 +1391,24 @@ export default function UnifiedMatchCenter() {
                               display: 'flex',
                               justifyContent: 'space-between',
                               alignItems: 'center',
-                              fontSize: '0.75rem'
+                              fontSize: '0.75rem',
+                              flexWrap: 'wrap',
+                              gap: '6px'
                             }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span>🧠</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                 <span style={{ color: NEON, fontWeight: 700 }}>
-                                  Pick: {pred.consensus.primaryBetLabel || '-'}
+                                  🎯 {pred.consensus.primaryBetLabel || '-'} ({pred.consensus.confidence}%)
                                 </span>
-                                <span style={{ color: GREEN, fontWeight: 800 }}>
-                                  ({pred.consensus.confidence}%)
-                                </span>
+                                {pred.consensus.straightWin && (
+                                  <span style={{ color: GOLD, fontWeight: 800, background: 'rgba(255,184,0,0.12)', padding: '2px 6px', borderRadius: '4px' }}>
+                                    ⚡ {pred.consensus.straightWin.label}
+                                  </span>
+                                )}
+                                {pred.consensus.projectedScore && (
+                                  <span style={{ color: PURPLE, fontWeight: 800, fontFamily: 'monospace' }}>
+                                    ⚽ {pred.consensus.projectedScore}
+                                  </span>
+                                )}
                               </div>
                               {(pred.is_low_sample || (pred.h2h_sample_count !== undefined && pred.h2h_sample_count < 5)) ? (
                                 <span style={{
@@ -1612,16 +1620,24 @@ export default function UnifiedMatchCenter() {
                               display: 'flex',
                               justifyContent: 'space-between',
                               alignItems: 'center',
-                              fontSize: '0.75rem'
+                              fontSize: '0.75rem',
+                              flexWrap: 'wrap',
+                              gap: '6px'
                             }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span>🧠</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                 <span style={{ color: NEON, fontWeight: 700 }}>
-                                  Pick: {pred.consensus.primaryBetLabel || '-'}
+                                  🎯 {pred.consensus.primaryBetLabel || '-'} ({pred.consensus.confidence}%)
                                 </span>
-                                <span style={{ color: GREEN, fontWeight: 800 }}>
-                                  ({pred.consensus.confidence}%)
-                                </span>
+                                {pred.consensus.straightWin && (
+                                  <span style={{ color: GOLD, fontWeight: 800, background: 'rgba(255,184,0,0.12)', padding: '2px 6px', borderRadius: '4px' }}>
+                                    ⚡ {pred.consensus.straightWin.label}
+                                  </span>
+                                )}
+                                {pred.consensus.projectedScore && (
+                                  <span style={{ color: PURPLE, fontWeight: 800, fontFamily: 'monospace' }}>
+                                    ⚽ {pred.consensus.projectedScore}
+                                  </span>
+                                )}
                               </div>
                               {(pred.is_low_sample || (pred.h2h_sample_count !== undefined && pred.h2h_sample_count < 5)) ? (
                                 <span style={{
@@ -2776,12 +2792,57 @@ export default function UnifiedMatchCenter() {
                           flexDirection: 'column',
                           gap: '10px'
                         }}>
+                          {/* 1. Straight Win Recommendation Pill */}
+                          {consensus.straightWin && (
+                            <div style={{
+                              background: 'linear-gradient(90deg, rgba(255, 184, 0, 0.12) 0%, rgba(255, 184, 0, 0.04) 100%)',
+                              border: '1px solid rgba(255, 184, 0, 0.35)',
+                              borderRadius: '8px',
+                              padding: '8px 12px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{
+                                  background: GOLD,
+                                  color: '#000',
+                                  fontWeight: 900,
+                                  fontSize: '0.72rem',
+                                  padding: '2px 7px',
+                                  borderRadius: '4px'
+                                }}>
+                                  {consensus.straightWin.pick === '1' ? '1 (HOME)' : consensus.straightWin.pick === '2' ? '2 (AWAY)' : 'X (DRAW)'}
+                                </span>
+                                <div>
+                                  <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#FFF' }}>
+                                    ⚡ Straight Win: <span style={{ color: GOLD }}>{consensus.straightWin.team}</span>
+                                  </div>
+                                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                    {consensus.straightWin.odd ? `Decimal Odd: @ ${Number(consensus.straightWin.odd).toFixed(2)}` : 'Market Price'}
+                                  </div>
+                                </div>
+                              </div>
+                              <span style={{
+                                color: GOLD,
+                                fontWeight: 800,
+                                fontSize: '0.82rem',
+                                background: 'rgba(255,184,0,0.15)',
+                                padding: '3px 8px',
+                                borderRadius: '12px'
+                              }}>
+                                {consensus.straightWin.confidence}% Conf.
+                              </span>
+                            </div>
+                          )}
+
+                          {/* 2. Primary Consensus Pick */}
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
                               <span style={{ fontSize: '0.68rem', color: NEON, fontWeight: 700, textTransform: 'uppercase' }}>
                                 🎯 Consensus Primary Pick
                               </span>
-                              <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#FFF' }}>
+                              <div style={{ fontSize: '1.02rem', fontWeight: 900, color: '#FFF' }}>
                                 {consensus.primaryBetLabel || '-'}
                               </div>
                             </div>
@@ -2791,21 +2852,68 @@ export default function UnifiedMatchCenter() {
                               padding: '4px 10px',
                               borderRadius: '16px',
                               fontWeight: 900,
-                              fontSize: '0.85rem'
+                              fontSize: '0.82rem'
                             }}>
                               {consensus.confidence || 0}% Conf.
                             </div>
                           </div>
 
-                          {/* Secondary Value Pick & Projected Score */}
+                          {/* 3. Top 3 Realistic Scorelines */}
+                          <div style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            borderRadius: '6px',
+                            padding: '8px 10px',
+                            border: '1px solid rgba(255, 255, 255, 0.05)'
+                          }}>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>⚽ Calibrated Empirical Scores:</span>
+                              <span style={{ color: PURPLE, fontWeight: 700 }}>Primary: {consensus.projectedScore || '-'}</span>
+                            </div>
+                            {Array.isArray(consensus.topScorelines) && consensus.topScorelines.length > 0 ? (
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {consensus.topScorelines.slice(0, 3).map((ts, tIdx) => (
+                                  <div
+                                    key={tIdx}
+                                    style={{
+                                      background: tIdx === 0 ? 'rgba(167, 139, 250, 0.18)' : 'rgba(255, 255, 255, 0.06)',
+                                      border: tIdx === 0 ? '1px solid rgba(167, 139, 250, 0.4)' : '1px solid rgba(255, 255, 255, 0.08)',
+                                      padding: '3px 8px',
+                                      borderRadius: '4px',
+                                      fontSize: '0.72rem',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px'
+                                    }}
+                                  >
+                                    <span style={{ fontWeight: 900, color: tIdx === 0 ? '#FFF' : 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                                      {ts.score}
+                                    </span>
+                                    <span style={{ color: tIdx === 0 ? PURPLE : 'var(--text-muted)', fontSize: '0.65rem', fontWeight: 700 }}>
+                                      ({ts.probability})
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div style={{ color: PURPLE, fontWeight: 800, fontFamily: 'monospace', fontSize: '0.85rem' }}>
+                                {consensus.projectedScore || '-'}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 4. Secondary Value Pick & Double Chance */}
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px', fontSize: '0.78rem' }}>
                             <div>
-                              <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>💎 Value Pick:</span>
-                              <div style={{ color: GOLD, fontWeight: 700 }}>{consensus.secondaryBet || '-'}</div>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>💎 Value Pick:</span>
+                              <div style={{ color: GOLD, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {consensus.secondaryBet || '-'}
+                              </div>
                             </div>
                             <div style={{ textAlign: 'right' }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>⚽ Projected Score:</span>
-                              <div style={{ color: PURPLE, fontWeight: 800, fontFamily: 'monospace' }}>{consensus.projectedScore || '-'}</div>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>🛡️ Safety / Double Chance:</span>
+                              <div style={{ color: NEON, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {consensus.doubleChance?.label || '1X / 12'}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -2823,23 +2931,49 @@ export default function UnifiedMatchCenter() {
                           }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span style={{ fontWeight: 800, fontSize: '0.85rem', color: isWon ? GREEN : RED }}>
-                                {isWon ? '🎯 PREDICTION WON ✅' : '❌ PREDICTION MISSED'}
+                                {isWon ? '🎯 PRIMARY PREDICTION WON ✅' : '❌ PRIMARY PREDICTION MISSED'}
                               </span>
                               <span style={{ fontSize: '0.8rem', color: '#FFF', fontWeight: 800 }}>
                                 Actual Score: <strong style={{ color: GREEN }}>{evaluation.finalScore}</strong>
                               </span>
                             </div>
 
-                            {evaluation.exactScoreHit && (
+                            {/* Straight Win Evaluation Result */}
+                            {evaluation.straightWinWon !== undefined && (
+                              <div style={{
+                                fontSize: '0.74rem',
+                                color: evaluation.straightWinWon ? GREEN : RED,
+                                fontWeight: 800,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}>
+                                <span>⚡ Straight Win ({evaluation.straightWinPick || consensus.straightWin?.pick}):</span>
+                                <span>{evaluation.straightWinWon ? `WON @ ${evaluation.straightWinOdd ? Number(evaluation.straightWinOdd).toFixed(2) : '-'} ✅` : 'LOST ❌'}</span>
+                              </div>
+                            )}
+
+                            {/* Exact Score & Top 3 Score Evaluation Result */}
+                            {evaluation.exactScoreHit ? (
                               <div style={{ fontSize: '0.74rem', color: GOLD, fontWeight: 800 }}>
                                 🎯 EXACT SCORE HIT! (Projected {consensus.projectedScore} == Final {evaluation.finalScore})
                               </div>
-                            )}
+                            ) : evaluation.top3ScoreHit ? (
+                              <div style={{ fontSize: '0.74rem', color: PURPLE, fontWeight: 800 }}>
+                                ⚽ TOP 3 SCORE HIT! (Final {evaluation.finalScore} was in Top Projections)
+                              </div>
+                            ) : null}
 
                             {evaluation.outcomesWon && (
                               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
                                 <span style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', color: '#FFF' }}>
                                   Winner: {evaluation.actualWinner1x2}
+                                </span>
+                                <span style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', background: evaluation.outcomesWon.straightWin ? 'rgba(255,184,0,0.2)' : 'rgba(255,255,255,0.06)', color: evaluation.outcomesWon.straightWin ? GOLD : 'var(--text-muted)' }}>
+                                  1X2 Win {evaluation.outcomesWon.straightWin ? '✅' : '❌'}
+                                </span>
+                                <span style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', background: evaluation.outcomesWon.doubleChance ? 'rgba(0,229,255,0.2)' : 'rgba(255,255,255,0.06)', color: evaluation.outcomesWon.doubleChance ? NEON : 'var(--text-muted)' }}>
+                                  DC {evaluation.outcomesWon.doubleChance ? '✅' : '❌'}
                                 </span>
                                 <span style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', background: evaluation.outcomesWon.over15 ? 'rgba(0,255,136,0.15)' : 'rgba(255,255,255,0.06)', color: evaluation.outcomesWon.over15 ? GREEN : 'var(--text-muted)' }}>
                                   O1.5 {evaluation.outcomesWon.over15 ? '✅' : '❌'}

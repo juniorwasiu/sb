@@ -394,9 +394,46 @@ export default function H2HAnalysisModal({ match, onClose }) {
                     </div>
                   )}
 
-                  {/* Highlighted Recommendation Cards */}
+                  {/* Highlighted Recommendation Cards Grid */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
-                    {/* Primary Bet */}
+                    {/* 1. Straight Win Recommendation */}
+                    {consensus.straightWin && (
+                      <div
+                        style={{
+                          background: 'linear-gradient(135deg, rgba(255, 184, 0, 0.12) 0%, rgba(0, 0, 0, 0.5) 100%)',
+                          border: '1px solid rgba(255, 184, 0, 0.4)',
+                          padding: '14px 18px',
+                          borderRadius: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', color: GOLD, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            ⚡ Straight Win (1X2)
+                          </span>
+                          <span style={{
+                            background: GOLD,
+                            color: '#000',
+                            fontWeight: 900,
+                            fontSize: '0.72rem',
+                            padding: '2px 8px',
+                            borderRadius: '4px'
+                          }}>
+                            PICK {consensus.straightWin.pick}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '1.15rem', fontWeight: 900, color: '#FFF' }}>
+                          {consensus.straightWin.team} {consensus.straightWin.odd ? `@ ${Number(consensus.straightWin.odd).toFixed(2)}` : ''}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          {consensus.straightWin.confidence}% Statistical Model Probability · {consensus.straightWin.reasoning || 'Calibrated 1X2 direction'}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* 2. Primary Consensus Bet */}
                     <div
                       style={{
                         background: 'rgba(0, 0, 0, 0.45)',
@@ -405,7 +442,7 @@ export default function H2HAnalysisModal({ match, onClose }) {
                         borderRadius: '10px',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '4px'
+                        gap: '6px'
                       }}
                     >
                       <span style={{ fontSize: '0.75rem', color: NEON, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -415,11 +452,11 @@ export default function H2HAnalysisModal({ match, onClose }) {
                         {consensus.primaryBetLabel}
                       </span>
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                        Highest probability across all models ({consensus.confidence}%)
+                        Highest overall probability across all ensemble engines ({consensus.confidence}%)
                       </span>
                     </div>
 
-                    {/* Secondary Value Bet */}
+                    {/* 3. Secondary Value Bet */}
                     <div
                       style={{
                         background: 'rgba(0, 0, 0, 0.45)',
@@ -428,7 +465,7 @@ export default function H2HAnalysisModal({ match, onClose }) {
                         borderRadius: '10px',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '4px'
+                        gap: '6px'
                       }}
                     >
                       <span style={{ fontSize: '0.75rem', color: GOLD, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -438,32 +475,114 @@ export default function H2HAnalysisModal({ match, onClose }) {
                         {consensus.secondaryBet}
                       </span>
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                        Highest statistical edge over bookmaker odds
+                        Highest statistical expected edge over bookmaker odds
                       </span>
                     </div>
 
-                    {/* Projected Final Score */}
-                    <div
-                      style={{
-                        background: 'rgba(0, 0, 0, 0.45)',
-                        border: '1px solid rgba(167, 139, 250, 0.3)',
-                        padding: '14px 18px',
-                        borderRadius: '10px',
+                    {/* 4. Safety / Double Chance */}
+                    {consensus.doubleChance && (
+                      <div
+                        style={{
+                          background: 'rgba(0, 0, 0, 0.45)',
+                          border: '1px solid rgba(0, 255, 157, 0.3)',
+                          padding: '14px 18px',
+                          borderRadius: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}
+                      >
+                        <span style={{ fontSize: '0.75rem', color: GREEN, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          🛡️ Safety Double Chance
+                        </span>
+                        <span style={{ fontSize: '1.15rem', fontWeight: 900, color: '#FFF' }}>
+                          {consensus.doubleChance.label}
+                        </span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          Ultra-low risk coverage ({consensus.doubleChance.confidence}% probability)
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 5. Projected Final Score & Top 3 Scoreline Probabilities */}
+                  <div
+                    style={{
+                      background: 'rgba(0, 0, 0, 0.45)',
+                      border: '1px solid rgba(167, 139, 250, 0.35)',
+                      padding: '16px 20px',
+                      borderRadius: '10px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '1.2rem' }}>⚽</span>
+                        <div>
+                          <span style={{ fontSize: '0.8rem', color: PURPLE, fontWeight: 800, textTransform: 'uppercase' }}>
+                            Calibrated Empirical Scoreline Matrix
+                          </span>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                            Synthesized from league occurrences, team scoring/conceding rates, and directional odds
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{
+                        background: 'rgba(167, 139, 250, 0.2)',
+                        border: '1px solid rgba(167, 139, 250, 0.5)',
+                        padding: '4px 14px',
+                        borderRadius: '8px',
                         display: 'flex',
-                        flexDirection: 'column',
-                        gap: '4px'
-                      }}
-                    >
-                      <span style={{ fontSize: '0.75rem', color: PURPLE, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        ⚽ Projected Exact Score
-                      </span>
-                      <span style={{ fontSize: '1.4rem', fontWeight: 900, color: '#FFF', letterSpacing: '2px', fontFamily: 'monospace' }}>
-                        {consensus.projectedScore}
-                      </span>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                        Peak mode from Poisson bivariate distribution
-                      </span>
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Primary Pick:</span>
+                        <span style={{ fontSize: '1.35rem', fontWeight: 900, color: '#FFF', fontFamily: 'monospace', letterSpacing: '1px' }}>
+                          {consensus.projectedScore}
+                        </span>
+                      </div>
                     </div>
+
+                    {/* Top 3 Scoreline Breakdown Chips */}
+                    {Array.isArray(consensus.topScorelines) && consensus.topScorelines.length > 0 && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px', marginTop: '4px' }}>
+                        {consensus.topScorelines.map((ts, idx) => (
+                          <div
+                            key={idx}
+                            style={{
+                              background: idx === 0 ? 'rgba(167, 139, 250, 0.12)' : 'rgba(255, 255, 255, 0.04)',
+                              border: idx === 0 ? '1px solid rgba(167, 139, 250, 0.4)' : '1px solid rgba(255, 255, 255, 0.08)',
+                              borderRadius: '8px',
+                              padding: '10px 14px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: '0.68rem', color: idx === 0 ? PURPLE : 'var(--text-muted)', fontWeight: 700 }}>
+                                {ts.type || `Option ${idx + 1}`}
+                              </div>
+                              <div style={{ fontSize: '1.15rem', fontWeight: 900, color: '#FFF', fontFamily: 'monospace', marginTop: '2px' }}>
+                                {ts.score}
+                              </div>
+                            </div>
+                            <div style={{
+                              background: idx === 0 ? 'rgba(167, 139, 250, 0.25)' : 'rgba(255, 255, 255, 0.08)',
+                              padding: '3px 8px',
+                              borderRadius: '12px',
+                              fontSize: '0.8rem',
+                              fontWeight: 800,
+                              color: idx === 0 ? '#FFF' : 'var(--text-secondary)'
+                            }}>
+                              {ts.probability}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* 1X2 Probabilities Bar */}
