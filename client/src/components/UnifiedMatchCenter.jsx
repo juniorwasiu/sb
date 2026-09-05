@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import H2HAnalysisModal from './H2HAnalysisModal';
+import RecurringOddsDetailModal from './RecurringOddsDetailModal';
 
 
 const NEON   = '#00E5FF';
@@ -204,6 +205,7 @@ export default function UnifiedMatchCenter() {
   const [recurringLeagueFilter, setRecurringLeagueFilter] = useState('ALL');
   const [recurringOnlyWinning, setRecurringOnlyWinning] = useState(false);
   const [showRecurringOddsPanel, setShowRecurringOddsPanel] = useState(false);
+  const [selectedRecurringOdd, setSelectedRecurringOdd] = useState(null);
 
   // Real-time Render Health & Telemetry State
   const [telemetry, setTelemetry] = useState(null);
@@ -1849,6 +1851,30 @@ export default function UnifiedMatchCenter() {
                       </div>
                       <button
                         type="button"
+                        onClick={() => {
+                          const firstOdd = (filteredRecurringOdds.length > 0 ? filteredRecurringOdds[0] : recurringOddsStats.all[0]) || null;
+                          setSelectedRecurringOdd(firstOdd);
+                        }}
+                        style={{
+                          background: 'linear-gradient(135deg, rgba(0, 229, 255, 0.2), rgba(167, 139, 250, 0.2))',
+                          border: `1px solid ${NEON}`,
+                          color: '#FFF',
+                          borderRadius: '8px',
+                          padding: '6px 14px',
+                          fontSize: '0.78rem',
+                          cursor: 'pointer',
+                          fontWeight: 800,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          boxShadow: '0 0 12px rgba(0, 229, 255, 0.15)',
+                          transition: 'all 0.18s ease'
+                        }}
+                      >
+                        <span>🔎 Open Deep Odds Studio ↗</span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setShowRecurringOddsPanel(prev => !prev)}
                         style={{
                           background: showRecurringOddsPanel ? 'rgba(0, 229, 255, 0.18)' : 'rgba(255, 255, 255, 0.08)',
@@ -2003,6 +2029,7 @@ export default function UnifiedMatchCenter() {
                             return (
                               <div
                                 key={item.id}
+                                onClick={() => setSelectedRecurringOdd(item)}
                                 style={{
                                   background: 'rgba(0, 0, 0, 0.4)',
                                   border: `1px solid ${item.isPerfect ? 'rgba(0, 255, 136, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
@@ -2011,8 +2038,19 @@ export default function UnifiedMatchCenter() {
                                   display: 'flex',
                                   flexDirection: 'column',
                                   gap: '10px',
-                                  transition: 'transform 0.15s ease, border-color 0.15s ease',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.18s ease',
                                   boxShadow: item.isPerfect ? '0 0 15px rgba(0, 255, 136, 0.08)' : 'none'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.borderColor = NEON;
+                                  e.currentTarget.style.transform = 'translateY(-2px)';
+                                  e.currentTarget.style.boxShadow = '0 6px 18px rgba(0, 229, 255, 0.15)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.borderColor = item.isPerfect ? 'rgba(0, 255, 136, 0.4)' : 'rgba(255, 255, 255, 0.08)';
+                                  e.currentTarget.style.transform = 'none';
+                                  e.currentTarget.style.boxShadow = item.isPerfect ? '0 0 15px rgba(0, 255, 136, 0.08)' : 'none';
                                 }}
                               >
                                 {/* Card Header */}
@@ -2129,7 +2167,43 @@ export default function UnifiedMatchCenter() {
                                   </div>
                                 </div>
 
+                                {/* CTA Studio Button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedRecurringOdd(item);
+                                  }}
+                                  style={{
+                                    marginTop: '2px',
+                                    background: 'rgba(0, 229, 255, 0.08)',
+                                    border: '1px solid rgba(0, 229, 255, 0.25)',
+                                    borderRadius: '6px',
+                                    padding: '5px 10px',
+                                    fontSize: '0.72rem',
+                                    color: NEON,
+                                    fontWeight: 800,
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    cursor: 'pointer',
+                                    width: '100%',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(0, 229, 255, 0.2)';
+                                    e.currentTarget.style.borderColor = NEON;
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'rgba(0, 229, 255, 0.08)';
+                                    e.currentTarget.style.borderColor = 'rgba(0, 229, 255, 0.25)';
+                                  }}
+                                >
+                                  <span>⚡ Open Detailed Studio</span>
+                                  <span style={{ fontSize: '0.78rem' }}>Inspect Breakdowns ↗</span>
+                                </button>
                               </div>
+
                             );
                           })}
                         </div>
@@ -2822,7 +2896,23 @@ export default function UnifiedMatchCenter() {
           onClose={() => setSelectedH2HMatch(null)}
         />
       )}
+
+      {/* ── REPETITIVE WINNING ODDS DEEP INTELLIGENCE STUDIO MODAL ── */}
+      {selectedRecurringOdd && (
+        <RecurringOddsDetailModal
+          selectedOdd={selectedRecurringOdd}
+          allOdds={filteredRecurringOdds.length > 0 ? filteredRecurringOdds : recurringOddsStats.all}
+          playedMatches={timeFilteredPlayed}
+          upcomingMatches={upcomingMatches}
+          timeFilter={timeFilter}
+          lastWatInfo={lastWatInfo}
+          onClose={() => setSelectedRecurringOdd(null)}
+          onSelectOdd={(odd) => setSelectedRecurringOdd(odd)}
+          onSelectMatch={(m) => setSelectedH2HMatch(m)}
+        />
+      )}
     </div>
   );
 }
+
 
