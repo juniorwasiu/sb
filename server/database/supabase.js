@@ -862,6 +862,36 @@ async function updateUpcomingMatchStatus(id, status = 'PLAYED') {
     updateLocalItem('upcoming_matches', id, { status, updated_at: new Date().toISOString() });
 }
 
+async function bulkUpdateUpcomingMatchStatus(ids = [], status = 'PLAYED') {
+    if (!ids || ids.length === 0) return { updated: 0 };
+    const now = new Date().toISOString();
+
+    for (const id of ids) {
+        updateLocalItem('upcoming_matches', id, { status, updated_at: now });
+    }
+
+    if (supabaseClient) {
+        const chunkSize = 100;
+        for (let i = 0; i < ids.length; i += chunkSize) {
+            const chunk = ids.slice(i, i + chunkSize);
+            try {
+                await withTimeout(
+                    supabaseClient
+                        .from('upcoming_matches')
+                        .update({ status, updated_at: now })
+                        .in('id', chunk),
+                    3500
+                );
+            } catch (err) {
+                console.warn('[SUPABASE] ⚠️ bulkUpdateUpcomingMatchStatus note:', err.message);
+            }
+        }
+    }
+
+    return { updated: ids.length };
+}
+
+
 
 // ── PLAYED MATCHES (Full Details + Pre-match Odds + Winner + Winning Outcomes) ─
 async function savePlayedMatchesToDb(matches = []) {
@@ -1133,6 +1163,46 @@ async function updateEnginePredictionInDb(id, updates = {}) {
     updateLocalItem('engine_predictions', id, patch);
 }
 
+async function bulkUpdateEnginePredictionsInDb(updatesList = []) {
+    if (!updatesList || updatesList.length === 0) return { updated: 0 };
+    const now = new Date().toISOString();
+
+    // 1. Instant in-memory collection updates (0ms latency, zero GC overhead)
+    for (const u of updatesList) {
+        updateLocalItem('engine_predictions', u.id, {
+            evaluation: u.evaluation,
+            status: u.status || 'EVALUATED',
+            updated_at: now
+        });
+    }
+
+    // 2. Chunker for bulk upsert to Supabase in chunks of 50
+    if (supabaseClient) {
+        const chunkSize = 50;
+        for (let i = 0; i < updatesList.length; i += chunkSize) {
+            const chunk = updatesList.slice(i, i + chunkSize);
+            const rows = chunk.map(u => ({
+                id: u.id,
+                evaluation: u.evaluation,
+                status: u.status || 'EVALUATED',
+                updated_at: now
+            }));
+            try {
+                await withTimeout(
+                    supabaseClient
+                        .from('engine_predictions')
+                        .upsert(rows, { onConflict: 'id' }),
+                    3500
+                );
+            } catch (err) {
+                console.warn('[SUPABASE] ⚠️ bulkUpdateEnginePredictionsInDb note:', err.message);
+            }
+        }
+    }
+
+    return { updated: updatesList.length };
+}
+
 module.exports = {
     supabaseClient,
     getMatchesFromDb,
@@ -1146,14 +1216,17 @@ module.exports = {
     saveUpcomingMatchesToDb,
     getUpcomingMatchesFromDb,
     updateUpcomingMatchStatus,
+    bulkUpdateUpcomingMatchStatus,
     savePlayedMatchesToDb,
     getPlayedMatchesFromDb,
     computeMatchStatus,
     getH2HMatchesFromDb,
     saveEnginePredictionsToDb,
     getEnginePredictionsFromDb,
-    updateEnginePredictionInDb
+    updateEnginePredictionInDb,
+    bulkUpdateEnginePredictionsInDb
 };
+
 
 
 

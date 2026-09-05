@@ -16,11 +16,13 @@ const {
     getH2HMatchesFromDb,
     saveEnginePredictionsToDb,
     getEnginePredictionsFromDb,
-    updateEnginePredictionInDb
+    updateEnginePredictionInDb,
+    bulkUpdateEnginePredictionsInDb
 } = require('../database/supabase');
 
 const { analyzeH2H } = require('./multi_engine_analyzer');
-const { teamsMatch, normalizeLeague } = require('./match_lifecycle_engine');
+const { teamsMatch, normalizeTeam, normalizeLeague } = require('./match_lifecycle_engine');
+
 
 /**
  * Pure evaluation function comparing an engine prediction against an actual finished match.
@@ -215,6 +217,7 @@ async function autoRunEnginePredictions() {
 
 /**
  * Automatically evaluates all pending predictions against verified finished match results.
+ * High-speed O(1) Hash-Map indexing for zero latency and minimal RAM overhead.
  */
 async function autoEvaluateEnginePredictions() {
     if (isAutoEvalRunning) {
@@ -222,42 +225,59 @@ async function autoEvaluateEnginePredictions() {
     }
     isAutoEvalRunning = true;
     try {
-        // 1. Fetch pending predictions
-        const pendingPreds = await getEnginePredictionsFromDb({ status: 'PENDING', limit: 300 });
+        // 1. Fetch pending predictions (up to 1000)
+        const pendingPreds = await getEnginePredictionsFromDb({ status: 'PENDING', limit: 1000 });
         if (!pendingPreds || pendingPreds.length === 0) {
             return { evaluated: 0 };
         }
 
-        // 2. Fetch played and recent finished results
-        const playedResults = await getPlayedMatchesFromDb({ limit: 300 });
-        const rawResults = await getMatchesFromDb(300);
-        const combinedResults = [...(playedResults || []), ...(rawResults || [])];
+        // 2. Fetch played and recent finished results (up to 1000 in parallel)
+        const [playedResults, rawResults] = await Promise.all([
+            getPlayedMatchesFromDb({ limit: 1000 }),
+            getMatchesFromDb(1000)
+        ]);
+
+        // 3. Build fast O(1) Hash Map for finished match results
+        const resultMap = new Map();
+        const addResultToMap = (res) => {
+            const h = (res.home_team || res.homeTeam || res.home || '').trim();
+            const a = (res.away_team || res.awayTeam || res.away || '').trim();
+            const s = (res.score || '').replace('-', ':').trim();
+            if (!h || !a || !/^\d+:\d+$/.test(s)) return;
+
+            const l = normalizeLeague(res.league, h, a);
+            const normH = normalizeTeam(h);
+            const normA = normalizeTeam(a);
+
+            const key1 = `${l}_${normH}_vs_${normA}`;
+            const key2 = `ANY_${normH}_vs_${normA}`;
+            const dateKey = `${res.match_date || res.date || ''}_${key1}`;
+
+            if (!resultMap.has(dateKey)) resultMap.set(dateKey, res);
+            if (!resultMap.has(key1)) resultMap.set(key1, res);
+            if (!resultMap.has(key2)) resultMap.set(key2, res);
+        };
+
+        (playedResults || []).forEach(addResultToMap);
+        (rawResults || []).forEach(addResultToMap);
 
         const updatesBatch = [];
 
+        // 4. Evaluate each pending prediction in O(1) lookup time
         for (const pred of pendingPreds) {
-            const predLeague = normalizeLeague(pred.league, pred.home_team, pred.away_team);
+            const predHome = (pred.home_team || '').trim();
+            const predAway = (pred.away_team || '').trim();
+            if (!predHome || !predAway) continue;
 
-            // Find matching finished result
-            const matchResult = combinedResults.find(res => {
-                const resHome = res.home_team || res.homeTeam || res.home;
-                const resAway = res.away_team || res.awayTeam || res.away;
-                const resScore = res.score;
+            const predLeague = normalizeLeague(pred.league, predHome, predAway);
+            const normH = normalizeTeam(predHome);
+            const normA = normalizeTeam(predAway);
 
-                if (!resScore || !/^\d+[-:]\d+$/.test(resScore.trim())) {
-                    return false;
-                }
+            const dateKey = `${pred.match_date || ''}_${predLeague}_${normH}_vs_${normA}`;
+            const leagueKey = `${predLeague}_${normH}_vs_${normA}`;
+            const anyKey = `ANY_${normH}_vs_${normA}`;
 
-                const resLeague = normalizeLeague(res.league, resHome, resAway);
-                if (predLeague !== 'vFootball' && resLeague !== 'vFootball' && predLeague !== resLeague) {
-                    return false;
-                }
-
-                const homeMatch = teamsMatch(pred.home_team, resHome);
-                const awayMatch = teamsMatch(pred.away_team, resAway);
-
-                return homeMatch && awayMatch;
-            });
+            const matchResult = resultMap.get(dateKey) || resultMap.get(leagueKey) || resultMap.get(anyKey);
 
             if (matchResult) {
                 const evaluation = evaluatePrediction(pred, matchResult);
@@ -271,14 +291,10 @@ async function autoEvaluateEnginePredictions() {
             }
         }
 
+        // 5. Batch update all evaluated predictions in bulk chunks
         if (updatesBatch.length > 0) {
-            await Promise.all(updatesBatch.map(u => 
-                updateEnginePredictionInDb(u.id, {
-                    evaluation: u.evaluation,
-                    status: u.status
-                }).catch(() => {})
-            ));
-            console.log(`[Engine Pipeline] ✅ Auto-evaluated ${updatesBatch.length} prediction outcomes (WON/LOST marked).`);
+            await bulkUpdateEnginePredictionsInDb(updatesBatch);
+            console.log(`[Engine Pipeline] ⚡ High-speed auto-evaluated ${updatesBatch.length} prediction outcomes in batch!`);
         }
 
         return { evaluated: updatesBatch.length };
@@ -289,6 +305,7 @@ async function autoEvaluateEnginePredictions() {
         isAutoEvalRunning = false;
     }
 }
+
 
 
 module.exports = {

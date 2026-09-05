@@ -7,9 +7,11 @@
 const {
     getUpcomingMatchesFromDb,
     updateUpcomingMatchStatus,
+    bulkUpdateUpcomingMatchStatus,
     savePlayedMatchesToDb,
     getMatchesFromDb
 } = require('../database/supabase');
+
 
 // ── Team acronym to league mapping for intelligent league inference ──────────
 const TEAM_LEAGUES = {
@@ -155,46 +157,64 @@ function computeOutcomes(scoreStr, odds = {}) {
 /**
  * Associates active upcoming matches with newly verified results.
  * Populates the `match_played` table and marks upcoming matches as PLAYED.
+ * High-speed O(1) Hash-Map indexing for zero latency and minimal RAM overhead.
  */
 async function associateMatches(finishedResults = null) {
     try {
         console.log('[Lifecycle Engine] 🔄 Running match association cycle...');
 
-        // 1. Fetch upcoming & in-play matches that haven't been resolved into match_played yet
-        const upcomingList = await getUpcomingMatchesFromDb({ status: 'ALL_UNRESOLVED', limit: 300 });
+        // 1. Fetch upcoming & in-play matches that haven't been resolved into match_played yet (up to 1000)
+        const upcomingList = await getUpcomingMatchesFromDb({ status: 'ALL_UNRESOLVED', limit: 1000 });
         if (!upcomingList || upcomingList.length === 0) {
             console.log('[Lifecycle Engine] ℹ️ No pending upcoming/in-play matches to associate.');
             return { matched: 0 };
         }
 
-        // 2. Fetch recent finished results
-        const results = finishedResults || await getMatchesFromDb(300);
+        // 2. Fetch recent finished results (up to 1000)
+        const results = finishedResults || await getMatchesFromDb(1000);
         if (!results || results.length === 0) {
             console.log('[Lifecycle Engine] ℹ️ No finished results available to match against.');
             return { matched: 0 };
         }
 
+        // 3. Build fast O(1) results map
+        const resultMap = new Map();
+        for (const res of results) {
+            const resHome = (res.homeTeam || res.home_team || res.home || '').trim();
+            const resAway = (res.awayTeam || res.away_team || res.away || '').trim();
+            const s = (res.score || '').replace('-', ':').trim();
+            if (!resHome || !resAway || !/^\d+:\d+$/.test(s)) continue;
+
+            const resLeague = normalizeLeague(res.league, resHome, resAway);
+            const normH = normalizeTeam(resHome);
+            const normA = normalizeTeam(resAway);
+
+            const key1 = `${resLeague}_${normH}_vs_${normA}`;
+            const key2 = `ANY_${normH}_vs_${normA}`;
+            const dateKey = `${res.date || res.match_date || ''}_${key1}`;
+
+            if (!resultMap.has(dateKey)) resultMap.set(dateKey, res);
+            if (!resultMap.has(key1)) resultMap.set(key1, res);
+            if (!resultMap.has(key2)) resultMap.set(key2, res);
+        }
+
         const playedBatch = [];
-        let matchedCount = 0;
+        const upcomingIdsToMarkPlayed = [];
 
         for (const upcoming of upcomingList) {
-            const upgLeague = normalizeLeague(upcoming.league, upcoming.home_team, upcoming.away_team);
+            const h = (upcoming.home_team || '').trim();
+            const a = (upcoming.away_team || '').trim();
+            if (!h || !a) continue;
 
-            // Find matching finished result
-            const matchResult = results.find(res => {
-                const resHome = res.homeTeam || res.home_team;
-                const resAway = res.awayTeam || res.away_team;
-                const resLeague = normalizeLeague(res.league, resHome, resAway);
+            const upgLeague = normalizeLeague(upcoming.league, h, a);
+            const normH = normalizeTeam(h);
+            const normA = normalizeTeam(a);
 
-                if (upgLeague !== 'vFootball' && resLeague !== 'vFootball' && upgLeague !== resLeague) {
-                    return false;
-                }
+            const dateKey = `${upcoming.match_date || ''}_${upgLeague}_${normH}_vs_${normA}`;
+            const leagueKey = `${upgLeague}_${normH}_vs_${normA}`;
+            const anyKey = `ANY_${normH}_vs_${normA}`;
 
-                const homeMatches = teamsMatch(upcoming.home_team, resHome);
-                const awayMatches = teamsMatch(upcoming.away_team, resAway);
-
-                return homeMatches && awayMatches;
-            });
+            const matchResult = resultMap.get(dateKey) || resultMap.get(leagueKey) || resultMap.get(anyKey);
 
             if (matchResult) {
                 const score = (matchResult.score || '0:0').replace('-', ':');
@@ -232,25 +252,25 @@ async function associateMatches(finishedResults = null) {
                     associated_at: new Date().toISOString()
                 });
 
-                // Update upcoming match status to PLAYED
-                await updateUpcomingMatchStatus(upcoming.id, 'PLAYED');
-                matchedCount++;
+                upcomingIdsToMarkPlayed.push(upcoming.id);
             }
         }
 
         if (playedBatch.length > 0) {
             await savePlayedMatchesToDb(playedBatch);
-            console.log(`[Lifecycle Engine] ✅ Successfully associated ${playedBatch.length} matches into match_played!`);
+            await bulkUpdateUpcomingMatchStatus(upcomingIdsToMarkPlayed, 'PLAYED');
+            console.log(`[Lifecycle Engine] ⚡ Successfully associated ${playedBatch.length} matches into match_played in bulk batch!`);
         } else {
             console.log('[Lifecycle Engine] ⏳ No new upcoming matches matched with finished results yet.');
         }
 
-        return { matched: matchedCount };
+        return { matched: playedBatch.length };
     } catch (err) {
         console.error('[Lifecycle Engine] ❌ Error in match association:', err.message);
         return { matched: 0, error: err.message };
     }
 }
+
 
 module.exports = {
     associateMatches,
