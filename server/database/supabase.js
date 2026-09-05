@@ -87,25 +87,23 @@ const mapMatchFromDb = (row) => ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 1. Get matches — Supabase ONLY, no local fallback for results
-async function getMatchesFromDb(limit = 300) {
+async function getMatchesFromDb(limit = 200) {
     if (!supabaseClient) {
         throw new Error('[SUPABASE] Supabase client is not initialized. Check SUPABASE_URL and SUPABASE_KEY in .env.');
     }
-    console.log('[SUPABASE] [DEBUG] Querying vfootball_results table from Supabase...');
     let q = supabaseClient
         .from('vfootball_results')
-        .select('*')
+        .select('id, time, date, game_id, home_team, away_team, score, league, source_tag, uploaded_at')
         .order('uploaded_at', { ascending: false });
     if (limit && typeof limit === 'number') {
         q = q.limit(limit);
     }
-    const { data, error } = await withTimeout(q, 3500);
+    const { data, error } = await withTimeout(q, 4500);
 
     if (error) {
         console.error('[SUPABASE] [DEBUG] ❌ Failed to fetch matches from Supabase:', error.message);
         throw error;
     }
-    console.log(`[SUPABASE] [DEBUG] ✅ Fetched ${data ? data.length : 0} matches from Supabase.`);
     return (data || []).map(mapMatchFromDb);
 }
 
@@ -1012,34 +1010,22 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
 }
 
 // ── HEAD-TO-HEAD (H2H) HISTORICAL CLASH QUERY ─────────────────────────────────
-async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } = {}) {
+const h2hMemoryCache = new Map();
 
+async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } = {}) {
     const h = (homeTeam || '').trim();
     const a = (awayTeam || '').trim();
     if (!h || !a) return [];
 
-    let results = [];
-
-    if (supabaseClient) {
-        try {
-            let q = supabaseClient
-                .from('vfootball_results')
-                .select('*')
-                .or(`and(home_team.eq.${h},away_team.eq.${a}),and(home_team.eq.${a},away_team.eq.${h})`)
-                .order('uploaded_at', { ascending: false })
-                .limit(limit);
-
-            const { data, error } = await withTimeout(q, 3500);
-            if (!error && data && data.length > 0) {
-                results = data.map(mapMatchFromDb);
-            }
-        } catch (err) {
-            console.warn('[SUPABASE] H2H query warning:', err.message);
-        }
-
+    const cacheKey = `${h}_vs_${a}_${league || 'ALL'}_${limit}`;
+    const cached = h2hMemoryCache.get(cacheKey);
+    if (cached && Date.now() < cached.exp) {
+        return cached.data;
     }
 
-    // Also merge matches from match_played collection
+    let results = [];
+
+    // 1. Check local match_played first for immediate zero-latency hits
     try {
         const localPlayed = getFromLocalCollection('match_played') || [];
         const localH2H = localPlayed.filter(m =>
@@ -1047,20 +1033,46 @@ async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } =
             (m.home_team === a && m.away_team === h)
         );
         for (const lp of localH2H) {
-            if (!results.some(r => r.homeTeam === lp.home_team && r.awayTeam === lp.away_team && r.date === lp.match_date && r.time === lp.match_time)) {
-                results.push({
-                    id: lp.id,
-                    time: lp.match_time,
-                    date: lp.match_date,
-                    homeTeam: lp.home_team,
-                    awayTeam: lp.away_team,
-                    score: lp.score,
-                    htScore: lp.ht_score,
-                    league: lp.league
-                });
-            }
+            results.push({
+                id: lp.id,
+                time: lp.match_time,
+                date: lp.match_date,
+                homeTeam: lp.home_team,
+                awayTeam: lp.away_team,
+                score: lp.score,
+                htScore: lp.ht_score,
+                league: lp.league
+            });
         }
     } catch (_) {}
+
+    // 2. Query Supabase vfootball_results table with lean columns and safe timeout
+    if (supabaseClient) {
+        try {
+            let q = supabaseClient
+                .from('vfootball_results')
+                .select('id, time, date, game_id, home_team, away_team, score, league, uploaded_at')
+                .or(`and(home_team.eq.${h},away_team.eq.${a}),and(home_team.eq.${a},away_team.eq.${h})`)
+                .order('uploaded_at', { ascending: false })
+                .limit(limit);
+
+            const { data, error } = await withTimeout(q, 4500);
+            if (!error && data && data.length > 0) {
+                const dbMapped = data.map(mapMatchFromDb);
+                for (const item of dbMapped) {
+                    if (!results.some(r => r.homeTeam === item.homeTeam && r.awayTeam === item.awayTeam && r.date === item.date && r.time === item.time)) {
+                        results.push(item);
+                    }
+                }
+            }
+        } catch (err) {
+            // Graceful non-blocking fallback to local collection results
+        }
+    }
+
+    // Cache in memory for 3 minutes (180,000ms) to eliminate redundant queries over 520k table
+    h2hMemoryCache.set(cacheKey, { data: results, exp: Date.now() + 180000 });
+    h2hMemoryCache.set(`${a}_vs_${h}_${league || 'ALL'}_${limit}`, { data: results, exp: Date.now() + 180000 });
 
     return results;
 }

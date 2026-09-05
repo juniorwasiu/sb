@@ -188,7 +188,7 @@ async function autoRunEnginePredictions() {
         }
 
         // 3. Pre-fetch recent league matches for league-context-aware scoreline analysis
-        const playedResults = await getMatchesFromDb(500).catch(() => []);
+        const playedResults = await getMatchesFromDb(200).catch(() => []);
         const leagueMatchesMap = new Map();
         for (const pr of (playedResults || [])) {
             const l = normalizeLeague(pr.league, pr.home_team, pr.away_team);
@@ -197,7 +197,7 @@ async function autoRunEnginePredictions() {
         }
 
         const newPredictions = [];
-        const chunkSize = 5;
+        const chunkSize = 3;
 
         for (let i = 0; i < candidateMatches.length; i += chunkSize) {
             const chunk = candidateMatches.slice(i, i + chunkSize);
@@ -279,16 +279,16 @@ async function autoEvaluateEnginePredictions() {
     }
     isAutoEvalRunning = true;
     try {
-        // 1. Fetch pending predictions (up to 1000)
-        const pendingPreds = await getEnginePredictionsFromDb({ status: 'PENDING', limit: 1000 });
+        // 1. Fetch pending predictions (up to 500)
+        const pendingPreds = await getEnginePredictionsFromDb({ status: 'PENDING', limit: 500 });
         if (!pendingPreds || pendingPreds.length === 0) {
             return { evaluated: 0 };
         }
 
-        // 2. Fetch played and recent finished results (up to 1000 in parallel)
+        // 2. Fetch played and recent finished results in parallel
         const [playedResults, rawResults] = await Promise.all([
-            getPlayedMatchesFromDb({ limit: 1000 }),
-            getMatchesFromDb(1000)
+            getPlayedMatchesFromDb({ limit: 300 }).catch(() => []),
+            getMatchesFromDb(200).catch(() => [])
         ]);
 
         // 3. Build fast O(1) Hash Map for finished match results
