@@ -6,7 +6,7 @@
 //    Supabase is REQUIRED — the server throws clearly if credentials are missing.
 // ─────────────────────────────────────────────────────────────────────────────
 const { createClient } = require('@supabase/supabase-js');
-const { toDbLeague } = require('../constants');
+const { toDbLeague, detectLeague, TEAM_LEAGUES } = require('../constants');
 require('dotenv').config();
 
 // ── Supabase client (REQUIRED) ───────────────────────────────────────────────
@@ -606,48 +606,19 @@ function computeMatchStatus(matchTime, declaredStatus) {
 
 
 
-// ── Team acronym to league mapping for intelligent league inference ──────────
-const TEAM_LEAGUES = {
-    // England
-    ARS: 'England - Virtual', CHE: 'England - Virtual', LIV: 'England - Virtual', MCI: 'England - Virtual', MUN: 'England - Virtual', TOT: 'England - Virtual',
-    NEW: 'England - Virtual', AST: 'England - Virtual', BHA: 'England - Virtual', BRE: 'England - Virtual', CRY: 'England - Virtual', EVE: 'England - Virtual',
-    FUL: 'England - Virtual', NFO: 'England - Virtual', WOL: 'England - Virtual', BOU: 'England - Virtual', WHU: 'England - Virtual', IPS: 'England - Virtual',
-    LEI: 'England - Virtual', SOU: 'England - Virtual', COV: 'England - Virtual', HUL: 'England - Virtual', LEE: 'England - Virtual', SUN: 'England - Virtual',
-    // Spain
-    RMA: 'Spain - Virtual', BAR: 'Spain - Virtual', ATM: 'Spain - Virtual', SEV: 'Spain - Virtual', VIL: 'Spain - Virtual', RSO: 'Spain - Virtual',
-    BET: 'Spain - Virtual', ATH: 'Spain - Virtual', VAL: 'Spain - Virtual', CEL: 'Spain - Virtual', GIR: 'Spain - Virtual', OSA: 'Spain - Virtual',
-    MAL: 'Spain - Virtual', GET: 'Spain - Virtual', ALV: 'Spain - Virtual', RAY: 'Spain - Virtual', ESP: 'Spain - Virtual', VLD: 'Spain - Virtual',
-    LEG: 'Spain - Virtual', LPA: 'Spain - Virtual', VCF: 'Spain - Virtual', BIL: 'Spain - Virtual', RBB: 'Spain - Virtual', ELC: 'Spain - Virtual',
-    // Italy
-    INT: 'Italy - Virtual', ACM: 'Italy - Virtual', JUV: 'Italy - Virtual', NAP: 'Italy - Virtual', ROM: 'Italy - Virtual', LAZ: 'Italy - Virtual',
-    ATA: 'Italy - Virtual', FIO: 'Italy - Virtual', TOR: 'Italy - Virtual', BOL: 'Italy - Virtual', BFC: 'Italy - Virtual', MON: 'Italy - Virtual',
-    GEN: 'Italy - Virtual', LEC: 'Italy - Virtual', UDI: 'Italy - Virtual', CAG: 'Italy - Virtual', VER: 'Italy - Virtual', EMP: 'Italy - Virtual',
-    PAR: 'Italy - Virtual', COM: 'Italy - Virtual', VEN: 'Italy - Virtual', FRO: 'Italy - Virtual', SAS: 'Italy - Virtual',
-    // Germany
-    BAY: 'Germany - Virtual', BVB: 'Germany - Virtual', RBL: 'Germany - Virtual', LEV: 'Germany - Virtual', STU: 'Germany - Virtual', FRA: 'Germany - Virtual',
-    WOB: 'Germany - Virtual', HOF: 'Germany - Virtual', BMG: 'Germany - Virtual', AUG: 'Germany - Virtual', BRE: 'Germany - Virtual', MAI: 'Germany - Virtual',
-    BOC: 'Germany - Virtual', HEI: 'Germany - Virtual', BER: 'Germany - Virtual', STP: 'Germany - Virtual', KIE: 'Germany - Virtual', BMU: 'Germany - Virtual',
-    SVW: 'Germany - Virtual', TSG: 'Germany - Virtual', FCA: 'Germany - Virtual', PAD: 'Germany - Virtual', KOE: 'Germany - Virtual', SCH: 'Germany - Virtual',
-    // France
-    PSG: 'France - Virtual', MAR: 'France - Virtual', MON: 'France - Virtual', LYO: 'France - Virtual', LIL: 'France - Virtual', REN: 'France - Virtual',
-    NIC: 'France - Virtual', LEN: 'France - Virtual', STR: 'France - Virtual', TOU: 'France - Virtual', REI: 'France - Virtual', NAN: 'France - Virtual'
-};
-
 // ── UPCOMING & IN-PLAY MATCHES & ODDS ─────────────────────────────────────────
 async function saveUpcomingMatchesToDb(matches = []) {
     if (!matches || matches.length === 0) return { added: 0 };
     
     const rows = matches.map(m => {
         const dateSafe   = (m.match_date || new Date().toISOString().slice(0, 10)).replace(/\//g, '-');
-        const h = (m.home_team || m.home || '').toUpperCase().trim();
-        const a = (m.away_team || m.away || '').toUpperCase().trim();
-        const cleanLeague = (m.league && m.league !== 'vFootball Live Odds' && m.league !== 'vFootball')
-            ? m.league
-            : (TEAM_LEAGUES[h] || TEAM_LEAGUES[a] || 'England - Virtual');
+        const homeName   = m.home_team || m.home || '';
+        const awayName   = m.away_team || m.away || '';
+        const cleanLeague = detectLeague(m.league, homeName, awayName);
 
         const leagueSafe = cleanLeague.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const homeSafe   = (m.home_team || m.home || '').replace(/\s+/g, '');
-        const awaySafe   = (m.away_team || m.away || '').replace(/\s+/g, '');
+        const homeSafe   = homeName.replace(/\s+/g, '');
+        const awaySafe   = awayName.replace(/\s+/g, '');
         const timeSafe   = (m.match_time || m.time || '00:00').replace(':', '');
         const id = m.id || `${dateSafe}_${leagueSafe}_${homeSafe}_vs_${awaySafe}_${timeSafe}`;
         const matchTime = m.match_time || m.time || '--:--';
@@ -659,8 +630,8 @@ async function saveUpcomingMatchesToDb(matches = []) {
             league:          cleanLeague,
             match_date:      m.match_date || new Date().toISOString().slice(0, 10),
             match_time:      matchTime,
-            home_team:       m.home_team || m.home || '',
-            away_team:       m.away_team || m.away || '',
+            home_team:       homeName,
+            away_team:       awayName,
             odds:            typeof m.odds === 'object' && m.odds !== null ? m.odds : {},
             raw_odds_string: m.raw_odds_string || m.score || '',
             live_score:      m.live_score || (m.score && /^\d+:\d+$/.test(m.score.trim()) ? m.score.trim() : '0:0'),
@@ -728,23 +699,9 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 5
         items = getFromLocalCollection('upcoming_matches') || [];
     }
 
-    // Load recent played matches to attach real scores if available
-    const playedScoresMap = new Map();
-    try {
-        const playedList = getFromLocalCollection('match_played') || [];
-        playedList.forEach(p => {
-            const key = `${p.home_team}_${p.away_team}`;
-            playedScoresMap.set(key, p.score);
-        });
-    } catch (_) {}
-
-    // Clean leagues
+    // Clean leagues with Team-First authoritative detection
     items = items.map(item => {
-        const h = (item.home_team || '').toUpperCase().trim();
-        const a = (item.away_team || '').toUpperCase().trim();
-        const detectedLeague = (item.league && item.league !== 'vFootball Live Odds' && item.league !== 'vFootball')
-            ? item.league
-            : (TEAM_LEAGUES[h] || TEAM_LEAGUES[a] || 'England - Virtual');
+        const detectedLeague = detectLeague(item.league, item.home_team, item.away_team);
         return {
             ...item,
             league: detectedLeague
@@ -769,9 +726,7 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 5
         ? pastRounds[pastRounds.length - 1]
         : distinctTimes[0];
 
-
-
-    // Process status & dynamic real scores
+    // Process status & dynamic live simulation progress (never permanently stuck at 90' FT)
     items = items.map(item => {
         if (item.status === 'PLAYED' || item.status === 'FINISHED') return item;
 
@@ -779,46 +734,48 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 5
         const currentStatus = isLiveRound ? 'IN_PLAY' : 'UPCOMING';
 
         let live_score = '0:0';
-        let match_progress = '0\'';
+        let match_progress = isLiveRound ? 'LIVE 1\'' : 'UPCOMING';
 
         if (isLiveRound) {
-            // Check if verified played score exists
-            const key = `${item.home_team}_${item.away_team}`;
-            if (playedScoresMap.has(key)) {
-                live_score = playedScoresMap.get(key);
-                match_progress = 'FT 90\'';
-            } else {
-                // Dynamic live score simulation based on elapsed match seconds
-                const parts = (item.match_time || '').split(':').map(Number);
-                let diffSec = 45; // default mid-match
-                if (parts.length === 2) {
-                    const matchDate = new Date(now);
-                    matchDate.setHours(parts[0], parts[1], 0, 0);
-                    diffSec = Math.max(1, (now.getTime() - matchDate.getTime()) / 1000);
-                }
-                const simMinute = Math.min(90, Math.floor(diffSec));
-                match_progress = simMinute >= 90 ? 'FT 90\'' : `${simMinute}'`;
-
-                // Calculate realistic score from odds
-                const hOdd = item.odds?.home_win || 2.0;
-                const aOdd = item.odds?.away_win || 3.0;
-                let hGoals = 0;
-                let aGoals = 0;
-                if (simMinute >= 25) {
-                    if (hOdd < 2.3) hGoals = 1;
-                    else if (aOdd < 2.3) aGoals = 1;
-                }
-                if (simMinute >= 55) {
-                    if (hOdd < aOdd) hGoals = (hGoals || 1);
-                    else aGoals = (aGoals || 1);
-                }
-                if (simMinute >= 75) {
-                    if (hOdd < 2.0) hGoals = 2;
-                    else if (aOdd < 2.0) aGoals = 2;
-                    else if (Math.abs(hOdd - aOdd) < 0.5) { hGoals = 1; aGoals = 1; }
-                }
-                live_score = `${hGoals}:${aGoals}`;
+            const parts = (item.match_time || '').split(':').map(Number);
+            let diffSec = 45;
+            if (parts.length === 2) {
+                const matchDate = new Date(now);
+                matchDate.setHours(parts[0], parts[1], 0, 0);
+                diffSec = Math.max(1, (now.getTime() - matchDate.getTime()) / 1000);
             }
+
+            // Virtual match round simulation cycle (150s window)
+            const cycleSec = Math.floor(diffSec) % 150;
+            if (cycleSec <= 45) {
+                const min = Math.max(1, Math.min(45, Math.floor(cycleSec * 1.0 + 1)));
+                match_progress = `${min}'`;
+            } else if (cycleSec > 45 && cycleSec <= 60) {
+                match_progress = "HT 45'";
+            } else {
+                const min = Math.max(46, Math.min(89, Math.floor(45 + (cycleSec - 60) * 0.75)));
+                match_progress = `${min}'`;
+            }
+
+            // Calculate realistic dynamic score from odds
+            const hOdd = item.odds?.home_win || 2.0;
+            const aOdd = item.odds?.away_win || 3.0;
+            let hGoals = 0;
+            let aGoals = 0;
+            if (cycleSec >= 25) {
+                if (hOdd < 2.2) hGoals = 1;
+                else if (aOdd < 2.2) aGoals = 1;
+            }
+            if (cycleSec >= 65) {
+                if (hOdd < aOdd) hGoals = Math.max(hGoals, 1);
+                else aGoals = Math.max(aGoals, 1);
+            }
+            if (cycleSec >= 95) {
+                if (hOdd < 1.95) hGoals = 2;
+                else if (aOdd < 1.95) aGoals = 2;
+                else if (Math.abs(hOdd - aOdd) < 0.4) { hGoals = 1; aGoals = 1; }
+            }
+            live_score = `${hGoals}:${aGoals}`;
         }
 
         return {
@@ -895,26 +852,32 @@ async function bulkUpdateUpcomingMatchStatus(ids = [], status = 'PLAYED') {
 async function savePlayedMatchesToDb(matches = []) {
     if (!matches || matches.length === 0) return { added: 0 };
 
-    const rows = matches.map(m => ({
-        id:               m.id,
-        game_id:          m.game_id || '',
-        league:           m.league,
-        match_date:       m.match_date || m.date || new Date().toISOString().slice(0, 10),
-        match_time:       m.match_time || m.time || '--:--',
-        home_team:        m.home_team,
-        away_team:        m.away_team,
-        score:            m.score,
-        ht_score:         m.ht_score || '',
-        home_score:       Number(m.home_score ?? 0),
-        away_score:       Number(m.away_score ?? 0),
-        winner:           m.winner,
-        winner_name:      m.winner_name || (m.winner === 'HOME_WIN' ? m.home_team : m.winner === 'AWAY_WIN' ? m.away_team : 'Draw'),
-        odds:             typeof m.odds === 'object' && m.odds !== null ? m.odds : {},
-        winning_outcomes: typeof m.winning_outcomes === 'object' && m.winning_outcomes !== null ? m.winning_outcomes : {},
-        status:           m.status || 'FINISHED',
-        associated_at:    m.associated_at || new Date().toISOString(),
-        updated_at:       new Date().toISOString()
-    }));
+    const rows = matches.map(m => {
+        const homeName = m.home_team || '';
+        const awayName = m.away_team || '';
+        const cleanLeague = detectLeague(m.league, homeName, awayName);
+
+        return {
+            id:               m.id,
+            game_id:          m.game_id || '',
+            league:           cleanLeague,
+            match_date:       m.match_date || m.date || new Date().toISOString().slice(0, 10),
+            match_time:       m.match_time || m.time || '--:--',
+            home_team:        homeName,
+            away_team:        awayName,
+            score:            m.score,
+            ht_score:         m.ht_score || '',
+            home_score:       Number(m.home_score ?? 0),
+            away_score:       Number(m.away_score ?? 0),
+            winner:           m.winner,
+            winner_name:      m.winner_name || (m.winner === 'HOME_WIN' ? homeName : m.winner === 'AWAY_WIN' ? awayName : 'Draw'),
+            odds:             typeof m.odds === 'object' && m.odds !== null ? m.odds : {},
+            winning_outcomes: typeof m.winning_outcomes === 'object' && m.winning_outcomes !== null ? m.winning_outcomes : {},
+            status:           m.status || 'FINISHED',
+            associated_at:    m.associated_at || new Date().toISOString(),
+            updated_at:       new Date().toISOString()
+        };
+    });
 
     if (supabaseClient) {
         try {
@@ -947,13 +910,21 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
             q = q.order('associated_at', { ascending: false }).range(offset, offset + limit - 1);
             const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
-                saveToLocalCollection('match_played', data);
-                return data;
+                const cleaned = data.map(r => ({
+                    ...r,
+                    league: detectLeague(r.league, r.home_team, r.away_team)
+                }));
+                saveToLocalCollection('match_played', cleaned);
+                return cleaned;
             }
         } catch (_) {}
     }
 
     let items = getFromLocalCollection('match_played') || [];
+    items = items.map(r => ({
+        ...r,
+        league: detectLeague(r.league, r.home_team, r.away_team)
+    }));
     if (league && league !== 'ALL') items = items.filter(i => i.league === league);
     if (date) items = items.filter(i => i.match_date === date);
     if (items.length > 0) return items.slice(offset, offset + limit);
@@ -973,10 +944,11 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
                     const hScore = parseInt(parts[0], 10) || 0;
                     const aScore = parseInt(parts[1], 10) || 0;
                     const winner = hScore > aScore ? 'HOME_WIN' : aScore > hScore ? 'AWAY_WIN' : 'DRAW';
+                    const detectedLeague = detectLeague(r.league, r.home_team, r.away_team);
                     return {
                         id: `played_${r.id}`,
                         game_id: r.game_id || '',
-                        league: r.league || 'England - Virtual',
+                        league: detectedLeague,
                         match_date: r.date || new Date().toISOString().slice(0, 10),
                         match_time: r.time || '--:--',
                         home_team: r.home_team,

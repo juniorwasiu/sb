@@ -20,98 +20,158 @@ const KNOWN_LEAGUES = {
 };
 
 const TEAM_LEAGUES = {
-  // England
-  ARS: 'England', CHE: 'England', LIV: 'England', MCI: 'England', MUN: 'England', TOT: 'England',
-  NEW: 'England', AST: 'England', BHA: 'England', BRE: 'England', CRY: 'England', EVE: 'England',
-  FUL: 'England', NFO: 'England', WOL: 'England', BOU: 'England', WHU: 'England', IPS: 'England',
-  LEI: 'England', SOU: 'England', COV: 'England', HUL: 'England', LEE: 'England', SUN: 'England',
-  ARSENAL: 'England', CHELSEA: 'England', LIVERPOOL: 'England', 'MANCHESTER UNITED': 'England',
-  'MANCHESTER CITY': 'England', TOTTENHAM: 'England', NEWCASTLE: 'England', EVERTON: 'England',
-  // Spain
-  RMA: 'Spain', BAR: 'Spain', ATM: 'Spain', SEV: 'Spain', VIL: 'Spain', RSO: 'Spain',
-  BET: 'Spain', ATH: 'Spain', VAL: 'Spain', CEL: 'Spain', GIR: 'Spain', OSA: 'Spain',
-  MAL: 'Spain', GET: 'Spain', ALV: 'Spain', RAY: 'Spain', ESP: 'Spain', VLD: 'Spain',
-  LEG: 'Spain', LPA: 'Spain', VCF: 'Spain', 'REAL MADRID': 'Spain', BARCELONA: 'Spain',
-  'ATLETICO MADRID': 'Spain', SEVILLA: 'Spain', VALENCIA: 'Spain', VILLARREAL: 'Spain',
-  // Italy
-  INT: 'Italy', ACM: 'Italy', JUV: 'Italy', NAP: 'Italy', ROM: 'Italy', LAZ: 'Italy',
-  ATA: 'Italy', FIO: 'Italy', TOR: 'Italy', BOL: 'Italy', BFC: 'Italy', MON: 'Italy',
-  GEN: 'Italy', LEC: 'Italy', UDI: 'Italy', CAG: 'Italy', VER: 'Italy', EMP: 'Italy',
-  PAR: 'Italy', COM: 'Italy', VEN: 'Italy', FRO: 'Italy', SAS: 'Italy', MILAN: 'Italy',
-  JUVENTUS: 'Italy', INTER: 'Italy', NAPOLI: 'Italy', ROMA: 'Italy', LAZIO: 'Italy',
-  // Germany
-  BAY: 'Germany', BVB: 'Germany', RBL: 'Germany', LEV: 'Germany', STU: 'Germany', FRA: 'Germany',
-  WOB: 'Germany', HOF: 'Germany', BMG: 'Germany', AUG: 'Germany', BRE: 'Germany', MAI: 'Germany',
-  BOC: 'Germany', HEI: 'Germany', BER: 'Germany', STP: 'Germany', KIE: 'Germany',
-  BAYERN: 'Germany', DORTMUND: 'Germany', LEIPZIG: 'Germany', LEVERKUSEN: 'Germany',
-  FRANKFURT: 'Germany', STUTTGART: 'Germany', WOLFSBURG: 'Germany', HOFFENHEIM: 'Germany',
-  // France
-  PSG: 'France', MAR: 'France', LYN: 'France', MONA: 'France', LIL: 'France', REN: 'France',
-  NIC: 'France', LEN: 'France', STR: 'France', NAN: 'France', REI: 'France', TOU: 'France',
-  BREST: 'France', AUX: 'France', ANG: 'France', STE: 'France', HAV: 'France',
-  PARIS: 'France', MARSEILLE: 'France', LYON: 'France', MONACO: 'France', LILLE: 'France',
-  RENNES: 'France', NICE: 'France', LENS: 'France'
+  // 🏴󠁧󠁢󠁥󠁮󠁧󠁿 England
+  ARS: 'England', ARSENAL: 'England', CHE: 'England', CHELSEA: 'England',
+  LIV: 'England', LIVERPOOL: 'England', MCI: 'England', 'MAN CITY': 'England', 'MANCHESTER CITY': 'England',
+  MUN: 'England', 'MAN UTD': 'England', 'MANCHESTER UNITED': 'England',
+  TOT: 'England', TOTTENHAM: 'England', SPURS: 'England', NEW: 'England', NEWCASTLE: 'England',
+  AST: 'England', AVL: 'England', 'ASTON VILLA': 'England', BHA: 'England', BRIGHTON: 'England',
+  BRE: 'England', BRENTFORD: 'England', CRY: 'England', 'CRYSTAL PALACE': 'England',
+  EVE: 'England', EVERTON: 'England', FUL: 'England', FULHAM: 'England',
+  NFO: 'England', NOT: 'England', 'NOTTINGHAM FOREST': 'England',
+  WOL: 'England', WOLVES: 'England', WOLVERHAMPTON: 'England',
+  BOU: 'England', BOURNEMOUTH: 'England', WHU: 'England', 'WEST HAM': 'England',
+  IPS: 'England', IPSWICH: 'England', LEI: 'England', LEICESTER: 'England',
+  SOU: 'England', SOUTHAMPTON: 'England', COV: 'England', COVENTRY: 'England',
+  HUL: 'England', HULL: 'England', LEE: 'England', LEEDS: 'England',
+  SUN: 'England', SUNDERLAND: 'England', BUR: 'England', BURNLEY: 'England',
+  LUT: 'England', LUTON: 'England', SHU: 'England', 'SHEFFIELD UNITED': 'England',
+
+  // 🇪🇸 Spain
+  RMA: 'Spain', RMD: 'Spain', 'REAL MADRID': 'Spain',
+  BAR: 'Spain', FCB: 'Spain', BARCELONA: 'Spain',
+  ATM: 'Spain', ATL: 'Spain', 'ATLETICO MADRID': 'Spain', 'ATLETICO': 'Spain',
+  SEV: 'Spain', SEVILLA: 'Spain', VIL: 'Spain', VLL: 'Spain', VILLARREAL: 'Spain',
+  RSO: 'Spain', SOC: 'Spain', 'REAL SOCIEDAD': 'Spain', BET: 'Spain', RBB: 'Spain', 'REAL BETIS': 'Spain',
+  ATH: 'Spain', BIL: 'Spain', 'ATHLETIC BILBAO': 'Spain', 'ATHLETIC CLUB': 'Spain',
+  VAL: 'Spain', VCF: 'Spain', VALENCIA: 'Spain', CEL: 'Spain', 'CELTA VIGO': 'Spain',
+  GIR: 'Spain', GIRONA: 'Spain', OSA: 'Spain', OSASUNA: 'Spain',
+  MAL: 'Spain', MLL: 'Spain', MALLORCA: 'Spain', GET: 'Spain', GETAFE: 'Spain',
+  ALV: 'Spain', ALA: 'Spain', ALAVES: 'Spain', RAY: 'Spain', 'RAYO VALLECANO': 'Spain',
+  ESP: 'Spain', ESPANYOL: 'Spain', VLD: 'Spain', VALLADOLID: 'Spain',
+  LEG: 'Spain', LEGANES: 'Spain', LPA: 'Spain', LPV: 'Spain', 'LAS PALMAS': 'Spain',
+  ELC: 'Spain', ELCHE: 'Spain',
+
+  // 🇮🇹 Italy
+  INT: 'Italy', INZ: 'Italy', INTER: 'Italy', 'INTER MILAN': 'Italy',
+  ACM: 'Italy', MIL: 'Italy', MILAN: 'Italy', 'AC MILAN': 'Italy',
+  JUV: 'Italy', JUVENTUS: 'Italy', NAP: 'Italy', NAPOLI: 'Italy',
+  ROM: 'Italy', ROMA: 'Italy', 'AS ROMA': 'Italy', LAZ: 'Italy', LAZIO: 'Italy',
+  ATA: 'Italy', ATALANTA: 'Italy', FIO: 'Italy', FIORENTINA: 'Italy',
+  TOR: 'Italy', TORINO: 'Italy', BOL: 'Italy', BFC: 'Italy', BOLOGNA: 'Italy',
+  MON: 'Italy', MONZA: 'Italy', GEN: 'Italy', GENOA: 'Italy',
+  LEC: 'Italy', LECCE: 'Italy', UDI: 'Italy', UDINESE: 'Italy',
+  CAG: 'Italy', CAGLIARI: 'Italy', VER: 'Italy', HEL: 'Italy', VERONA: 'Italy', 'HELLAS VERONA': 'Italy',
+  EMP: 'Italy', EMPOLI: 'Italy', PAR: 'Italy', PARMA: 'Italy',
+  COM: 'Italy', COMO: 'Italy', VEN: 'Italy', VENEZIA: 'Italy',
+  FRO: 'Italy', FROSINONE: 'Italy', SAS: 'Italy', SASSUOLO: 'Italy',
+
+  // 🇩🇪 Germany
+  BAY: 'Germany', BMU: 'Germany', 'BAYERN MUNICH': 'Germany', BAYERN: 'Germany',
+  BVB: 'Germany', DOR: 'Germany', 'BORUSSIA DORTMUND': 'Germany', DORTMUND: 'Germany',
+  RBL: 'Germany', 'RB LEIPZIG': 'Germany', LEIPZIG: 'Germany',
+  LEV: 'Germany', B04: 'Germany', 'BAYER LEVERKUSEN': 'Germany', LEVERKUSEN: 'Germany',
+  STU: 'Germany', VFB: 'Germany', 'VFB STUTTGART': 'Germany', STUTTGART: 'Germany',
+  FRA: 'Germany', SGE: 'Germany', 'EINTRACHT FRANKFURT': 'Germany', FRANKFURT: 'Germany',
+  WOB: 'Germany', WOLFSBURG: 'Germany', HOF: 'Germany', TSG: 'Germany', 'TSG HOFFENHEIM': 'Germany',
+  BMG: 'Germany', GLA: 'Germany', 'BORUSSIA MONCHENGLADBACH': 'Germany', GLADBACH: 'Germany',
+  AUG: 'Germany', FCA: 'Germany', AUGSBURG: 'Germany', BRE: 'Germany', SVW: 'Germany', 'WERDER BREMEN': 'Germany',
+  MAI: 'Germany', M05: 'Germany', MAINZ: 'Germany', BOC: 'Germany', BOCHUM: 'Germany',
+  HEI: 'Germany', HEIDENHEIM: 'Germany', BER: 'Germany', FCU: 'Germany', 'UNION BERLIN': 'Germany',
+  STP: 'Germany', 'ST PAULI': 'Germany', KIE: 'Germany', 'HOLSTEIN KIEL': 'Germany',
+  KOE: 'Germany', 'FC KOLN': 'Germany', SCH: 'Germany', SCHALKE: 'Germany',
+
+  // 🇫🇷 France
+  PSG: 'France', PARIS: 'France', 'PARIS SAINT-GERMAIN': 'France', 'PARIS SG': 'France',
+  MAR: 'France', OLM: 'France', MARSEILLE: 'France', 'OLYMPIQUE DE MARSEILLE': 'France',
+  LYO: 'France', LYN: 'France', LYON: 'France', 'OLYMPIQUE LYONNAIS': 'France',
+  MON: 'France', MONA: 'France', ASM: 'France', MONACO: 'France', 'AS MONACO': 'France',
+  LIL: 'France', LOS: 'France', LILLE: 'France', REN: 'France', SRF: 'France', RENNES: 'France',
+  NIC: 'France', OGC: 'France', NICE: 'France', LEN: 'France', RCL: 'France', LENS: 'France',
+  STR: 'France', RCS: 'France', STRASBOURG: 'France', TOU: 'France', TFC: 'France', TOULOUSE: 'France',
+  REI: 'France', SDR: 'France', REIMS: 'France', NAN: 'France', FCN: 'France', NANTES: 'France',
+  BREST: 'France', 'STADE BRESTOIS': 'France', AUX: 'France', AUXERRE: 'France',
+  ANG: 'France', ANGERS: 'France', STE: 'France', ASSE: 'France', 'SAINT-ETIENNE': 'France',
+  HAV: 'France', HAC: 'France', 'LE HAVRE': 'France'
+};
+
+const LEAGUE_META_MAP = {
+  England: { name: 'England League', icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: '#00E5FF' },
+  Spain:   { name: 'Spain League',   icon: '🇪🇸', color: '#FF3355' },
+  Italy:   { name: 'Italy League',   icon: '🇮🇹', color: '#00FF88' },
+  Germany: { name: 'Germany League', icon: '🇩🇪', color: '#FFD700' },
+  France:  { name: 'France League',  icon: '🇫🇷', color: '#FF6B35' }
 };
 
 function getLeagueMeta(leagueStr = '', home = '', away = '') {
-  const l = (leagueStr || '').toLowerCase();
-  if (l.includes('england') || l.includes('epl') || l.includes('premier')) {
-    return { name: 'England League', icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: '#00E5FF' };
-  }
-  if (l.includes('spain') || l.includes('laliga') || l.includes('la liga')) {
-    return { name: 'Spain League', icon: '🇪🇸', color: '#FF3355' };
-  }
-  if (l.includes('italy') || l.includes('serie')) {
-    return { name: 'Italy League', icon: '🇮🇹', color: '#00FF88' };
-  }
-  if (l.includes('germany') || l.includes('bundesliga')) {
-    return { name: 'Germany League', icon: '🇩🇪', color: '#FFD700' };
-  }
-  if (l.includes('france') || l.includes('ligue')) {
-    return { name: 'France League', icon: '🇫🇷', color: '#FF6B35' };
+  const h = String(home || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+  const a = String(away || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+
+  // 1. Authoritative Team-First Detection
+  const inferred = TEAM_LEAGUES[h] || TEAM_LEAGUES[a];
+  if (inferred && LEAGUE_META_MAP[inferred]) {
+    return LEAGUE_META_MAP[inferred];
   }
 
-  const h = (home || '').toUpperCase().trim();
-  const a = (away || '').toUpperCase().trim();
-  const inferred = TEAM_LEAGUES[h] || TEAM_LEAGUES[a];
-  if (inferred === 'England') return { name: 'England League', icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: '#00E5FF' };
-  if (inferred === 'Spain')   return { name: 'Spain League',   icon: '🇪🇸', color: '#FF3355' };
-  if (inferred === 'Italy')   return { name: 'Italy League',   icon: '🇮🇹', color: '#00FF88' };
-  if (inferred === 'Germany') return { name: 'Germany League', icon: '🇩🇪', color: '#FFD700' };
-  if (inferred === 'France')  return { name: 'France League',  icon: '🇫🇷', color: '#FF6B35' };
+  // 2. Substring matching in team dictionary
+  for (const [teamKey, lName] of Object.entries(TEAM_LEAGUES)) {
+    if (h.includes(teamKey) || a.includes(teamKey) || teamKey.includes(h) || teamKey.includes(a)) {
+      if (h.length >= 3 || a.length >= 3) {
+        if (LEAGUE_META_MAP[lName]) return LEAGUE_META_MAP[lName];
+      }
+    }
+  }
+
+  // 3. String-based fallback
+  const l = (leagueStr || '').toLowerCase();
+  if (l.includes('england') || l.includes('epl') || l.includes('premier')) return LEAGUE_META_MAP.England;
+  if (l.includes('spain') || l.includes('laliga') || l.includes('la liga')) return LEAGUE_META_MAP.Spain;
+  if (l.includes('italy') || l.includes('serie')) return LEAGUE_META_MAP.Italy;
+  if (l.includes('germany') || l.includes('bundesliga')) return LEAGUE_META_MAP.Germany;
+  if (l.includes('france') || l.includes('ligue')) return LEAGUE_META_MAP.France;
 
   return { name: leagueStr || 'vFootball League', icon: '⚽', color: '#00E5FF' };
 }
 
-function getLiveMatchProgress(matchTime, now = new Date()) {
+function getLiveMatchProgress(matchTime, now = new Date(), isInPlay = true) {
   if (!matchTime || matchTime === '--:--') {
-    return { minuteText: "LIVE", isLive: true };
+    return { minuteText: "LIVE 15'", isLive: true };
   }
   const parts = matchTime.split(':').map(Number);
   if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
-    return { minuteText: "LIVE", isLive: true };
+    return { minuteText: "LIVE 15'", isLive: true };
   }
 
-  const kickoff = new Date(now);
-  kickoff.setHours(parts[0], parts[1], 0, 0);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const nowSeconds = now.getSeconds();
+  const matchMinutes = parts[0] * 60 + parts[1];
 
-  const diffSec = Math.floor((now.getTime() - kickoff.getTime()) / 1000);
+  // Minute difference handling 24-hour wrap
+  let diffMin = (nowMinutes - matchMinutes + 1440) % 1440;
+  if (diffMin > 720) diffMin -= 1440; // Negative if scheduled in future
 
-  if (diffSec < 0) {
-    return { minuteText: `Starts in ${Math.abs(diffSec)}s`, isLive: false };
+  if (diffMin < 0) {
+    const secUntil = Math.abs(diffMin * 60 - nowSeconds);
+    return { minuteText: `Starts in ${secUntil > 60 ? `${Math.ceil(secUntil/60)}m` : `${secUntil}s`}`, isLive: false };
   }
-  if (diffSec <= 45) {
-    const min = Math.max(1, Math.min(45, Math.floor(diffSec * 1.0 + 1)));
+
+  // Virtual match round simulation cycle (150s window)
+  const elapsedSec = (diffMin * 60 + nowSeconds) % 150;
+
+  if (elapsedSec <= 45) {
+    const min = Math.max(1, Math.min(45, Math.floor(elapsedSec * 1.0 + 1)));
     return { minuteText: `${min}'`, isLive: true };
   }
-  if (diffSec > 45 && diffSec <= 55) {
+  if (elapsedSec > 45 && elapsedSec <= 60) {
     return { minuteText: "HT 45'", isLive: true };
   }
-  if (diffSec > 55 && diffSec <= 100) {
-    const min = Math.max(46, Math.min(90, Math.floor(45 + (diffSec - 55) * 1.0)));
+  if (elapsedSec > 60 && elapsedSec <= 135) {
+    const min = Math.max(46, Math.min(89, Math.floor(45 + (elapsedSec - 60) * 0.6)));
     return { minuteText: `${min}'`, isLive: true };
   }
-  return { minuteText: "90' FT", isLive: true };
+
+  // Near end of simulation
+  return { minuteText: "89'", isLive: true };
 }
 
 // ── West Africa Time (WAT = UTC+1) Helper for Last 07:00 AM Restart Session ──

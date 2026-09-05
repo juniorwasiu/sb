@@ -13,57 +13,17 @@ const {
 } = require('../database/supabase');
 
 
-// ── Team acronym to league mapping for intelligent league inference ──────────
-const TEAM_LEAGUES = {
-    // England
-    ARS: 'England', CHE: 'England', LIV: 'England', MCI: 'England', MUN: 'England', TOT: 'England',
-    NEW: 'England', AST: 'England', BHA: 'England', BRE: 'England', CRY: 'England', EVE: 'England',
-    FUL: 'England', NFO: 'England', WOL: 'England', BOU: 'England', WHU: 'England', IPS: 'England',
-    LEI: 'England', SOU: 'England', COV: 'England', HUL: 'England', LEE: 'England', SUN: 'England',
-    // Spain
-    RMA: 'Spain', BAR: 'Spain', ATM: 'Spain', SEV: 'Spain', VIL: 'Spain', RSO: 'Spain',
-    BET: 'Spain', ATH: 'Spain', VAL: 'Spain', CEL: 'Spain', GIR: 'Spain', OSA: 'Spain',
-    MAL: 'Spain', GET: 'Spain', ALV: 'Spain', RAY: 'Spain', ESP: 'Spain', VLD: 'Spain',
-    LEG: 'Spain', LPA: 'Spain', VCF: 'Spain', BIL: 'Spain', RBB: 'Spain', ELC: 'Spain',
-    // Italy
-    INT: 'Italy', ACM: 'Italy', JUV: 'Italy', NAP: 'Italy', ROM: 'Italy', LAZ: 'Italy',
-    ATA: 'Italy', FIO: 'Italy', TOR: 'Italy', BOL: 'Italy', BFC: 'Italy', MON: 'Italy',
-    GEN: 'Italy', LEC: 'Italy', UDI: 'Italy', CAG: 'Italy', VER: 'Italy', EMP: 'Italy',
-    PAR: 'Italy', COM: 'Italy', VEN: 'Italy', FRO: 'Italy', SAS: 'Italy',
-    // Germany
-    BAY: 'Germany', BVB: 'Germany', RBL: 'Germany', LEV: 'Germany', STU: 'Germany', FRA: 'Germany',
-    WOB: 'Germany', HOF: 'Germany', BMG: 'Germany', AUG: 'Germany', BRE: 'Germany', MAI: 'Germany',
-    BOC: 'Germany', HEI: 'Germany', BER: 'Germany', STP: 'Germany', KIE: 'Germany', BMU: 'Germany',
-    SVW: 'Germany', TSG: 'Germany', FCA: 'Germany', PAD: 'Germany', KOE: 'Germany', SCH: 'Germany',
-    // France
-    PSG: 'France', MAR: 'France', MON: 'France', LYO: 'France', LIL: 'France', REN: 'France',
-    NIC: 'France', LEN: 'France', STR: 'France', TOU: 'France', REI: 'France', NAN: 'France'
-};
+const { TEAM_LEAGUES, detectLeague, normalizeTeamKey } = require('../constants');
 
 // ── Normalize team name for fuzzy matching (e.g. "ARS" vs "Arsenal") ──────────
 function normalizeTeam(name = '') {
-    return name
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '')
-        .trim();
+    return normalizeTeamKey(name);
 }
 
-// ── Normalize league (e.g. "England League" vs "England - Virtual") ───────────
+// ── Normalize league (e.g. "England", "Spain", "Italy", "Germany", "France") ───
 function normalizeLeague(league = '', home = '', away = '') {
-    const l = (league || '').toLowerCase();
-    if (l.includes('england')) return 'England';
-    if (l.includes('spain'))   return 'Spain';
-    if (l.includes('italy'))   return 'Italy';
-    if (l.includes('germany')) return 'Germany';
-    if (l.includes('france'))  return 'France';
-
-    const h = (home || '').toUpperCase().trim();
-    const a = (away || '').toUpperCase().trim();
-    if (TEAM_LEAGUES[h] || TEAM_LEAGUES[a]) {
-        return TEAM_LEAGUES[h] || TEAM_LEAGUES[a];
-    }
-
-    return 'vFootball';
+    const detected = detectLeague(league, home, away);
+    return detected.replace(/\s*-\s*Virtual/i, '').trim();
 }
 
 function getTeamTokens(name = '') {

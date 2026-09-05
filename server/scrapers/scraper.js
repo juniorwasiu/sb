@@ -1,4 +1,5 @@
 const puppeteer = require('puppeteer-core');
+const { detectLeague } = require('../constants');
 
 // Module-level reference to the live scraper page (set once Chrome boots)
 // Used by screenshot_scraper.js to capture without opening a second browser
@@ -380,6 +381,11 @@ async function startContinuousScraper(updateCallback) {
                     }
                 }
 
+                // Apply authoritative Team-First league detection to all extracted fixtures
+                for (const m of allExtractedMatches) {
+                    m.league = detectLeague(m.league, m.home, m.away);
+                }
+
                 // De-duplicate matches
                 const uniqueMatchesMap = new Map();
                 for (const m of allExtractedMatches) {
@@ -389,8 +395,22 @@ async function startContinuousScraper(updateCallback) {
                 const allMatches = Array.from(uniqueMatchesMap.values());
                 console.log(`[DEBUG] [Live Scraper] ✅ All Leagues Extracted: ${allMatches.length} total fixtures`);
 
-                if (leagueResults.length > 0) {
-                    updateCallback(leagueResults);
+                // Regroup into clean canonical league arrays for live scoreboard broadcast
+                const canonicalLeagueMap = new Map();
+                for (const m of allMatches) {
+                    if (!canonicalLeagueMap.has(m.league)) {
+                        canonicalLeagueMap.set(m.league, []);
+                    }
+                    canonicalLeagueMap.get(m.league).push(m);
+                }
+
+                const canonicalLeagueResults = Array.from(canonicalLeagueMap.entries()).map(([league, matches]) => ({
+                    league,
+                    matches
+                }));
+
+                if (canonicalLeagueResults.length > 0) {
+                    updateCallback(canonicalLeagueResults);
                 }
 
                 if (allMatches.length > 0) {

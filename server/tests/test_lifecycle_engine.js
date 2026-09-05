@@ -1,10 +1,11 @@
 /**
  * test_lifecycle_engine.js
  * Verification unit test for match lifecycle engine, outcome calculation,
- * and exact DOM odds preservation.
+ * league detection, and exact DOM odds preservation.
  */
 
 const { computeOutcomes, teamsMatch, normalizeLeague } = require('../analytics/match_lifecycle_engine');
+const { detectLeague } = require('../constants');
 
 console.log('=== RUNNING LIFECYCLE ENGINE TESTS ===\n');
 
@@ -32,5 +33,18 @@ const resDraw = computeOutcomes('0:0', odds);
 console.log(`Test 3.1: Winner DRAW (X) -> ${resDraw.winner === 'DRAW' && resDraw.winner1x2 === 'X' ? '✅ PASS' : '❌ FAIL'}`);
 console.log(`Test 3.2: Winning odd is 3.40 -> ${resDraw.winningOdd === 3.40 ? '✅ PASS' : '❌ FAIL'}`);
 console.log(`Test 3.3: NG hit -> ${resDraw.ggNg === 'NG' ? '✅ PASS' : '❌ FAIL'}`);
+
+// Test 4: Team-First Authoritative League Detection (Even with wrong raw league input)
+const lSpain = detectLeague('England - Virtual', 'RMA', 'BAR');
+const lGermany = detectLeague('England League', 'BAY', 'BVB');
+const lItaly = detectLeague('vFootball Live Odds', 'INT', 'JUV');
+const lFrance = detectLeague('Unknown', 'PSG', 'MAR');
+const lEngland = detectLeague('Spain - Virtual', 'ARS', 'CHE');
+
+console.log(`Test 4.1: RMA vs BAR with wrong league -> Detected: ${lSpain} -> ${lSpain === 'Spain - Virtual' ? '✅ PASS' : '❌ FAIL'}`);
+console.log(`Test 4.2: BAY vs BVB with wrong league -> Detected: ${lGermany} -> ${lGermany === 'Germany - Virtual' ? '✅ PASS' : '❌ FAIL'}`);
+console.log(`Test 4.3: INT vs JUV with wrong league -> Detected: ${lItaly} -> ${lItaly === 'Italy - Virtual' ? '✅ PASS' : '❌ FAIL'}`);
+console.log(`Test 4.4: PSG vs MAR with wrong league -> Detected: ${lFrance} -> ${lFrance === 'France - Virtual' ? '✅ PASS' : '❌ FAIL'}`);
+console.log(`Test 4.5: ARS vs CHE with wrong league -> Detected: ${lEngland} -> ${lEngland === 'England - Virtual' ? '✅ PASS' : '❌ FAIL'}`);
 
 console.log('\n🎉 ALL LIFECYCLE TESTS COMPLETED SUCCESSFULLY!');
