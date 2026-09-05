@@ -48,6 +48,14 @@ const {
     PREDICTION_PROVIDERS,
 } = require('./ai/prediction_ai');
 
+// ── Global Process Crash Protection ──────────────────────────────────────────
+process.on('unhandledRejection', (reason) => {
+    console.error('[Process Safety] ⚠️ Unhandled Rejection:', reason?.stack || reason?.message || reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[Process Safety] ⚠️ Uncaught Exception:', err?.stack || err?.message || err);
+});
+
 const EventEmitter = require('events');
 const aiStatusEmitter = new EventEmitter();
 
@@ -5385,13 +5393,24 @@ if (process.env.ENABLE_RESULTS_AUTO_SCRAPER === 'true') {
     console.log('[DEBUG] [Server] ⏸️ ENABLE_RESULTS_AUTO_SCRAPER is not set to "true". Background results scraper skipped on boot to conserve memory.');
 }
 
-// Automatically run pending predictions outcome resolution check every 60 seconds in the background
-setInterval(() => {
-    console.log('[Auto Resolve] ⏰ 60-second interval triggered: Running prediction outcomes auto-resolution...');
-    autoResolvePendingPredictions().catch(err => {
-        console.error('[Auto Resolve] ❌ Error in auto-resolve task:', err.message);
-    });
-}, 60 * 1000);
+// ── 24/7 Keep-Alive & Sequential Autonomous Pipeline ─────────────────────────
+const {
+    startAutonomousPipeline,
+    stopAutonomousPipeline,
+    enqueueTask,
+    getPipelineStatus
+} = require('./analytics/task_pipeline_manager');
+const {
+    startKeepAliveService,
+    getKeepAliveStatus,
+    pingSelfNow
+} = require('./analytics/keep_alive_service');
+
+// Start autonomous sequential pipeline (Association -> Predictions -> Evaluation -> Auto-Resolve -> Memory Cleanup)
+startAutonomousPipeline(autoResolvePendingPredictions);
+
+// Start 24/7 Keep-Alive self-pinger to prevent Render free-tier sleep
+startKeepAliveService();
 
 // Expose dedicated Positional Trace Dashboard APIs
 app.get('/api/positional-trace/patterns', (req, res) => {
@@ -5429,41 +5448,6 @@ const {
     autoEvaluateEnginePredictions
 } = require('./analytics/engine_prediction_pipeline');
 
-// Autonomous lifecycle association: runs periodically in background
-setTimeout(() => {
-    associateMatches().catch(err => {
-        console.warn('[Match Lifecycle] Boot auto-association note:', err.message);
-    });
-}, 10000);
-
-setInterval(() => {
-    associateMatches().catch(err => {
-        console.warn('[Match Lifecycle] Autonomous association note:', err.message);
-    });
-}, 30 * 1000);
-
-// Autonomous Multi-Engine Prediction & Evaluation Pipeline:
-// Runs auto-prediction generation and auto-evaluation loops continuously in background
-setTimeout(() => {
-    autoRunEnginePredictions().catch(err => {
-        console.warn('[Engine Pipeline] Boot auto-prediction note:', err.message);
-    });
-    autoEvaluateEnginePredictions().catch(err => {
-        console.warn('[Engine Pipeline] Boot auto-evaluation note:', err.message);
-    });
-}, 15000);
-
-setInterval(() => {
-    autoRunEnginePredictions().catch(err => {
-        console.warn('[Engine Pipeline] Autonomous prediction note:', err.message);
-    });
-}, 30 * 1000); // Every 30 seconds
-
-setInterval(() => {
-    autoEvaluateEnginePredictions().catch(err => {
-        console.warn('[Engine Pipeline] Autonomous evaluation note:', err.message);
-    });
-}, 40 * 1000); // Every 40 seconds
 
 
 
@@ -5677,8 +5661,8 @@ app.get('/api/engine-predictions', async (req, res) => {
 
 app.post('/api/engine-predictions/auto-run', async (req, res) => {
     try {
-        logMemoryStep('POST /api/engine-predictions/auto-run [START]');
-        const result = await autoRunEnginePredictions();
+        logMemoryStep('POST /api/engine-predictions/auto-run [QUEUE]');
+        const result = await enqueueTask('API Trigger: Auto-Run Engine Predictions', () => autoRunEnginePredictions());
         const telemetryEnd = logMemoryStep('POST /api/engine-predictions/auto-run [DONE]', `Generated: ${result?.generated ?? 0}`);
         res.json({ success: true, result, telemetry: telemetryEnd });
     } catch (err) {
@@ -5689,8 +5673,8 @@ app.post('/api/engine-predictions/auto-run', async (req, res) => {
 
 app.post('/api/engine-predictions/evaluate', async (req, res) => {
     try {
-        logMemoryStep('POST /api/engine-predictions/evaluate [START]');
-        const result = await autoEvaluateEnginePredictions();
+        logMemoryStep('POST /api/engine-predictions/evaluate [QUEUE]');
+        const result = await enqueueTask('API Trigger: Evaluate Engine Predictions', () => autoEvaluateEnginePredictions());
         const telemetryEnd = logMemoryStep('POST /api/engine-predictions/evaluate [DONE]', `Evaluated: ${result?.evaluated ?? 0}`);
         res.json({ success: true, result, telemetry: telemetryEnd });
     } catch (err) {
@@ -5699,13 +5683,16 @@ app.post('/api/engine-predictions/evaluate', async (req, res) => {
     }
 });
 
-// 4. Manual trigger for association engine
+// 4. Manual trigger for association engine (queued safely)
 app.post('/api/matches/associate', async (req, res) => {
     try {
-        logMemoryStep('POST /api/matches/associate [START]');
-        const result = await associateMatches();
-        // Also trigger prediction auto-evaluation immediately following association
-        autoEvaluateEnginePredictions().catch(() => {});
+        logMemoryStep('POST /api/matches/associate [QUEUE]');
+        const result = await enqueueTask('API Trigger: Match Association & Evaluation', async () => {
+            const assocRes = await associateMatches();
+            // Automatically queue evaluation right after association completes
+            await autoEvaluateEnginePredictions().catch(() => {});
+            return assocRes;
+        });
         const telemetryEnd = logMemoryStep('POST /api/matches/associate [DONE]', `Associated: ${result?.associated ?? 0}`);
         res.json({ success: true, result, telemetry: telemetryEnd });
     } catch (err) {
@@ -5713,6 +5700,35 @@ app.post('/api/matches/associate', async (req, res) => {
         res.status(500).json({ success: false, error: err.message, telemetry: getServerTelemetry() });
     }
 });
+
+// ── Keep-Alive & Task Pipeline Status Endpoints ──────────────────────────────
+app.get('/api/keep-alive', (req, res) => {
+    res.json({
+        success: true,
+        message: '24/7 Keep-Alive Service is operational',
+        status: getKeepAliveStatus(),
+        telemetry: getServerTelemetry()
+    });
+});
+
+app.post('/api/keep-alive/ping', async (req, res) => {
+    try {
+        const result = await pingSelfNow();
+        res.json({ success: true, result, status: getKeepAliveStatus() });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/pipeline/status', (req, res) => {
+    res.json({
+        success: true,
+        pipeline: getPipelineStatus(),
+        keepAlive: getKeepAliveStatus(),
+        telemetry: getServerTelemetry()
+    });
+});
+
 
 
 
