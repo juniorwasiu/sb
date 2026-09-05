@@ -225,7 +225,7 @@ export default function H2HAnalysisModal({ match, onClose }) {
                 <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
                   H2H Historical Deep-Dive & Multi-Engine Predictive Analysis Studio · {h2hMatches.length} Meetings Analyzed
                 </p>
-                {h2hMatches.length < 5 && (
+                {h2hMatches.length < 5 ? (
                   <span style={{
                     background: 'rgba(255, 153, 0, 0.15)',
                     border: '1px solid rgba(255, 153, 0, 0.45)',
@@ -239,6 +239,21 @@ export default function H2HAnalysisModal({ match, onClose }) {
                     gap: '4px'
                   }}>
                     ⚠️ Low H2H Sample ({h2hMatches.length} &lt; 5)
+                  </span>
+                ) : (
+                  <span style={{
+                    background: 'rgba(0, 255, 157, 0.12)',
+                    border: '1px solid rgba(0, 255, 157, 0.35)',
+                    color: '#00FF9D',
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                    fontSize: '0.72rem',
+                    fontWeight: 800,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    ✅ Robust Sample ({h2hMatches.length} meetings)
                   </span>
                 )}
               </div>

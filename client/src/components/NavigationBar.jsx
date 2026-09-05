@@ -31,13 +31,11 @@ export default function NavigationBar() {
   }, []);
 
   const navItems = [
-    { path: '/matches', label: 'Live & Played Matches', icon: '⚽' },
-    { path: '/', label: 'Pattern Intel', icon: '🔮' },
-    { path: '/predictions', label: 'Live Predictor & History', icon: '⚡' },
+    { path: '/', label: 'In-Play, Upcoming & Played', icon: '⚽' },
+    { path: '/predictions', label: 'Predictions & Intel', icon: '⚡' },
     { path: '/local-engine', label: 'Positional Trace', icon: '📊' },
     { path: '/results', label: 'Match Results', icon: '📋' }
   ];
-
 
   // Auto-close menu when route changes
   useEffect(() => {
@@ -80,7 +78,7 @@ export default function NavigationBar() {
             alignItems: 'center', 
             gap: '8px' 
           }}>
-            <span>🔮</span> Mango Intel
+            <span>⚽</span> Mango Live Sports
           </span>
           <button 
             onClick={() => setMenuOpen(!menuOpen)}
@@ -113,7 +111,9 @@ export default function NavigationBar() {
         transition: 'all 0.3s ease'
       }}>
         {navItems.map(item => {
-          const isActive = location.pathname === item.path;
+          const isActive = item.path === '/'
+            ? (location.pathname === '/' || location.pathname === '/matches')
+            : location.pathname === item.path;
           return (
             <Link
               key={item.path}

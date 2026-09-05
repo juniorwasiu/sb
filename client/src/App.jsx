@@ -423,8 +423,9 @@ export default function App() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <NavigationBar />
       <Routes>
-        {/* 🏠 Default: AI Live Predictor & History Log */}
-        <Route path="/"          element={<PredictionsDashboard />} />
+        {/* 🏠 Default: Unified Match Center (In-Play, Upcoming & Played Matches) */}
+        <Route path="/"          element={<UnifiedMatchCenter />} />
+        <Route path="/matches"   element={<UnifiedMatchCenter />} />
         <Route path="/predictions" element={<PredictionsDashboard />} />
         <Route path="/advanced-engine" element={<AdvancedPredictionEngine />} />
         <Route path="/daily-tips" element={<DailyTips />} />
@@ -433,7 +434,6 @@ export default function App() {
         <Route path="/results" element={<LandingPage />} />
         <Route path="/local-engine" element={<LocalPatternEngine />} />
         <Route path="/api-console" element={<ApiConsole />} />
-        <Route path="/matches"   element={<UnifiedMatchCenter />} />
         <Route path="*"          element={<Navigate to="/" replace />} />
       </Routes>
     </div>

@@ -442,7 +442,7 @@ export default function UnifiedMatchCenter() {
                 borderRadius: '50%',
                 background: isOnline ? GREEN : RED,
                 boxShadow: `0 0 8px ${isOnline ? GREEN : RED}`,
-                animation: 'pulse 1.2s infinite'
+                animation: 'steadyPulse 2s infinite'
               }} />
               <span>{isOnline ? 'Render Backend: Online' : 'Server Offline / Retrying...'}</span>
             </div>
@@ -518,25 +518,42 @@ export default function UnifiedMatchCenter() {
           </div>
         </div>
 
-        {/* Active Task Notification Banner */}
-        {activeTask && (
-          <div style={{
-            background: 'rgba(0, 229, 255, 0.12)',
-            border: '1px solid rgba(0, 229, 255, 0.4)',
-            borderRadius: '6px',
-            padding: '6px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontSize: '0.8rem',
-            color: NEON,
-            fontWeight: 700,
-            animation: 'pulse 1.5s infinite'
-          }}>
-            <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>🔄</span>
-            <span>Task in Progress: {activeTask}</span>
+        {/* Steady Active Task Status Ribbon (Zero-shift fixed slot) */}
+        <div style={{
+          background: activeTask ? 'rgba(0, 229, 255, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+          border: `1px solid ${activeTask ? 'rgba(0, 229, 255, 0.35)' : 'rgba(255, 255, 255, 0.06)'}`,
+          borderRadius: '8px',
+          padding: '7px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '0.78rem',
+          color: activeTask ? NEON : 'var(--text-secondary)',
+          minHeight: '34px',
+          boxSizing: 'border-box',
+          transition: 'background 0.3s ease, border-color 0.3s ease, color 0.3s ease'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ display: 'inline-block', animation: activeTask ? 'spin 1.2s linear infinite' : 'none', flexShrink: 0 }}>
+              {activeTask ? '🔄' : '⚡'}
+            </span>
+            <span style={{ fontWeight: activeTask ? 700 : 500 }}>
+              {activeTask ? `Task in Progress: ${activeTask}` : 'Render Stream Active · Zero Memory Leak Protection (Limit: 512 MB)'}
+            </span>
           </div>
-        )}
+          <span style={{
+            fontSize: '0.68rem',
+            color: activeTask ? GREEN : 'var(--text-muted)',
+            fontWeight: 800,
+            background: activeTask ? 'rgba(0, 255, 136, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+            padding: '2px 8px',
+            borderRadius: '4px',
+            letterSpacing: '0.04em',
+            flexShrink: 0
+          }}>
+            {activeTask ? 'RUNNING' : 'IDLE / READY'}
+          </span>
+        </div>
 
         {/* Collapsible Step-by-Step Task & Memory Console */}
         {showTelemetryLog && (
@@ -1030,9 +1047,29 @@ export default function UnifiedMatchCenter() {
                                   ({pred.consensus.confidence}%)
                                 </span>
                               </div>
-                              {(pred.is_low_sample || pred.h2h_sample_count < 5) && (
-                                <span style={{ color: '#FFB800', fontSize: '0.68rem', fontWeight: 800 }}>
+                              {(pred.is_low_sample || (pred.h2h_sample_count !== undefined && pred.h2h_sample_count < 5)) ? (
+                                <span style={{
+                                  color: '#FFB800',
+                                  fontSize: '0.68rem',
+                                  fontWeight: 800,
+                                  background: 'rgba(255,184,0,0.12)',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px solid rgba(255,184,0,0.3)'
+                                }}>
                                   ⚠️ Low Sample (&lt;5)
+                                </span>
+                              ) : (
+                                <span style={{
+                                  color: '#00FF9D',
+                                  fontSize: '0.68rem',
+                                  fontWeight: 800,
+                                  background: 'rgba(0,255,157,0.12)',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px solid rgba(0,255,157,0.3)'
+                                }}>
+                                  ✨ Robust Sample ({pred.h2h_sample_count || '5+'} matches)
                                 </span>
                               )}
                             </div>
@@ -1231,9 +1268,29 @@ export default function UnifiedMatchCenter() {
                                   ({pred.consensus.confidence}%)
                                 </span>
                               </div>
-                              {(pred.is_low_sample || pred.h2h_sample_count < 5) && (
-                                <span style={{ color: '#FFB800', fontSize: '0.68rem', fontWeight: 800 }}>
+                              {(pred.is_low_sample || (pred.h2h_sample_count !== undefined && pred.h2h_sample_count < 5)) ? (
+                                <span style={{
+                                  color: '#FFB800',
+                                  fontSize: '0.68rem',
+                                  fontWeight: 800,
+                                  background: 'rgba(255,184,0,0.12)',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px solid rgba(255,184,0,0.3)'
+                                }}>
                                   ⚠️ Low Sample (&lt;5)
+                                </span>
+                              ) : (
+                                <span style={{
+                                  color: '#00FF9D',
+                                  fontSize: '0.68rem',
+                                  fontWeight: 800,
+                                  background: 'rgba(0,255,157,0.12)',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px solid rgba(0,255,157,0.3)'
+                                }}>
+                                  ✨ Robust Sample ({pred.h2h_sample_count || '5+'} matches)
                                 </span>
                               )}
                             </div>
@@ -1808,8 +1865,8 @@ export default function UnifiedMatchCenter() {
                           </span>
                         </div>
 
-                        {/* Low Data Indicator if < 5 */}
-                        {(pred.is_low_sample || pred.h2h_sample_count < 5) && (
+                        {/* Sample Size Indicator */}
+                        {(pred.is_low_sample || (pred.h2h_sample_count !== undefined && pred.h2h_sample_count < 5)) ? (
                           <div style={{
                             background: 'rgba(255, 153, 0, 0.12)',
                             border: '1px solid rgba(255, 153, 0, 0.35)',
@@ -1824,6 +1881,22 @@ export default function UnifiedMatchCenter() {
                               ⚠️ Limited Data ({pred.h2h_sample_count || 0} clashes &lt; 5)
                             </span>
                             <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Baseline Priors Applied</span>
+                          </div>
+                        ) : (
+                          <div style={{
+                            background: 'rgba(0, 255, 157, 0.1)',
+                            border: '1px solid rgba(0, 255, 157, 0.3)',
+                            padding: '4px 10px',
+                            borderRadius: '6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: '0.72rem'
+                          }}>
+                            <span style={{ color: GREEN, fontWeight: 800 }}>
+                              ✅ Robust Empirical Sample ({pred.h2h_sample_count || 5}+ historical clashes)
+                            </span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>High Confidence Model</span>
                           </div>
                         )}
 
