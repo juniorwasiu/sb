@@ -9,21 +9,81 @@ const PURPLE = '#A78BFA';
 const ORANGE = '#FF9900';
 
 const LEAGUE_META = {
-  'England': { name: 'England League', icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: '#00E5FF' },
-  'Spain':   { name: 'Spain League',   icon: '🇪🇸', color: '#FF3355' },
-  'Italy':   { name: 'Italy League',   icon: '🇮🇹', color: '#00FF88' },
-  'Germany': { name: 'Germany League', icon: '🇩🇪', color: '#FFD700' },
-  'France':  { name: 'France League',  icon: '🇫🇷', color: '#FF6B35' },
+  England: { key: 'England', name: 'England League', icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: '#00E5FF' },
+  Spain:   { key: 'Spain',   name: 'Spain League',   icon: '🇪🇸', color: '#FF3355' },
+  Italy:   { key: 'Italy',   name: 'Italy League',   icon: '🇮🇹', color: '#00FF88' },
+  Germany: { key: 'Germany', name: 'Germany League', icon: '🇩🇪', color: '#FFD700' },
+  France:  { key: 'France',  name: 'France League',  icon: '🇫🇷', color: '#FF6B35' },
 };
 
-function getLeagueMeta(leagueStr = '') {
+const TEAM_LEAGUES = {
+  ARS: 'England', ARSENAL: 'England', CHE: 'England', CHELSEA: 'England', LIV: 'England', LIVERPOOL: 'England',
+  MCI: 'England', 'MAN CITY': 'England', 'MANCHESTER CITY': 'England', MUN: 'England', 'MAN UTD': 'England',
+  TOT: 'England', TOTTENHAM: 'England', SPURS: 'England', NEW: 'England', NEWCASTLE: 'England',
+  AST: 'England', AVL: 'England', 'ASTON VILLA': 'England', BHA: 'England', BRI: 'England', BRIGHTON: 'England',
+  BRE: 'England', BRENTFORD: 'England', CRY: 'England', 'CRYSTAL PALACE': 'England',
+  EVE: 'England', EVERTON: 'England', FUL: 'England', FULHAM: 'England',
+  NFO: 'England', NOT: 'England', 'NOTTINGHAM FOREST': 'England', WOL: 'England', WOLVES: 'England',
+  BOU: 'England', BOURNEMOUTH: 'England', WHU: 'England', 'WEST HAM': 'England',
+  IPS: 'England', IPSWICH: 'England', LEI: 'England', LEICESTER: 'England', SOU: 'England', SOUTHAMPTON: 'England',
+  COV: 'England', HUL: 'England', LEE: 'England', SUN: 'England', BUR: 'England', LUT: 'England', SHU: 'England',
+
+  RMA: 'Spain', RMD: 'Spain', 'REAL MADRID': 'Spain', BAR: 'Spain', FCB: 'Spain', BARCELONA: 'Spain',
+  ATM: 'Spain', ATL: 'Spain', 'ATLETICO MADRID': 'Spain', SEV: 'Spain', SEVILLA: 'Spain',
+  VIL: 'Spain', VILLARREAL: 'Spain', RSO: 'Spain', SOC: 'Spain', 'REAL SOCIEDAD': 'Spain',
+  BET: 'Spain', RBB: 'Spain', 'REAL BETIS': 'Spain', ATH: 'Spain', BIL: 'Spain', 'ATHLETIC BILBAO': 'Spain',
+  VAL: 'Spain', VCF: 'Spain', VALENCIA: 'Spain', CEL: 'Spain', 'CELTA VIGO': 'Spain',
+  GIR: 'Spain', OSA: 'Spain', MAL: 'Spain', GET: 'Spain', ALV: 'Spain', ALA: 'Spain', RAY: 'Spain',
+  ESP: 'Spain', VLD: 'Spain', LEG: 'Spain', LPA: 'Spain', ELC: 'Spain',
+
+  INT: 'Italy', INZ: 'Italy', INTER: 'Italy', 'INTER MILAN': 'Italy', ACM: 'Italy', MIL: 'Italy', MILAN: 'Italy',
+  JUV: 'Italy', JUVENTUS: 'Italy', NAP: 'Italy', NAPOLI: 'Italy', ROM: 'Italy', ROMA: 'Italy',
+  LAZ: 'Italy', LAZIO: 'Italy', ATA: 'Italy', ATALANTA: 'Italy', FIO: 'Italy', FIORENTINA: 'Italy',
+  TOR: 'Italy', BOL: 'Italy', MNZ: 'Italy', MONZA: 'Italy', GEN: 'Italy', LEC: 'Italy',
+  UDI: 'Italy', CAG: 'Italy', VER: 'Italy', HEL: 'Italy', EMP: 'Italy', PAR: 'Italy', COM: 'Italy', VEN: 'Italy',
+
+  BAY: 'Germany', BMU: 'Germany', 'BAYERN MUNICH': 'Germany', BVB: 'Germany', DOR: 'Germany', 'BORUSSIA DORTMUND': 'Germany',
+  RBL: 'Germany', 'RB LEIPZIG': 'Germany', LEV: 'Germany', B04: 'Germany', 'BAYER LEVERKUSEN': 'Germany',
+  STU: 'Germany', VFB: 'Germany', FRA: 'Germany', SGE: 'Germany', 'EINTRACHT FRANKFURT': 'Germany',
+  WOB: 'Germany', WOLFSBURG: 'Germany', HOF: 'Germany', TSG: 'Germany', BMG: 'Germany', GLA: 'Germany',
+  AUG: 'Germany', SVW: 'Germany', WER: 'Germany', 'WERDER BREMEN': 'Germany', MAI: 'Germany', BOC: 'Germany',
+  HEI: 'Germany', BER: 'Germany', STP: 'Germany', KIE: 'Germany', KOE: 'Germany', SCH: 'Germany',
+
+  PSG: 'France', PARIS: 'France', 'PARIS SAINT-GERMAIN': 'France', MAR: 'France', OLM: 'France', MARSEILLE: 'France',
+  LYO: 'France', LYN: 'France', LYON: 'France', ASM: 'France', MONA: 'France', MONACO: 'France', 'AS MONACO': 'France',
+  LIL: 'France', LOS: 'France', LILLE: 'France', REN: 'France', SRF: 'France', RENNES: 'France',
+  NIC: 'France', OGC: 'France', NICE: 'France', LEN: 'France', RCL: 'France', LENS: 'France',
+  STR: 'France', TOU: 'France', REI: 'France', NAN: 'France', BRS: 'France', BREST: 'France',
+  AUX: 'France', ANG: 'France', STE: 'France', HAV: 'France', MPL: 'France', MONTPELLIER: 'France'
+};
+
+function getLeagueMeta(leagueStr = '', home = '', away = '') {
+  const h = String(home || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+  const a = String(away || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+
+  // 1. Authoritative Team-First Detection
+  const inferred = TEAM_LEAGUES[h] || TEAM_LEAGUES[a];
+  if (inferred && LEAGUE_META[inferred]) {
+    return LEAGUE_META[inferred];
+  }
+
+  // 2. Substring matching
+  for (const [teamKey, lName] of Object.entries(TEAM_LEAGUES)) {
+    if (h && (h === teamKey || (teamKey.length >= 4 && h.includes(teamKey)))) {
+      if (LEAGUE_META[lName]) return LEAGUE_META[lName];
+    }
+    if (a && (a === teamKey || (teamKey.length >= 4 && a.includes(teamKey)))) {
+      if (LEAGUE_META[lName]) return LEAGUE_META[lName];
+    }
+  }
+
   const l = (leagueStr || '').toLowerCase();
   if (l.includes('england') || l.includes('epl') || l.includes('premier')) return LEAGUE_META['England'];
   if (l.includes('spain') || l.includes('laliga') || l.includes('la liga')) return LEAGUE_META['Spain'];
   if (l.includes('italy') || l.includes('serie')) return LEAGUE_META['Italy'];
   if (l.includes('germany') || l.includes('bundesliga')) return LEAGUE_META['Germany'];
   if (l.includes('france') || l.includes('ligue')) return LEAGUE_META['France'];
-  return { name: leagueStr || 'All Leagues', icon: '🌐', color: NEON };
+  return { key: 'Other', name: leagueStr || 'All Leagues', icon: '🌐', color: NEON };
 }
 
 export default function RecurringOddsDetailModal({
@@ -61,8 +121,9 @@ export default function RecurringOddsDetailModal({
 
     return playedMatches.filter(m => {
       const odds = m.odds || {};
-      const mLeague = (m.league || '').toLowerCase();
-      if (targetLeague !== 'all leagues' && targetLeague !== 'all' && !mLeague.includes(targetLeague.replace(' - virtual', '').replace(' league', ''))) {
+      const mMeta = getLeagueMeta(m.league, m.home_team || m.homeTeam || m.home, m.away_team || m.awayTeam || m.away);
+      const targetClean = targetLeague.replace(' - virtual', '').replace(' league', '').trim();
+      if (targetClean !== 'all leagues' && targetClean !== 'all' && targetClean !== '' && mMeta.key.toLowerCase() !== targetClean) {
         return false;
       }
 

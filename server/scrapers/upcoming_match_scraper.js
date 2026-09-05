@@ -7,8 +7,8 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const fs = require('fs');
-const path = require('path');
 const { saveUpcomingMatchesToDb, getUpcomingMatchesFromDb } = require('../database/supabase');
+const { detectLeague } = require('../constants');
 
 puppeteer.use(StealthPlugin());
 
@@ -138,10 +138,11 @@ async function scrapeUpcomingMatchesFromPage(page, leagueName = 'vFootball Live 
 
         for (const m of extracted) {
             const key = `${m.time}_${m.home}_${m.away}`;
+            const cleanLeague = detectLeague(leagueName, m.home, m.away);
             if (!unique.has(key)) {
                 unique.set(key, {
                     game_id: m.code,
-                    league: leagueName,
+                    league: cleanLeague,
                     match_date: today,
                     match_time: m.time,
                     home_team: m.home,

@@ -17,13 +17,82 @@ const ENGINE_ICONS = {
   engine_behaviour: '🔄'
 };
 
-const LEAGUE_FLAGS = {
-  'England': '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
-  'Spain': '🇪🇸',
-  'Italy': '🇮🇹',
-  'Germany': '🇩🇪',
-  'France': '🇫🇷'
+const LEAGUE_META_MAP = {
+  England: { key: 'England', name: 'England League', icon: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', color: '#00E5FF' },
+  Spain:   { key: 'Spain',   name: 'Spain League',   icon: '🇪🇸', color: '#FF3355' },
+  Italy:   { key: 'Italy',   name: 'Italy League',   icon: '🇮🇹', color: '#00FF88' },
+  Germany: { key: 'Germany', name: 'Germany League', icon: '🇩🇪', color: '#FFD700' },
+  France:  { key: 'France',  name: 'France League',  icon: '🇫🇷', color: '#FF6B35' }
 };
+
+const TEAM_LEAGUES = {
+  ARS: 'England', ARSENAL: 'England', CHE: 'England', CHELSEA: 'England', LIV: 'England', LIVERPOOL: 'England',
+  MCI: 'England', 'MAN CITY': 'England', 'MANCHESTER CITY': 'England', MUN: 'England', 'MAN UTD': 'England',
+  TOT: 'England', TOTTENHAM: 'England', SPURS: 'England', NEW: 'England', NEWCASTLE: 'England',
+  AST: 'England', AVL: 'England', 'ASTON VILLA': 'England', BHA: 'England', BRI: 'England', BRIGHTON: 'England',
+  BRE: 'England', BRENTFORD: 'England', CRY: 'England', 'CRYSTAL PALACE': 'England',
+  EVE: 'England', EVERTON: 'England', FUL: 'England', FULHAM: 'England',
+  NFO: 'England', NOT: 'England', 'NOTTINGHAM FOREST': 'England', WOL: 'England', WOLVES: 'England',
+  BOU: 'England', BOURNEMOUTH: 'England', WHU: 'England', 'WEST HAM': 'England',
+  IPS: 'England', IPSWICH: 'England', LEI: 'England', LEICESTER: 'England', SOU: 'England', SOUTHAMPTON: 'England',
+  COV: 'England', HUL: 'England', LEE: 'England', SUN: 'England', BUR: 'England', LUT: 'England', SHU: 'England',
+
+  RMA: 'Spain', RMD: 'Spain', 'REAL MADRID': 'Spain', BAR: 'Spain', FCB: 'Spain', BARCELONA: 'Spain',
+  ATM: 'Spain', ATL: 'Spain', 'ATLETICO MADRID': 'Spain', SEV: 'Spain', SEVILLA: 'Spain',
+  VIL: 'Spain', VILLARREAL: 'Spain', RSO: 'Spain', SOC: 'Spain', 'REAL SOCIEDAD': 'Spain',
+  BET: 'Spain', RBB: 'Spain', 'REAL BETIS': 'Spain', ATH: 'Spain', BIL: 'Spain', 'ATHLETIC BILBAO': 'Spain',
+  VAL: 'Spain', VCF: 'Spain', VALENCIA: 'Spain', CEL: 'Spain', 'CELTA VIGO': 'Spain',
+  GIR: 'Spain', OSA: 'Spain', MAL: 'Spain', GET: 'Spain', ALV: 'Spain', ALA: 'Spain', RAY: 'Spain',
+  ESP: 'Spain', VLD: 'Spain', LEG: 'Spain', LPA: 'Spain', ELC: 'Spain',
+
+  INT: 'Italy', INZ: 'Italy', INTER: 'Italy', 'INTER MILAN': 'Italy', ACM: 'Italy', MIL: 'Italy', MILAN: 'Italy',
+  JUV: 'Italy', JUVENTUS: 'Italy', NAP: 'Italy', NAPOLI: 'Italy', ROM: 'Italy', ROMA: 'Italy',
+  LAZ: 'Italy', LAZIO: 'Italy', ATA: 'Italy', ATALANTA: 'Italy', FIO: 'Italy', FIORENTINA: 'Italy',
+  TOR: 'Italy', BOL: 'Italy', MNZ: 'Italy', MONZA: 'Italy', GEN: 'Italy', LEC: 'Italy',
+  UDI: 'Italy', CAG: 'Italy', VER: 'Italy', HEL: 'Italy', EMP: 'Italy', PAR: 'Italy', COM: 'Italy', VEN: 'Italy',
+
+  BAY: 'Germany', BMU: 'Germany', 'BAYERN MUNICH': 'Germany', BVB: 'Germany', DOR: 'Germany', 'BORUSSIA DORTMUND': 'Germany',
+  RBL: 'Germany', 'RB LEIPZIG': 'Germany', LEV: 'Germany', B04: 'Germany', 'BAYER LEVERKUSEN': 'Germany',
+  STU: 'Germany', VFB: 'Germany', FRA: 'Germany', SGE: 'Germany', 'EINTRACHT FRANKFURT': 'Germany',
+  WOB: 'Germany', WOLFSBURG: 'Germany', HOF: 'Germany', TSG: 'Germany', BMG: 'Germany', GLA: 'Germany',
+  AUG: 'Germany', SVW: 'Germany', WER: 'Germany', 'WERDER BREMEN': 'Germany', MAI: 'Germany', BOC: 'Germany',
+  HEI: 'Germany', BER: 'Germany', STP: 'Germany', KIE: 'Germany', KOE: 'Germany', SCH: 'Germany',
+
+  PSG: 'France', PARIS: 'France', 'PARIS SAINT-GERMAIN': 'France', MAR: 'France', OLM: 'France', MARSEILLE: 'France',
+  LYO: 'France', LYN: 'France', LYON: 'France', ASM: 'France', MONA: 'France', MONACO: 'France', 'AS MONACO': 'France',
+  LIL: 'France', LOS: 'France', LILLE: 'France', REN: 'France', SRF: 'France', RENNES: 'France',
+  NIC: 'France', OGC: 'France', NICE: 'France', LEN: 'France', RCL: 'France', LENS: 'France',
+  STR: 'France', TOU: 'France', REI: 'France', NAN: 'France', BRS: 'France', BREST: 'France',
+  AUX: 'France', ANG: 'France', STE: 'France', HAV: 'France', MPL: 'France', MONTPELLIER: 'France'
+};
+
+function getLeagueMeta(leagueStr = '', home = '', away = '') {
+  const h = String(home || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+  const a = String(away || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+
+  const inferred = TEAM_LEAGUES[h] || TEAM_LEAGUES[a];
+  if (inferred && LEAGUE_META_MAP[inferred]) {
+    return LEAGUE_META_MAP[inferred];
+  }
+
+  for (const [teamKey, lName] of Object.entries(TEAM_LEAGUES)) {
+    if (h && (h === teamKey || (teamKey.length >= 4 && h.includes(teamKey)))) {
+      if (LEAGUE_META_MAP[lName]) return LEAGUE_META_MAP[lName];
+    }
+    if (a && (a === teamKey || (teamKey.length >= 4 && a.includes(teamKey)))) {
+      if (LEAGUE_META_MAP[lName]) return LEAGUE_META_MAP[lName];
+    }
+  }
+
+  const l = (leagueStr || '').toLowerCase();
+  if (l.includes('england') || l.includes('epl') || l.includes('premier')) return LEAGUE_META_MAP.England;
+  if (l.includes('spain') || l.includes('laliga') || l.includes('la liga')) return LEAGUE_META_MAP.Spain;
+  if (l.includes('italy') || l.includes('serie')) return LEAGUE_META_MAP.Italy;
+  if (l.includes('germany') || l.includes('bundesliga')) return LEAGUE_META_MAP.Germany;
+  if (l.includes('france') || l.includes('ligue')) return LEAGUE_META_MAP.France;
+
+  return { key: 'Other', name: leagueStr || 'vFootball League', icon: '⚽', color: NEON };
+}
 
 export default function H2HAnalysisModal({ match, onClose }) {
   const [loading, setLoading] = useState(true);
@@ -129,7 +198,7 @@ export default function H2HAnalysisModal({ match, onClose }) {
     return true;
   });
 
-  const flag = Object.entries(LEAGUE_FLAGS).find(([k]) => league.includes(k))?.[1] || '⚽';
+  const leagueMeta = getLeagueMeta(league, homeTeam, awayTeam);
 
   return (
     <div
@@ -202,20 +271,20 @@ export default function H2HAnalysisModal({ match, onClose }) {
                 </h1>
                 <span
                   style={{
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    background: `${leagueMeta.color}18`,
+                    border: `1px solid ${leagueMeta.color}45`,
                     padding: '3px 10px',
                     borderRadius: '12px',
                     fontSize: '0.78rem',
-                    color: '#FFF',
+                    color: leagueMeta.color,
                     fontWeight: 700,
                     display: 'flex',
                     alignItems: 'center',
                     gap: '5px'
                   }}
                 >
-                  <span>{flag}</span>
-                  <span>{league}</span>
+                  <span>{leagueMeta.icon}</span>
+                  <span>{leagueMeta.name}</span>
                 </span>
                 <span style={{ fontSize: '0.8rem', color: GOLD, fontWeight: 700 }}>
                   ⏱️ {matchTime}

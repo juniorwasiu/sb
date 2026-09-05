@@ -48,10 +48,13 @@ function withTimeout(promise, timeoutMs = 3500) {
 
 // ── DB row mappers ───────────────────────────────────────────────────────────
 const mapMatchToDb = (match) => {
+    const home = match.homeTeam || match.home || match.home_team || '';
+    const away = match.awayTeam || match.away || match.away_team || '';
+    const detectedLeague = detectLeague(match.league, home, away);
     const dateSafe   = (match.date   || '').replace(/\//g, '-');
-    const leagueSafe = (match.league || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const leagueSafe = detectedLeague.replace(/[^a-zA-Z0-9_-]/g, '_');
     const gameId     = match.gameId
-        || `fallback_${(match.time || '00:00').replace(':', '')}_${(match.homeTeam || match.home || '').replace(/\s+/g, '')}`;
+        || `fallback_${(match.time || '00:00').replace(':', '')}_${(home).replace(/\s+/g, '')}`;
     const matchId    = `${dateSafe}_${gameId}_${leagueSafe}`;
 
     return {
@@ -59,28 +62,31 @@ const mapMatchToDb = (match) => {
         time:        match.time       || '',
         date:        match.date       || '',
         game_id:     match.gameId     || gameId,
-        home_team:   match.homeTeam   || match.home  || '',
-        away_team:   match.awayTeam   || match.away  || '',
+        home_team:   home,
+        away_team:   away,
         score:       match.score      || '',
-        league:      match.league     || '',
+        league:      detectedLeague,
         source_tag:  match.sourceTag  || 'native-dom',
         uploaded_at: match.uploadedAt || new Date().toISOString()
     };
 };
 
-const mapMatchFromDb = (row) => ({
-    id:         row.id,
-    _id:        row.id,
-    time:       row.time,
-    date:       row.date,
-    gameId:     row.game_id,
-    homeTeam:   row.home_team,
-    awayTeam:   row.away_team,
-    score:      row.score,
-    league:     row.league,
-    sourceTag:  row.source_tag,
-    uploadedAt: row.uploaded_at
-});
+const mapMatchFromDb = (row) => {
+    const detectedLeague = detectLeague(row.league, row.home_team, row.away_team);
+    return {
+        id:         row.id,
+        _id:        row.id,
+        time:       row.time,
+        date:       row.date,
+        gameId:     row.game_id,
+        homeTeam:   row.home_team,
+        awayTeam:   row.away_team,
+        score:      row.score,
+        league:     detectedLeague,
+        sourceTag:  row.source_tag,
+        uploadedAt: row.uploaded_at
+    };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC DATABASE API FUNCTIONS
@@ -708,17 +714,25 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 5
         };
     });
 
-    // Determine the Active In-Play Round (SportyBet rounds simulate continuously)
+    // Determine the Active In-Play Round (SportyBet rounds simulate continuously in WAT UTC+1)
     const roundCounts = {};
     items.forEach(i => roundCounts[i.match_time] = (roundCounts[i.match_time] || 0) + 1);
     const distinctTimes = Object.keys(roundCounts).filter(t => t && t !== '--:--' && roundCounts[t] >= 5).sort();
+    
+    // Authoritative WAT clock (UTC+1)
     const now = new Date();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const watTimeMs = now.getTime() + (1 * 60 * 60 * 1000);
+    const watDate = new Date(watTimeMs);
+    const watH = watDate.getUTCHours();
+    const watM = watDate.getUTCMinutes();
+    const watS = watDate.getUTCSeconds();
+    const nowWatMinutes = watH * 60 + watM;
+    const nowWatSec = watH * 3600 + watM * 60 + watS;
 
-    // Find candidate past/active rounds that have reached kickoff (tMin <= nowMinutes)
+    // Find candidate past/active rounds that have reached kickoff (tMin <= nowWatMinutes)
     const pastRounds = distinctTimes.filter(t => {
         const [h, m] = t.split(':').map(Number);
-        return (h * 60 + m) <= nowMinutes;
+        return (h * 60 + m) <= nowWatMinutes;
     });
 
     // Active in-play is the most recent round that already kicked off, or earliest available
@@ -734,27 +748,33 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 5
         const currentStatus = isLiveRound ? 'IN_PLAY' : 'UPCOMING';
 
         let live_score = '0:0';
-        let match_progress = isLiveRound ? 'LIVE 1\'' : 'UPCOMING';
+        let match_progress = isLiveRound ? '1\'' : 'UPCOMING';
 
         if (isLiveRound) {
             const parts = (item.match_time || '').split(':').map(Number);
             let diffSec = 45;
             if (parts.length === 2) {
-                const matchDate = new Date(now);
-                matchDate.setHours(parts[0], parts[1], 0, 0);
-                diffSec = Math.max(1, (now.getTime() - matchDate.getTime()) / 1000);
+                const matchSec = parts[0] * 3600 + parts[1] * 60;
+                let d = (nowWatSec - matchSec + 86400) % 86400;
+                if (d > 43200) d -= 86400;
+                if (d >= 0 && d <= 150) diffSec = d;
+                else diffSec = Math.floor(now.getTime() / 1000) % 150;
+            } else {
+                diffSec = Math.floor(now.getTime() / 1000) % 150;
             }
 
             // Virtual match round simulation cycle (150s window)
             const cycleSec = Math.floor(diffSec) % 150;
             if (cycleSec <= 45) {
-                const min = Math.max(1, Math.min(45, Math.floor(cycleSec * 1.0 + 1)));
+                const min = Math.max(1, Math.min(45, Math.floor(cycleSec * 1.0) + 1));
                 match_progress = `${min}'`;
             } else if (cycleSec > 45 && cycleSec <= 60) {
                 match_progress = "HT 45'";
-            } else {
-                const min = Math.max(46, Math.min(89, Math.floor(45 + (cycleSec - 60) * 0.75)));
+            } else if (cycleSec > 60 && cycleSec <= 135) {
+                const min = Math.max(46, Math.min(89, Math.floor(45 + (cycleSec - 60) * 0.6) + 1));
                 match_progress = `${min}'`;
+            } else {
+                match_progress = "89'";
             }
 
             // Calculate realistic dynamic score from odds

@@ -56,6 +56,7 @@ const Stealth   = require('puppeteer-extra-plugin-stealth');
 const fs        = require('fs');
 const path      = require('path');
 const { saveMatchesToDb } = require('../database/supabase');
+const { detectLeague } = require('../constants');
 
 puppeteer.use(Stealth());
 
@@ -553,8 +554,13 @@ async function extractMatchesFromPage(page, dbLeague, dateISO) {
         return results;
     }, dbLeague, dateISO, defaultDate);
 
-    console.log(`[BulkScraper] [Extract] ✅ Extracted ${matches.length} matches`);
-    return matches;
+    const cleanMatches = matches.map(m => ({
+        ...m,
+        league: detectLeague(m.league, m.homeTeam, m.awayTeam)
+    }));
+
+    console.log(`[BulkScraper] [Extract] ✅ Extracted ${cleanMatches.length} matches`);
+    return cleanMatches;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
