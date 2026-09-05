@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import H2HAnalysisModal from './H2HAnalysisModal';
 
@@ -43,10 +43,13 @@ const TEAM_LEAGUES = {
   WOB: 'Germany', HOF: 'Germany', BMG: 'Germany', AUG: 'Germany', BRE: 'Germany', MAI: 'Germany',
   BOC: 'Germany', HEI: 'Germany', BER: 'Germany', STP: 'Germany', KIE: 'Germany',
   BAYERN: 'Germany', DORTMUND: 'Germany', LEIPZIG: 'Germany', LEVERKUSEN: 'Germany',
+  FRANKFURT: 'Germany', STUTTGART: 'Germany', WOLFSBURG: 'Germany', HOFFENHEIM: 'Germany',
   // France
-  PSG: 'France', MAR: 'France', MON: 'France', LYO: 'France', LIL: 'France', REN: 'France',
-  NIC: 'France', LEN: 'France', STR: 'France', TOU: 'France', REI: 'France', NAN: 'France',
-  MARSEILLE: 'France', LYON: 'France', MONACO: 'France', LILLE: 'France'
+  PSG: 'France', MAR: 'France', LYN: 'France', MONA: 'France', LIL: 'France', REN: 'France',
+  NIC: 'France', LEN: 'France', STR: 'France', NAN: 'France', REI: 'France', TOU: 'France',
+  BREST: 'France', AUX: 'France', ANG: 'France', STE: 'France', HAV: 'France',
+  PARIS: 'France', MARSEILLE: 'France', LYON: 'France', MONACO: 'France', LILLE: 'France',
+  RENNES: 'France', NICE: 'France', LENS: 'France'
 };
 
 function getLeagueMeta(leagueStr = '', home = '', away = '') {
@@ -121,6 +124,13 @@ export default function UnifiedMatchCenter() {
   const [selectedH2HMatch, setSelectedH2HMatch] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Repetitive Winning Odds Intelligence State
+  const [recurringMarket, setRecurringMarket] = useState('ALL'); // 'ALL' | 'HOME' | 'AWAY' | 'DRAW'
+  const [recurringMinSamples, setRecurringMinSamples] = useState(2);
+  const [recurringLeagueFilter, setRecurringLeagueFilter] = useState('ALL');
+  const [recurringOnlyWinning, setRecurringOnlyWinning] = useState(false);
+  const [showRecurringOddsPanel, setShowRecurringOddsPanel] = useState(true);
+
   // Real-time Render Health & Telemetry State
   const [telemetry, setTelemetry] = useState(null);
   const [isOnline, setIsOnline] = useState(true);
@@ -137,6 +147,205 @@ export default function UnifiedMatchCenter() {
 
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  // ── High-Performance Zero-Leak Repetitive Odds Analytics (Single-Pass O(N)) ──
+  const recurringOddsStats = useMemo(() => {
+    const t0 = performance.now();
+    if (!playedMatches || playedMatches.length === 0) {
+      return { home: [], away: [], draw: [], all: [], summary: { totalOdds: 0, highStrikeCount: 0, executionMs: 0 } };
+    }
+
+    const oddsMap = new Map();
+
+    for (let i = 0; i < playedMatches.length; i++) {
+      const m = playedMatches[i];
+      const odds = m.odds || {};
+      const league = m.league || 'All Leagues';
+      const isHome = m.winner === 'HOME_WIN' || m.winning_outcomes?.winner_1x2 === '1';
+      const isAway = m.winner === 'AWAY_WIN' || m.winning_outcomes?.winner_1x2 === '2';
+      const isDraw = m.winner === 'DRAW' || m.winning_outcomes?.winner_1x2 === 'X';
+
+      // 1. Home Win Odd Tracking
+      if (odds.home_win && !isNaN(Number(odds.home_win))) {
+        const oddVal = Number(odds.home_win).toFixed(2);
+        const key = `HOME_${oddVal}_${league}`;
+        let entry = oddsMap.get(key);
+        if (!entry) {
+          entry = {
+            id: key,
+            market: 'HOME',
+            marketLabel: 'Home Win Only',
+            odd: parseFloat(oddVal),
+            league,
+            occurrences: 0,
+            wonCount: 0,
+            matches: []
+          };
+          oddsMap.set(key, entry);
+        }
+        entry.occurrences++;
+        if (isHome) entry.wonCount++;
+        if (entry.matches.length < 5) {
+          entry.matches.push({
+            home: m.home_team,
+            away: m.away_team,
+            score: m.score || '0:0',
+            date: m.match_date,
+            time: m.match_time,
+            won: isHome
+          });
+        }
+      }
+
+      // 2. Away Win Odd Tracking
+      if (odds.away_win && !isNaN(Number(odds.away_win))) {
+        const oddVal = Number(odds.away_win).toFixed(2);
+        const key = `AWAY_${oddVal}_${league}`;
+        let entry = oddsMap.get(key);
+        if (!entry) {
+          entry = {
+            id: key,
+            market: 'AWAY',
+            marketLabel: 'Away Win Only',
+            odd: parseFloat(oddVal),
+            league,
+            occurrences: 0,
+            wonCount: 0,
+            matches: []
+          };
+          oddsMap.set(key, entry);
+        }
+        entry.occurrences++;
+        if (isAway) entry.wonCount++;
+        if (entry.matches.length < 5) {
+          entry.matches.push({
+            home: m.home_team,
+            away: m.away_team,
+            score: m.score || '0:0',
+            date: m.match_date,
+            time: m.match_time,
+            won: isAway
+          });
+        }
+      }
+
+      // 3. Draw Odd Tracking
+      if (odds.draw && !isNaN(Number(odds.draw))) {
+        const oddVal = Number(odds.draw).toFixed(2);
+        const key = `DRAW_${oddVal}_${league}`;
+        let entry = oddsMap.get(key);
+        if (!entry) {
+          entry = {
+            id: key,
+            market: 'DRAW',
+            marketLabel: 'Draw Only',
+            odd: parseFloat(oddVal),
+            league,
+            occurrences: 0,
+            wonCount: 0,
+            matches: []
+          };
+          oddsMap.set(key, entry);
+        }
+        entry.occurrences++;
+        if (isDraw) entry.wonCount++;
+        if (entry.matches.length < 5) {
+          entry.matches.push({
+            home: m.home_team,
+            away: m.away_team,
+            score: m.score || '0:0',
+            date: m.match_date,
+            time: m.match_time,
+            won: isDraw
+          });
+        }
+      }
+    }
+
+    const allEntries = [];
+    const homeEntries = [];
+    const awayEntries = [];
+    const drawEntries = [];
+    let highStrikeCount = 0;
+    let perfectCount = 0;
+
+    oddsMap.forEach((entry) => {
+      const winRate = entry.occurrences > 0 ? (entry.wonCount / entry.occurrences) * 100 : 0;
+      const roundedWinRate = Math.round(winRate * 10) / 10;
+      const isPerfect = roundedWinRate === 100 && entry.occurrences >= 2;
+      const isHighStrike = roundedWinRate >= 60 && entry.occurrences >= 2;
+
+      if (isHighStrike) highStrikeCount++;
+      if (isPerfect) perfectCount++;
+
+      const item = {
+        ...entry,
+        winRate: roundedWinRate,
+        isRepetitive: entry.occurrences >= 2,
+        isRobustSample: entry.occurrences >= 5,
+        isPerfect,
+        isHighStrike,
+        netROI: Math.round(((entry.wonCount * entry.odd - entry.occurrences) / entry.occurrences) * 100)
+      };
+
+      allEntries.push(item);
+      if (item.market === 'HOME') homeEntries.push(item);
+      else if (item.market === 'AWAY') awayEntries.push(item);
+      else if (item.market === 'DRAW') drawEntries.push(item);
+    });
+
+    const sortFn = (a, b) => {
+      if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+      if (b.occurrences !== a.occurrences) return b.occurrences - a.occurrences;
+      return b.odd - a.odd;
+    };
+
+    allEntries.sort(sortFn);
+    homeEntries.sort(sortFn);
+    awayEntries.sort(sortFn);
+    drawEntries.sort(sortFn);
+
+    const executionMs = Math.round((performance.now() - t0) * 100) / 100;
+    return {
+      home: homeEntries,
+      away: awayEntries,
+      draw: drawEntries,
+      all: allEntries,
+      summary: {
+        totalOdds: allEntries.length,
+        repetitiveOddsCount: allEntries.filter(e => e.occurrences >= 2).length,
+        highStrikeCount,
+        perfectCount,
+        executionMs
+      }
+    };
+  }, [playedMatches]);
+
+  // Filtered recurring odds based on active user controls
+  const filteredRecurringOdds = useMemo(() => {
+    let list = [];
+    if (recurringMarket === 'HOME') list = recurringOddsStats.home;
+    else if (recurringMarket === 'AWAY') list = recurringOddsStats.away;
+    else if (recurringMarket === 'DRAW') list = recurringOddsStats.draw;
+    else list = recurringOddsStats.all;
+
+    return list.filter(item => {
+      if (item.occurrences < recurringMinSamples) return false;
+
+      const targetLeague = recurringLeagueFilter !== 'ALL' ? recurringLeagueFilter : activeLeague;
+      if (targetLeague !== 'ALL') {
+        const cleanTarget = targetLeague.toLowerCase();
+        const cleanLeague = (item.league || '').toLowerCase();
+        if (!cleanLeague.includes(cleanTarget) && !cleanTarget.includes(cleanLeague)) {
+          return false;
+        }
+      }
+
+      if (recurringOnlyWinning && item.winRate < 60) return false;
+
+      return true;
+    });
+  }, [recurringOddsStats, recurringMarket, recurringMinSamples, recurringLeagueFilter, activeLeague, recurringOnlyWinning]);
 
   // Step-by-step console & terminal logger
   const logTaskStep = useCallback((taskName, stepDescription, details = '', memData = null) => {
@@ -1348,6 +1557,352 @@ export default function UnifiedMatchCenter() {
                     </span>
                   </div>
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Odds & Outcomes Verified</span>
+                </div>
+
+                {/* ── REPETITIVE WINNING ODDS INTELLIGENCE PANEL ── */}
+                <div className="ultra-glass" style={{
+                  padding: '20px 24px',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(0, 229, 255, 0.25)',
+                  background: 'linear-gradient(180deg, rgba(0, 229, 255, 0.05) 0%, rgba(10, 20, 35, 0.75) 100%)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '16px'
+                }}>
+                  {/* Panel Header & Summary Badges */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '1.2rem' }}>🎯</span>
+                        <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: '#FFF' }}>
+                          Repetitive Winning Odds <span style={{ color: NEON }}>Intelligence</span>
+                        </h3>
+                        <span style={{
+                          background: 'rgba(0, 229, 255, 0.12)',
+                          color: NEON,
+                          fontSize: '0.7rem',
+                          fontWeight: 800,
+                          padding: '2px 8px',
+                          borderRadius: '10px',
+                          border: '1px solid rgba(0, 229, 255, 0.3)'
+                        }}>
+                          ⚡ {recurringOddsStats.summary.executionMs}ms · Zero RAM Footprint
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: 750 }}>
+                        Identifies recurring match odds that consistently win for <strong>Home Only</strong>, <strong>Away Only</strong>, or <strong>Draw</strong> broken down across each virtual league.
+                      </p>
+                    </div>
+
+                    {/* Quick Metric Pills */}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{
+                        background: 'rgba(0, 255, 136, 0.1)',
+                        border: '1px solid rgba(0, 255, 136, 0.3)',
+                        borderRadius: '8px',
+                        padding: '4px 10px',
+                        fontSize: '0.72rem',
+                        color: GREEN,
+                        fontWeight: 700
+                      }}>
+                        🔥 <strong>{recurringOddsStats.summary.perfectCount}</strong> Perfect (100%) Odds
+                      </div>
+                      <div style={{
+                        background: 'rgba(255, 215, 0, 0.1)',
+                        border: '1px solid rgba(255, 215, 0, 0.3)',
+                        borderRadius: '8px',
+                        padding: '4px 10px',
+                        fontSize: '0.72rem',
+                        color: GOLD,
+                        fontWeight: 700
+                      }}>
+                        ✨ <strong>{recurringOddsStats.summary.highStrikeCount}</strong> High Strike (≥60%)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowRecurringOddsPanel(prev => !prev)}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.06)',
+                          border: '1px solid rgba(255, 255, 255, 0.15)',
+                          color: '#FFF',
+                          borderRadius: '6px',
+                          padding: '4px 10px',
+                          fontSize: '0.72rem',
+                          cursor: 'pointer',
+                          fontWeight: 600
+                        }}
+                      >
+                        {showRecurringOddsPanel ? 'Hide Intelligence ▲' : 'Show Intelligence ▼'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {showRecurringOddsPanel && (
+                    <>
+                      {/* Filter Controls */}
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                        background: 'rgba(0, 0, 0, 0.3)',
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(255, 255, 255, 0.06)'
+                      }}>
+                        {/* Market Filter Tabs */}
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {[
+                            { id: 'ALL', label: '🌟 All Recurring Odds', count: recurringOddsStats.all.filter(o => o.occurrences >= recurringMinSamples).length },
+                            { id: 'HOME', label: '🏠 Home Only', count: recurringOddsStats.home.filter(o => o.occurrences >= recurringMinSamples).length, color: GREEN },
+                            { id: 'AWAY', label: '✈️ Away Only', count: recurringOddsStats.away.filter(o => o.occurrences >= recurringMinSamples).length, color: NEON },
+                            { id: 'DRAW', label: '🤝 Draw Only', count: recurringOddsStats.draw.filter(o => o.occurrences >= recurringMinSamples).length, color: GOLD }
+                          ].map(t => {
+                            const isSel = recurringMarket === t.id;
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => setRecurringMarket(t.id)}
+                                style={{
+                                  background: isSel ? 'rgba(0, 229, 255, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                                  color: isSel ? (t.color || NEON) : 'var(--text-secondary)',
+                                  border: `1px solid ${isSel ? (t.color || NEON) : 'rgba(255, 255, 255, 0.1)'}`,
+                                  borderRadius: '6px',
+                                  padding: '5px 12px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: isSel ? 800 : 500,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                {t.label} ({t.count})
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Secondary Dropdown / Toggles */}
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          {/* Min Repetitions Selector */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            <span>Frequency:</span>
+                            <select
+                              value={recurringMinSamples}
+                              onChange={(e) => setRecurringMinSamples(Number(e.target.value))}
+                              style={{
+                                background: 'rgba(0, 0, 0, 0.5)',
+                                color: '#FFF',
+                                border: '1px solid rgba(255, 255, 255, 0.15)',
+                                borderRadius: '4px',
+                                padding: '3px 8px',
+                                fontSize: '0.75rem',
+                                outline: 'none'
+                              }}
+                            >
+                              <option value={2}>Min 2+ Matches</option>
+                              <option value={3}>Min 3+ Matches</option>
+                              <option value={5}>Min 5+ Matches (Robust)</option>
+                            </select>
+                          </div>
+
+                          {/* League Filter */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            <span>League:</span>
+                            <select
+                              value={recurringLeagueFilter}
+                              onChange={(e) => setRecurringLeagueFilter(e.target.value)}
+                              style={{
+                                background: 'rgba(0, 0, 0, 0.5)',
+                                color: '#FFF',
+                                border: '1px solid rgba(255, 255, 255, 0.15)',
+                                borderRadius: '4px',
+                                padding: '3px 8px',
+                                fontSize: '0.75rem',
+                                outline: 'none'
+                              }}
+                            >
+                              <option value="ALL">All Leagues</option>
+                              <option value="England">🏴󠁧󠁢󠁥󠁮󠁧󠁿 England League</option>
+                              <option value="Spain">🇪🇸 Spain League</option>
+                              <option value="Italy">🇮🇹 Italy League</option>
+                              <option value="Germany">🇩🇪 Germany League</option>
+                              <option value="France">🇫🇷 France League</option>
+                            </select>
+                          </div>
+
+                          {/* High-Strike Checkbox */}
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#FFF', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={recurringOnlyWinning}
+                              onChange={(e) => setRecurringOnlyWinning(e.target.checked)}
+                              style={{ accentColor: GREEN, cursor: 'pointer' }}
+                            />
+                            <span>🔥 High Strike (≥60%) Only</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Cards Grid */}
+                      {filteredRecurringOdds.length === 0 ? (
+                        <div style={{
+                          padding: '24px',
+                          textAlign: 'center',
+                          color: 'var(--text-muted)',
+                          fontSize: '0.82rem',
+                          background: 'rgba(0,0,0,0.2)',
+                          borderRadius: '8px'
+                        }}>
+                          ℹ️ No repetitive odds found matching current filters. Try changing frequency to <strong>Min 2+ Matches</strong> or selecting <strong>All Leagues</strong>.
+                        </div>
+                      ) : (
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                          gap: '12px'
+                        }}>
+                          {filteredRecurringOdds.slice(0, 24).map((item) => {
+                            const leagueMeta = getLeagueMeta(item.league);
+                            const strikeColor = item.winRate >= 75 ? GREEN : item.winRate >= 50 ? GOLD : RED;
+
+                            return (
+                              <div
+                                key={item.id}
+                                style={{
+                                  background: 'rgba(0, 0, 0, 0.4)',
+                                  border: `1px solid ${item.isPerfect ? 'rgba(0, 255, 136, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`,
+                                  borderRadius: '10px',
+                                  padding: '12px 14px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '10px',
+                                  transition: 'transform 0.15s ease, border-color 0.15s ease',
+                                  boxShadow: item.isPerfect ? '0 0 15px rgba(0, 255, 136, 0.08)' : 'none'
+                                }}
+                              >
+                                {/* Card Header */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  {/* Odd & Market Badge */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{
+                                      fontSize: '1.15rem',
+                                      fontWeight: 900,
+                                      color: '#FFF',
+                                      background: item.market === 'HOME' ? 'rgba(0, 255, 136, 0.15)' : item.market === 'AWAY' ? 'rgba(0, 229, 255, 0.15)' : 'rgba(255, 215, 0, 0.15)',
+                                      border: `1px solid ${item.market === 'HOME' ? 'rgba(0, 255, 136, 0.4)' : item.market === 'AWAY' ? 'rgba(0, 229, 255, 0.4)' : 'rgba(255, 215, 0, 0.4)'}`,
+                                      padding: '2px 8px',
+                                      borderRadius: '6px'
+                                    }}>
+                                      {item.odd.toFixed(2)}
+                                    </span>
+                                    <div>
+                                      <span style={{
+                                        fontSize: '0.72rem',
+                                        fontWeight: 800,
+                                        color: item.market === 'HOME' ? GREEN : item.market === 'AWAY' ? NEON : GOLD,
+                                        display: 'block'
+                                      }}>
+                                        {item.market === 'HOME' ? '🏠 HOME WIN' : item.market === 'AWAY' ? '✈️ AWAY WIN' : '🤝 DRAW'}
+                                      </span>
+                                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                        {item.occurrences} matches tracked
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* League Flag & Badge */}
+                                  <div style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    background: `${leagueMeta.color}15`,
+                                    border: `1px solid ${leagueMeta.color}40`,
+                                    padding: '2px 8px',
+                                    borderRadius: '12px',
+                                    fontSize: '0.7rem',
+                                    color: leagueMeta.color,
+                                    fontWeight: 700
+                                  }}>
+                                    <span>{leagueMeta.icon}</span>
+                                    <span>{leagueMeta.name}</span>
+                                  </div>
+                                </div>
+
+                                {/* Win Rate Bar & Performance Stats */}
+                                <div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', fontSize: '0.74rem' }}>
+                                    <span style={{ color: 'var(--text-secondary)' }}>
+                                      Strike Rate: <strong style={{ color: strikeColor }}>{item.winRate}%</strong> ({item.wonCount}/{item.occurrences} Won)
+                                    </span>
+                                    <span style={{
+                                      fontSize: '0.68rem',
+                                      fontWeight: 800,
+                                      color: item.netROI >= 0 ? GREEN : RED
+                                    }}>
+                                      {item.netROI >= 0 ? `+${item.netROI}% ROI` : `${item.netROI}% ROI`}
+                                    </span>
+                                  </div>
+                                  {/* Progress bar */}
+                                  <div style={{
+                                    width: '100%',
+                                    height: '6px',
+                                    background: 'rgba(255, 255, 255, 0.06)',
+                                    borderRadius: '3px',
+                                    overflow: 'hidden'
+                                  }}>
+                                    <div style={{
+                                      width: `${item.winRate}%`,
+                                      height: '100%',
+                                      background: strikeColor,
+                                      borderRadius: '3px',
+                                      transition: 'width 0.3s ease'
+                                    }} />
+                                  </div>
+                                </div>
+
+                                {/* Sample Status & Matches Preview */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
+                                  {item.isRobustSample ? (
+                                    <span style={{ fontSize: '0.68rem', color: GREEN, fontWeight: 700 }}>
+                                      ✅ Robust Sample ({item.occurrences}+)
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize: '0.68rem', color: GOLD, fontWeight: 700 }}>
+                                      ⚠️ Sample: {item.occurrences} matches
+                                    </span>
+                                  )}
+
+                                  {/* Match history preview pills */}
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                    {item.matches.map((m, mIdx) => (
+                                      <span
+                                        key={mIdx}
+                                        title={`${m.home} vs ${m.away} (${m.score}) · ${m.won ? 'Won' : 'Lost'}`}
+                                        style={{
+                                          fontSize: '0.65rem',
+                                          background: m.won ? 'rgba(0, 255, 136, 0.15)' : 'rgba(255, 51, 85, 0.15)',
+                                          border: `1px solid ${m.won ? 'rgba(0, 255, 136, 0.35)' : 'rgba(255, 51, 85, 0.35)'}`,
+                                          color: m.won ? GREEN : RED,
+                                          padding: '1px 5px',
+                                          borderRadius: '4px',
+                                          fontWeight: 700
+                                        }}
+                                      >
+                                        {m.home} {m.score} {m.away} {m.won ? '✅' : '❌'}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 {displayedPlayed.length === 0 ? (
