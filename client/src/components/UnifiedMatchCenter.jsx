@@ -416,11 +416,12 @@ export default function UnifiedMatchCenter() {
   }, []);
 
   const fetchDashboardData = useCallback(async (isManual = false) => {
-    if (isManual) setIsSyncing(true);
-    setActiveTask('Syncing In-Play, Upcoming & Played matches...');
+    if (isManual) {
+      setIsSyncing(true);
+      setActiveTask('Syncing In-Play, Upcoming & Played matches...');
+      logTaskStep('Dashboard Sync', 'START', 'User initiated manual sync');
+    }
     const startTime = performance.now();
-
-    logTaskStep('Dashboard Sync', 'START', isManual ? 'User initiated manual sync' : 'Background polling cycle');
 
     try {
       const [dashRes, predRes] = await Promise.all([
@@ -436,17 +437,34 @@ export default function UnifiedMatchCenter() {
       if (dashRes.ok) {
         const json = await dashRes.json();
         if (json.success) {
-          setInPlayMatches(json.in_play?.data || []);
-          setUpcomingMatches(json.upcoming?.data || []);
-          setPlayedMatches(json.played?.data || []);
+          // Seamless non-destructive updates: never replace populated data with empty arrays
+          if (Array.isArray(json.in_play?.data)) {
+            setInPlayMatches(json.in_play.data);
+          }
+          if (Array.isArray(json.upcoming?.data) && json.upcoming.data.length > 0) {
+            setUpcomingMatches(json.upcoming.data);
+          } else if (Array.isArray(json.upcoming?.data) && upcomingMatches.length === 0) {
+            setUpcomingMatches(json.upcoming.data);
+          }
+
+          if (Array.isArray(json.played?.data) && json.played.data.length > 0) {
+            setPlayedMatches(json.played.data);
+          } else if (Array.isArray(json.played?.data) && playedMatches.length === 0) {
+            setPlayedMatches(json.played.data);
+          }
+
           if (json.telemetry) latestTelemetry = json.telemetry;
         }
       }
 
       if (predRes.ok) {
         const predJson = await predRes.json();
-        if (predJson.success) {
-          setEnginePredictions(predJson.data || []);
+        if (predJson.success && Array.isArray(predJson.data)) {
+          if (predJson.data.length > 0) {
+            setEnginePredictions(predJson.data);
+          } else if (enginePredictions.length === 0) {
+            setEnginePredictions(predJson.data);
+          }
           if (predJson.telemetry) latestTelemetry = predJson.telemetry;
         }
       }
@@ -457,17 +475,23 @@ export default function UnifiedMatchCenter() {
       setIsOnline(true);
       setLastUpdated(new Date());
 
-      logTaskStep('Dashboard Sync', 'COMPLETED', `Fetched matches in ${roundtrip}ms`, latestTelemetry);
+      if (isManual) {
+        logTaskStep('Dashboard Sync', 'COMPLETED', `Fetched matches in ${roundtrip}ms`, latestTelemetry);
+      }
     } catch (err) {
-      logTaskStep('Dashboard Sync', 'ERROR', err.message);
+      if (isManual) {
+        logTaskStep('Dashboard Sync', 'ERROR', err.message);
+      }
       console.warn('Match dashboard sync note:', err.message);
       setIsOnline(false);
     } finally {
       setLoading(false);
-      setIsSyncing(false);
-      setActiveTask(null);
+      if (isManual) {
+        setIsSyncing(false);
+        setActiveTask(null);
+      }
     }
-  }, [logTaskStep]);
+  }, [logTaskStep, upcomingMatches.length, playedMatches.length, enginePredictions.length]);
 
   useEffect(() => {
     fetchDashboardData();

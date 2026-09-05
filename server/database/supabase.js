@@ -719,7 +719,10 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 5
             else if (status === 'UPCOMING') q = q.neq('status', 'PLAYED').neq('status', 'FINISHED');
             q = q.order('scraped_at', { ascending: false }).limit(limit * 2);
             const { data, error } = await withTimeout(q, 3500);
-            if (!error && data && data.length > 0) items = data;
+            if (!error && data && data.length > 0) {
+                items = data;
+                saveToLocalCollection('upcoming_matches', data);
+            }
         } catch (_) {}
     }
     
@@ -915,13 +918,66 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
             if (date) q = q.eq('match_date', date);
             q = q.order('associated_at', { ascending: false }).range(offset, offset + limit - 1);
             const { data, error } = await withTimeout(q, 3500);
-            if (!error && data && data.length > 0) return data;
+            if (!error && data && data.length > 0) {
+                saveToLocalCollection('match_played', data);
+                return data;
+            }
         } catch (_) {}
     }
 
     let items = getFromLocalCollection('match_played') || [];
     if (league && league !== 'ALL') items = items.filter(i => i.league === league);
     if (date) items = items.filter(i => i.match_date === date);
+    if (items.length > 0) return items.slice(offset, offset + limit);
+
+    // Fallback if match_played table hasn't been backfilled yet: read from vfootball_results
+    if (supabaseClient) {
+        try {
+            let q = supabaseClient.from('vfootball_results').select('*');
+            if (league && league !== 'ALL') q = q.ilike('league', `%${league.replace(' - Virtual', '')}%`);
+            if (date) q = q.eq('date', date);
+            q = q.order('uploaded_at', { ascending: false }).range(offset, offset + limit - 1);
+            const { data, error } = await withTimeout(q, 3500);
+            if (!error && data && data.length > 0) {
+                const converted = data.map(r => {
+                    const score = r.score || '0:0';
+                    const parts = score.split(/[:\-]/);
+                    const hScore = parseInt(parts[0], 10) || 0;
+                    const aScore = parseInt(parts[1], 10) || 0;
+                    const winner = hScore > aScore ? 'HOME_WIN' : aScore > hScore ? 'AWAY_WIN' : 'DRAW';
+                    return {
+                        id: `played_${r.id}`,
+                        game_id: r.game_id || '',
+                        league: r.league || 'England - Virtual',
+                        match_date: r.date || new Date().toISOString().slice(0, 10),
+                        match_time: r.time || '--:--',
+                        home_team: r.home_team,
+                        away_team: r.away_team,
+                        score: score,
+                        ht_score: '',
+                        home_score: hScore,
+                        away_score: aScore,
+                        winner: winner,
+                        winner_name: winner === 'HOME_WIN' ? r.home_team : winner === 'AWAY_WIN' ? r.away_team : 'Draw',
+                        odds: { home_win: 2.10, draw: 3.20, away_win: 3.10 },
+                        winning_outcomes: {
+                            winner_1x2: winner === 'HOME_WIN' ? '1' : winner === 'AWAY_WIN' ? '2' : 'X',
+                            winning_odd: 2.10,
+                            total_goals: hScore + aScore,
+                            over_1_5: (hScore + aScore) > 1.5,
+                            over_2_5: (hScore + aScore) > 2.5,
+                            gg_ng: (hScore > 0 && aScore > 0) ? 'GG' : 'NG'
+                        },
+                        status: 'FINISHED',
+                        associated_at: r.uploaded_at || new Date().toISOString()
+                    };
+                });
+                saveToLocalCollection('match_played', converted);
+                return converted;
+            }
+        } catch (_) {}
+    }
+
     return items.slice(offset, offset + limit);
 }
 
@@ -1036,7 +1092,10 @@ async function getEnginePredictionsFromDb({ league, status, limit = 500, offset 
             if (status && status !== 'ALL') q = q.eq('status', status);
             q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
             const { data, error } = await withTimeout(q, 3500);
-            if (!error && data && data.length > 0) return data;
+            if (!error && data && data.length > 0) {
+                saveToLocalCollection('engine_predictions', data);
+                return data;
+            }
         } catch (_) {}
     }
 

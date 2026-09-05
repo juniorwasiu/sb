@@ -5506,6 +5506,8 @@ app.get('/api/matches/played', async (req, res) => {
 });
 
 // 4. Unified dashboard endpoint returning In-Play, Upcoming (Not Started), and Played separately on the same request
+let lastKnownDashboard = { inPlay: [], upcoming: [], played: [] };
+
 app.get('/api/matches/dashboard', async (req, res) => {
     try {
         const league = req.query.league || 'ALL';
@@ -5518,11 +5520,24 @@ app.get('/api/matches/dashboard', async (req, res) => {
 
         const telemetryStart = logMemoryStep('GET /api/matches/dashboard [START]', `League: ${league}, Limit: ${limit}`);
 
-        const [inPlay, upcoming, played] = await Promise.all([
+        let [inPlay, upcoming, played] = await Promise.all([
             getUpcomingMatchesFromDb({ league, status: 'IN_PLAY', limit: 200 }),
             getUpcomingMatchesFromDb({ league, status: 'UPCOMING', limit: limit }),
             getPlayedMatchesFromDb({ league, limit: limit })
         ]);
+
+        // Safety fallback to prevent temporary blips or empty responses from erasing UI state
+        if ((!played || played.length === 0) && lastKnownDashboard.played.length > 0 && league === 'ALL') {
+            played = lastKnownDashboard.played;
+        } else if (played && played.length > 0 && league === 'ALL') {
+            lastKnownDashboard.played = played;
+        }
+
+        if ((!upcoming || upcoming.length === 0) && lastKnownDashboard.upcoming.length > 0 && league === 'ALL') {
+            upcoming = lastKnownDashboard.upcoming;
+        } else if (upcoming && upcoming.length > 0 && league === 'ALL') {
+            lastKnownDashboard.upcoming = upcoming;
+        }
 
         const telemetryEnd = logMemoryStep('GET /api/matches/dashboard [DONE]', `InPlay: ${inPlay.length}, Upcoming: ${upcoming.length}, Played: ${played.length}`);
 
