@@ -113,25 +113,37 @@ function getLiveMatchProgress(matchTime, now = new Date()) {
   return { minuteText: "90' FT", isLive: true };
 }
 
-// ── West Africa Time (WAT = UTC+1) Helper for Yesterday 07:00 AM Threshold ────
-function getYesterday7amWatThreshold() {
+// ── West Africa Time (WAT = UTC+1) Helper for Last 07:00 AM Restart Session ──
+function getLast7amWatThreshold() {
   const now = new Date();
   const watOffsetMs = 1 * 60 * 60 * 1000;
   const watNow = new Date(now.getTime() + watOffsetMs);
 
+  const watHour = watNow.getUTCHours();
   const yYear = watNow.getUTCFullYear();
   const yMonth = watNow.getUTCMonth();
-  const yDate = watNow.getUTCDate() - 1;
+  const yDate = watNow.getUTCDate();
 
-  // 07:00:00 AM WAT corresponds to 06:00:00 AM UTC
-  return new Date(Date.UTC(yYear, yMonth, yDate, 6, 0, 0, 0));
+  // If current WAT hour is >= 7, the last restart occurred TODAY at 07:00 AM WAT.
+  // If current WAT hour is < 7, the last restart occurred YESTERDAY at 07:00 AM WAT.
+  const startDay = watHour >= 7 ? yDate : yDate - 1;
+  const isToday = watHour >= 7;
+
+  // 07:00 AM WAT corresponds to 06:00 AM UTC
+  const thresholdUtc = new Date(Date.UTC(yYear, yMonth, startDay, 6, 0, 0, 0));
+  return {
+    thresholdUtc,
+    isToday,
+    watHour,
+    formattedWat: (isToday ? 'Today ' : 'Yesterday ') + '07:00 WAT'
+  };
 }
 
 function isMatchInTimeRange(m, timeFilter) {
   if (timeFilter === 'ALL' || !timeFilter) return true;
-  if (timeFilter === '24H_WAT') {
-    const threshold = getYesterday7amWatThreshold();
-    const thresholdMs = threshold.getTime();
+  if (timeFilter === 'SINCE_7AM_WAT') {
+    const { thresholdUtc } = getLast7amWatThreshold();
+    const thresholdMs = thresholdUtc.getTime();
 
     // 1. Check associated_at or uploaded_at or created_at ISO timestamps
     const iso = m.associated_at || m.uploaded_at || m.created_at;
@@ -161,6 +173,7 @@ function isMatchInTimeRange(m, timeFilter) {
           if (!isNaN(tParts[0])) hour = tParts[0];
           if (!isNaN(tParts[1])) min = tParts[1];
         }
+        // Match timestamp in UTC
         const matchUtc = Date.UTC(year, month - 1, day, hour, min, 0);
         return matchUtc >= thresholdMs;
       }
@@ -182,8 +195,8 @@ export default function UnifiedMatchCenter() {
   const [selectedH2HMatch, setSelectedH2HMatch] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Time Window Filter State ('24H_WAT' = from yesterday 07:00 AM WAT to now | 'ALL')
-  const [timeFilter, setTimeFilter] = useState('24H_WAT');
+  // Time Window Filter State ('SINCE_7AM_WAT' = from last 07:00 AM WAT restart | 'ALL')
+  const [timeFilter, setTimeFilter] = useState('SINCE_7AM_WAT');
 
   // Repetitive Winning Odds Intelligence State (Collapsed by default)
   const [recurringMarket, setRecurringMarket] = useState('ALL'); // 'ALL' | 'HOME' | 'AWAY' | 'DRAW'
@@ -208,8 +221,9 @@ export default function UnifiedMatchCenter() {
 
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const lastWatInfo = useMemo(() => getLast7amWatThreshold(), [currentTime]);
 
-  // ── Time-Filtered Played Matches (Last 24 Hours from yesterday 07:00 WAT vs All Time) ──
+  // ── Time-Filtered Played Matches (Since Last 07:00 AM WAT restart vs All Time) ──
   const timeFilteredPlayed = useMemo(() => {
     return playedMatches.filter(m => isMatchInTimeRange(m, timeFilter));
   }, [playedMatches, timeFilter]);
@@ -1703,15 +1717,15 @@ export default function UnifiedMatchCenter() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => setTimeFilter('24H_WAT')}
+                      onClick={() => setTimeFilter('SINCE_7AM_WAT')}
                       style={{
-                        background: timeFilter === '24H_WAT' ? 'rgba(0, 229, 255, 0.22)' : 'rgba(255, 255, 255, 0.04)',
-                        color: timeFilter === '24H_WAT' ? NEON : 'var(--text-secondary)',
-                        border: `1px solid ${timeFilter === '24H_WAT' ? NEON : 'rgba(255, 255, 255, 0.1)'}`,
+                        background: timeFilter === 'SINCE_7AM_WAT' ? 'rgba(0, 229, 255, 0.22)' : 'rgba(255, 255, 255, 0.04)',
+                        color: timeFilter === 'SINCE_7AM_WAT' ? NEON : 'var(--text-secondary)',
+                        border: `1px solid ${timeFilter === 'SINCE_7AM_WAT' ? NEON : 'rgba(255, 255, 255, 0.1)'}`,
                         padding: '6px 14px',
                         borderRadius: '8px',
                         fontSize: '0.82rem',
-                        fontWeight: timeFilter === '24H_WAT' ? 800 : 500,
+                        fontWeight: timeFilter === 'SINCE_7AM_WAT' ? 800 : 500,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -1719,16 +1733,16 @@ export default function UnifiedMatchCenter() {
                         transition: 'all 0.15s ease'
                       }}
                     >
-                      <span>⚡ Last 24 Hours</span>
+                      <span>⚡ Current Session</span>
                       <span style={{
                         fontSize: '0.68rem',
-                        background: timeFilter === '24H_WAT' ? 'rgba(0, 229, 255, 0.3)' : 'rgba(255, 255, 255, 0.08)',
+                        background: timeFilter === 'SINCE_7AM_WAT' ? 'rgba(0, 229, 255, 0.3)' : 'rgba(255, 255, 255, 0.08)',
                         padding: '2px 7px',
                         borderRadius: '10px',
-                        color: timeFilter === '24H_WAT' ? '#FFF' : 'var(--text-muted)',
+                        color: timeFilter === 'SINCE_7AM_WAT' ? '#FFF' : 'var(--text-muted)',
                         fontWeight: 700
                       }}>
-                        From Yesterday 07:00 WAT
+                        Since Last 07:00 WAT ({lastWatInfo.formattedWat})
                       </span>
                     </button>
 
@@ -1765,10 +1779,10 @@ export default function UnifiedMatchCenter() {
                   </div>
 
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: timeFilter === '24H_WAT' ? NEON : GREEN }} />
+                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: timeFilter === 'SINCE_7AM_WAT' ? NEON : GREEN }} />
                     <span>
-                      {timeFilter === '24H_WAT'
-                        ? `Showing ${displayedPlayed.length} matches from yesterday 07:00 AM WAT to now`
+                      {timeFilter === 'SINCE_7AM_WAT'
+                        ? `Showing ${displayedPlayed.length} matches since the last 07:00 AM WAT restart (${lastWatInfo.formattedWat})`
                         : `Showing all ${displayedPlayed.length} historical verified matches`}
                     </span>
                   </div>
