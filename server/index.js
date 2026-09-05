@@ -82,8 +82,8 @@ const corsOptions = {
     exposedHeaders: ['Content-Range', 'X-Content-Range']
 };
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
 
+// Explicit preflight and CORS header fallback middleware
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
