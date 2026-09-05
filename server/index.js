@@ -5423,7 +5423,7 @@ const {
     getEnginePredictionsFromDb
 } = require('./database/supabase');
 const { analyzeH2H } = require('./analytics/multi_engine_analyzer');
-const { associateMatches } = require('./analytics/match_lifecycle_engine');
+const { associateMatches, normalizeLeague } = require('./analytics/match_lifecycle_engine');
 const {
     autoRunEnginePredictions,
     autoEvaluateEnginePredictions
@@ -5590,9 +5590,12 @@ app.get('/api/matches/h2h-analysis', async (req, res) => {
         const h2hMatches = await getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit: 500 });
 
         // Query recent league matches for league-specific empirical scoreline and form modeling
-        const playedMatches = await getMatchesFromDb(300).catch(() => []);
-        const normLeague = normalizeLeague(league, homeTeam, awayTeam);
-        const leagueMatches = playedMatches.filter(m => normalizeLeague(m.league, m.home_team, m.away_team) === normLeague);
+        let leagueMatches = [];
+        try {
+            const playedMatches = await getMatchesFromDb(200).catch(() => []);
+            const normLeague = normalizeLeague(league, homeTeam, awayTeam);
+            leagueMatches = (playedMatches || []).filter(m => normalizeLeague(m.league, m.home_team, m.away_team) === normLeague);
+        } catch (_) {}
 
         // Run all specialized predictive and statistical engines in parallel
         const analysis = analyzeH2H(h2hMatches, {
