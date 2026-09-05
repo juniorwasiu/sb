@@ -253,11 +253,16 @@ function formatDisplayDate(dateStr) {
 //   D: body.innerText parser        — last resort text-based fallback
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Module-scoped scraper controller — fixes the scoping bug in stopContinuousScraper
-// where `browser` and `shouldRestart` were only defined inside startContinuousScraper
-const _scraperCtrl = { browser: null, shouldStop: false };
+// Module-scoped scraper controller — ensures singleton execution so scraper
+// runs autonomously 24/7 in the background and cannot be spawned multiple times
+const _scraperCtrl = { browser: null, shouldStop: false, isRunning: false };
 
 async function startContinuousScraper(updateCallback) {
+    if (_scraperCtrl.isRunning) {
+        console.log('[DEBUG] [Live Scraper] Continuous scraper is already running autonomously in background (singleton lock active). Ignoring duplicate start request.');
+        return;
+    }
+    _scraperCtrl.isRunning = true;
     _scraperCtrl.shouldStop = false;
 
     // ─── Outer restart loop — fully relaunches Chrome on fatal frame detach ────
@@ -512,6 +517,7 @@ async function getHistoricalResults(pageNumber) {
 // ── Cleanup Helper ───────────────────────────────────────────────────────────
 async function stopContinuousScraper() {
     _scraperCtrl.shouldStop = true;
+    _scraperCtrl.isRunning = false;
     if (_scraperCtrl.browser) {
         console.log('[DEBUG] [Live Scraper] 🛑 Shutting down browser instance...');
         try { await _scraperCtrl.browser.close(); } catch (_) { }

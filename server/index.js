@@ -105,6 +105,19 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+const { updateServerUrl } = require('./analytics/keep_alive_service');
+
+// ── 24/7 Keep-Alive Host Auto-Registration Middleware ────────────────────────
+// Captures the public domain from real user visits and keeps Render awake 24/7
+app.use((req, res, next) => {
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+        updateServerUrl(`${proto}://${host}`);
+    }
+    next();
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Static file serving — serves the built React frontend in production.
 // When deployed on Railway, "npm run build" copies client/dist → server/public

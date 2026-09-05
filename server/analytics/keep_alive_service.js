@@ -14,13 +14,17 @@ const http = require('http');
 let keepAliveInterval = null;
 let isKeepAliveRunning = false;
 
-const DEFAULT_INTERVAL_MS = 8 * 60 * 1000; // 8 minutes (well under Render's 15-min sleep threshold)
+// 4.5 minutes interval — well under Render's 15-minute free-tier idle hibernation limit
+const DEFAULT_INTERVAL_MS = 4.5 * 60 * 1000;
 const pingHistory = [];
 const MAX_PING_HISTORY = 20;
+
+let discoveredServerUrl = '';
 
 let stats = {
     enabled: true,
     targetUrl: '',
+    localUrl: '',
     totalPings: 0,
     successfulPings: 0,
     failedPings: 0,
@@ -31,7 +35,23 @@ let stats = {
 };
 
 /**
- * Resolves the public server URL from environment variables or sensible default.
+ * Dynamically register or update the public server URL based on incoming requests
+ */
+function updateServerUrl(url) {
+    if (!url || typeof url !== 'string') return;
+    let clean = url.trim().replace(/\/+$/, '');
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+        clean = `https://${clean}`;
+    }
+    if (clean && clean !== discoveredServerUrl) {
+        discoveredServerUrl = clean;
+        stats.targetUrl = `${clean}/api/health`;
+        console.log(`[Keep-Alive] 🌐 Auto-detected public host: ${clean}`);
+    }
+}
+
+/**
+ * Resolves the public server URL from environment variables, auto-discovery, or default fallback.
  */
 function resolveServerUrl() {
     const candidate =
@@ -39,6 +59,7 @@ function resolveServerUrl() {
         process.env.SERVER_URL ||
         process.env.APP_URL ||
         process.env.BASE_URL ||
+        discoveredServerUrl ||
         'https://sb-te5s.onrender.com';
 
     let cleanUrl = candidate.trim().replace(/\/+$/, '');
@@ -49,86 +70,102 @@ function resolveServerUrl() {
 }
 
 /**
- * Execute a single keep-alive ping.
+ * Helper to perform an HTTP/HTTPS GET request
  */
-function pingSelfNow(targetEndpoint = '/api/health') {
+function performGet(fullUrl, timeoutMs = 15000) {
     return new Promise((resolve) => {
-        const baseUrl = resolveServerUrl();
-        const fullUrl = `${baseUrl}${targetEndpoint}`;
-        stats.targetUrl = fullUrl;
-
         const startMs = Date.now();
-        const urlObj = new URL(fullUrl);
-        const client = urlObj.protocol === 'https:' ? https : http;
+        try {
+            const urlObj = new URL(fullUrl);
+            const client = urlObj.protocol === 'https:' ? https : http;
 
-        console.log(`[Keep-Alive] 📡 Sending 24/7 self-ping to: ${fullUrl}...`);
-
-        const req = client.get(fullUrl, {
-            headers: {
-                'User-Agent': 'KeepAlive-Service/1.0 (24/7 Render Keep-Alive)'
-            },
-            timeout: 15000
-        }, (res) => {
-            let data = '';
-            res.on('data', chunk => { data += chunk; });
-            res.on('end', () => {
-                const durationMs = Date.now() - startMs;
-                const isSuccess = res.statusCode >= 200 && res.statusCode < 400;
-
-                stats.totalPings++;
-                if (isSuccess) stats.successfulPings++;
-                else stats.failedPings++;
-
-                stats.lastPingTime = new Date().toISOString();
-                stats.lastPingDurationMs = durationMs;
-                stats.lastStatus = isSuccess ? `SUCCESS (${res.statusCode})` : `HTTP ${res.statusCode}`;
-                stats.lastError = null;
-
-                const entry = {
-                    timestamp: stats.lastPingTime,
-                    url: fullUrl,
-                    statusCode: res.statusCode,
-                    durationMs,
-                    success: isSuccess
-                };
-                recordPing(entry);
-
-                console.log(`[Keep-Alive] ✅ Self-ping successful! [${res.statusCode}] in ${durationMs}ms — Server remains awake 24/7.`);
-                resolve({ success: true, statusCode: res.statusCode, durationMs });
+            const req = client.get(fullUrl, {
+                headers: {
+                    'User-Agent': 'KeepAlive-Service/2.0 (24/7 Render Keep-Alive)'
+                },
+                timeout: timeoutMs
+            }, (res) => {
+                let data = '';
+                res.on('data', chunk => { data += chunk; });
+                res.on('end', () => {
+                    const durationMs = Date.now() - startMs;
+                    const isSuccess = res.statusCode >= 200 && res.statusCode < 400;
+                    resolve({ success: isSuccess, statusCode: res.statusCode, durationMs });
+                });
             });
-        });
 
-        req.on('timeout', () => {
-            req.destroy();
-            handlePingFailure(new Error('Request timed out after 15s'), Date.now() - startMs, fullUrl);
-            resolve({ success: false, error: 'Timeout' });
-        });
+            req.on('timeout', () => {
+                req.destroy();
+                resolve({ success: false, error: 'Timeout', durationMs: Date.now() - startMs });
+            });
 
-        req.on('error', (err) => {
-            handlePingFailure(err, Date.now() - startMs, fullUrl);
-            resolve({ success: false, error: err.message });
-        });
+            req.on('error', (err) => {
+                resolve({ success: false, error: err.message, durationMs: Date.now() - startMs });
+            });
+        } catch (parseErr) {
+            resolve({ success: false, error: parseErr.message, durationMs: Date.now() - startMs });
+        }
     });
 }
 
-function handlePingFailure(err, durationMs, fullUrl) {
+/**
+ * Execute a keep-alive ping to both external public URL and local loopback.
+ */
+async function pingSelfNow(targetEndpoint = '/api/health') {
+    const baseUrl = resolveServerUrl();
+    const fullUrl = `${baseUrl}${targetEndpoint}`;
+    stats.targetUrl = fullUrl;
+
+    const port = process.env.PORT || 3001;
+    const localUrl = `http://127.0.0.1:${port}${targetEndpoint}`;
+    stats.localUrl = localUrl;
+
+    console.log(`[Keep-Alive] 📡 Sending 24/7 self-ping to: ${fullUrl}...`);
+
+    // Ping external public endpoint (keeps Render edge router and container awake)
+    const extResult = await performGet(fullUrl, 15000);
+
+    // Also ping local loopback
+    performGet(localUrl, 5000).catch(() => {});
+
     stats.totalPings++;
-    stats.failedPings++;
     stats.lastPingTime = new Date().toISOString();
-    stats.lastPingDurationMs = durationMs;
-    stats.lastStatus = 'FAILED';
-    stats.lastError = err.message;
+    stats.lastPingDurationMs = extResult.durationMs;
 
-    recordPing({
-        timestamp: stats.lastPingTime,
-        url: fullUrl,
-        statusCode: null,
-        durationMs,
-        success: false,
-        error: err.message
-    });
+    if (extResult.success) {
+        stats.successfulPings++;
+        stats.lastStatus = `SUCCESS (${extResult.statusCode})`;
+        stats.lastError = null;
 
-    console.warn(`[Keep-Alive] ⚠️ Self-ping note (${err.message}). Will retry on next scheduled interval.`);
+        const entry = {
+            timestamp: stats.lastPingTime,
+            url: fullUrl,
+            statusCode: extResult.statusCode,
+            durationMs: extResult.durationMs,
+            success: true
+        };
+        recordPing(entry);
+
+        console.log(`[Keep-Alive] ✅ Self-ping successful! [${extResult.statusCode}] in ${extResult.durationMs}ms — Server running 24/7 in background.`);
+        return { success: true, statusCode: extResult.statusCode, durationMs: extResult.durationMs };
+    } else {
+        stats.failedPings++;
+        stats.lastStatus = 'FAILED';
+        stats.lastError = extResult.error || `HTTP ${extResult.statusCode}`;
+
+        const entry = {
+            timestamp: stats.lastPingTime,
+            url: fullUrl,
+            statusCode: extResult.statusCode || null,
+            durationMs: extResult.durationMs,
+            success: false,
+            error: stats.lastError
+        };
+        recordPing(entry);
+
+        console.warn(`[Keep-Alive] ⚠️ Self-ping note (${stats.lastError}). Will retry on next scheduled interval.`);
+        return { success: false, error: stats.lastError };
+    }
 }
 
 function recordPing(entry) {
@@ -161,10 +198,10 @@ function startKeepAliveService(intervalMs = DEFAULT_INTERVAL_MS) {
     const intervalMinutes = (intervalMs / 1000 / 60).toFixed(1);
     console.log(`[Keep-Alive] 🚀 24/7 Keep-Alive Service started. Target: ${stats.targetUrl} (every ${intervalMinutes} mins)`);
 
-    // First ping after 30 seconds (after server boot settles)
+    // First ping after 20 seconds (after server boot settles)
     setTimeout(() => {
         pingSelfNow();
-    }, 30000);
+    }, 20000);
 
     // Recurring ping loop
     keepAliveInterval = setInterval(() => {
@@ -194,5 +231,6 @@ module.exports = {
     stopKeepAliveService,
     pingSelfNow,
     getKeepAliveStatus,
-    resolveServerUrl
+    resolveServerUrl,
+    updateServerUrl
 };
