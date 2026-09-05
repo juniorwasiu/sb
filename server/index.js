@@ -5109,11 +5109,30 @@ async function savePredictionsToHistory(league, matches, predictions) {
     }
 }
 
+// In-memory short-lived route cache to prevent gateway timeouts & connection spikes
+const apiRouteCache = new Map();
+function getCachedApiResponse(key, ttlMs = 4000) {
+    const entry = apiRouteCache.get(key);
+    if (entry && (Date.now() - entry.timestamp) < ttlMs) {
+        return entry.data;
+    }
+    return null;
+}
+function setCachedApiResponse(key, data) {
+    apiRouteCache.set(key, { data, timestamp: Date.now() });
+}
+
 // 6. GET predictions history resolved against completed scores
 app.get('/api/local-vfootball/predictions-history', async (req, res) => {
     console.log('[DEBUG] [Local API] GET /api/local-vfootball/predictions-history requested');
     const leagueQuery    = req.query.league || 'England League';
     const targetDbLeague = (leagueQuery === 'all' || leagueQuery === 'All Leagues' || leagueQuery === 'All') ? null : toDbLeague(leagueQuery);
+    const cacheKey = `pred_hist_${targetDbLeague || 'all'}`;
+
+    const cached = getCachedApiResponse(cacheKey, 3000);
+    if (cached) {
+        return res.json(cached);
+    }
 
     try {
         console.log(`[DEBUG] [Predictions History] Fetching history for league: "${leagueQuery}" (db key: "${targetDbLeague}")`);
@@ -5133,7 +5152,9 @@ app.get('/api/local-vfootball/predictions-history', async (req, res) => {
         resolvedHistory.sort((a, b) => new Date(b.capturedAt) - new Date(a.capturedAt));
 
         console.log(`[DEBUG] [Local API] Returning ${resolvedHistory.length} resolved rounds for "${leagueQuery}".`);
-        res.json({ success: true, history: resolvedHistory });
+        const responseData = { success: true, history: resolvedHistory };
+        setCachedApiResponse(cacheKey, responseData);
+        res.json(responseData);
     } catch (err) {
         console.error('[DEBUG] [Local API] Failed to fetch predictions history:', err.message);
         res.status(500).json({ success: false, error: `Failed to load predictions history: ${err.message}` });
@@ -5316,14 +5337,18 @@ async function runAutoScrapeResults() {
     }
 }
 
-// Trigger once on server startup, then poll every 180 seconds (increased to a multiple of 2)
-setTimeout(() => {
-    runAutoScrapeResults();
-}, 5000); // 5 seconds after boot
+// Background results scraper: opt-in via ENABLE_RESULTS_AUTO_SCRAPER to preserve memory on single-instance hosting
+if (process.env.ENABLE_RESULTS_AUTO_SCRAPER === 'true') {
+    setTimeout(() => {
+        runAutoScrapeResults();
+    }, 15000);
 
-setInterval(() => {
-    runAutoScrapeResults();
-}, 180 * 1000); // 180 seconds (3 minutes)
+    setInterval(() => {
+        runAutoScrapeResults();
+    }, 180 * 1000);
+} else {
+    console.log('[DEBUG] [Server] ⏸️ ENABLE_RESULTS_AUTO_SCRAPER is not set to "true". Background results scraper skipped on boot to conserve memory.');
+}
 
 // Automatically run pending predictions outcome resolution check every 60 seconds in the background
 setInterval(() => {
@@ -5369,18 +5394,18 @@ const {
     autoEvaluateEnginePredictions
 } = require('./analytics/engine_prediction_pipeline');
 
-// Autonomous lifecycle association: runs continuously every 15 seconds and immediately on boot
+// Autonomous lifecycle association: runs periodically in background
 setTimeout(() => {
     associateMatches().catch(err => {
         console.warn('[Match Lifecycle] Boot auto-association note:', err.message);
     });
-}, 5000);
+}, 10000);
 
 setInterval(() => {
     associateMatches().catch(err => {
         console.warn('[Match Lifecycle] Autonomous association note:', err.message);
     });
-}, 15 * 1000);
+}, 30 * 1000);
 
 // Autonomous Multi-Engine Prediction & Evaluation Pipeline:
 // Runs auto-prediction generation and auto-evaluation loops continuously in background
@@ -5391,19 +5416,19 @@ setTimeout(() => {
     autoEvaluateEnginePredictions().catch(err => {
         console.warn('[Engine Pipeline] Boot auto-evaluation note:', err.message);
     });
-}, 8000);
+}, 15000);
 
 setInterval(() => {
     autoRunEnginePredictions().catch(err => {
         console.warn('[Engine Pipeline] Autonomous prediction note:', err.message);
     });
-}, 20 * 1000); // Every 20 seconds
+}, 30 * 1000); // Every 30 seconds
 
 setInterval(() => {
     autoEvaluateEnginePredictions().catch(err => {
         console.warn('[Engine Pipeline] Autonomous evaluation note:', err.message);
     });
-}, 25 * 1000); // Every 25 seconds
+}, 40 * 1000); // Every 40 seconds
 
 
 
@@ -5449,19 +5474,27 @@ app.get('/api/matches/played', async (req, res) => {
 app.get('/api/matches/dashboard', async (req, res) => {
     try {
         const league = req.query.league || 'ALL';
+        const cacheKey = `dashboard_${league}`;
+        const cached = getCachedApiResponse(cacheKey, 3000);
+        if (cached) {
+            return res.json(cached);
+        }
+
         const [inPlay, upcoming, played] = await Promise.all([
             getUpcomingMatchesFromDb({ league, status: 'IN_PLAY', limit: 100 }),
             getUpcomingMatchesFromDb({ league, status: 'UPCOMING', limit: 100 }),
             getPlayedMatchesFromDb({ league, limit: 100 })
         ]);
 
-        res.json({
+        const responseData = {
             success: true,
             league,
             in_play: { count: inPlay.length, data: inPlay },
             upcoming: { count: upcoming.length, data: upcoming },
             played: { count: played.length, data: played }
-        });
+        };
+        setCachedApiResponse(cacheKey, responseData);
+        res.json(responseData);
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -5550,12 +5583,20 @@ app.get('/api/engine-predictions', async (req, res) => {
         const limit = parseInt(req.query.limit, 10) || 100;
         const offset = parseInt(req.query.offset, 10) || 0;
 
+        const cacheKey = `eng_pred_${league}_${status}_${limit}_${offset}`;
+        const cached = getCachedApiResponse(cacheKey, 3000);
+        if (cached) {
+            return res.json(cached);
+        }
+
         const predictions = await getEnginePredictionsFromDb({ league, status, limit, offset });
-        res.json({
+        const responseData = {
             success: true,
             count: predictions.length,
             data: predictions
-        });
+        };
+        setCachedApiResponse(cacheKey, responseData);
+        res.json(responseData);
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
