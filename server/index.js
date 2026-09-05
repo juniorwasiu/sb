@@ -73,7 +73,28 @@ function broadcastLiveScores(data, scraperStatus = 'live') {
     liveScoresEmitter.emit('update', { data, status: scraperStatus, timestamp: Date.now() });
 }
 const app = express();
-app.use(cors());
+
+const corsOptions = {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Range'],
+    exposedHeaders: ['Content-Range', 'X-Content-Range']
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Range');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
+
 app.use(express.json());
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -573,17 +594,22 @@ async function runDailyAutoSync() {
     autoSyncRunning = false;
 }
 
-// Run once immediately on boot (after a short delay so MongoDB is ready)
-setTimeout(() => {
-    console.log('[Auto-Sync] 🚀 Running initial daily sync on startup...');
-    runDailyAutoSync();
-}, 15000); // 15s delay to let DB connection settle
+// Auto-sync historical results can be enabled explicitly via ENABLE_DAILY_AUTO_SYNC=true
+if (process.env.ENABLE_DAILY_AUTO_SYNC === 'true') {
+    // Run once after boot (after a short delay so DB connection settles)
+    setTimeout(() => {
+        console.log('[Auto-Sync] 🚀 Running initial daily sync on startup...');
+        runDailyAutoSync();
+    }, 15000);
 
-// Then repeat every 10 minutes
-setInterval(() => {
-    console.log('[Auto-Sync] ⏰ 10-minute interval triggered.');
-    runDailyAutoSync();
-}, AUTO_SYNC_INTERVAL_MS);
+    // Then repeat every 10 minutes
+    setInterval(() => {
+        console.log('[Auto-Sync] ⏰ 10-minute interval triggered.');
+        runDailyAutoSync();
+    }, AUTO_SYNC_INTERVAL_MS);
+} else {
+    console.log('[DEBUG] [Server] ⏸️ ENABLE_DAILY_AUTO_SYNC is not set to "true". Multi-league batch scraper skipped on boot to conserve memory (available on-demand via Admin Panel).');
+}
 
 // Start the single long-lived Chrome window immediately on server boot (unless disabled via ENABLE_LIVE_SCRAPER=false)
 const enableLiveScraper = process.env.ENABLE_LIVE_SCRAPER !== 'false';

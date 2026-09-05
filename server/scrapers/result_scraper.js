@@ -165,18 +165,28 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
                 executablePath: getChromePath(),
                 headless: 'new',
                 args: [
-                    '--start-maximized',
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-software-rasterizer',
+                    '--no-zygote',
+                    '--disable-extensions',
+                    '--disable-background-networking',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-breakpad',
+                    '--mute-audio',
+                    '--no-first-run',
                     '--disable-blink-features=AutomationControlled',
                     '--disable-infobars',
-                    '--window-size=1366,768'
+                    '--js-flags=--max-old-space-size=128',
+                    '--window-size=1280,720'
                 ]
             });
 
             const page = await browser.newPage();
-            await page.setViewport({ width: 1366, height: 768 });
+            await page.setViewport({ width: 1280, height: 720 });
 
             // Set User Agent and hide automation footprint to bypass WAF
             await page.setUserAgent(
@@ -185,6 +195,19 @@ async function nativeCaptureLeagueResults(leagueName, targetDate = null, options
             await page.evaluateOnNewDocument(() => {
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             });
+
+            // Block heavy media/fonts/images to conserve memory
+            try {
+                await page.setRequestInterception(true);
+                page.on('request', (interceptedReq) => {
+                    const resourceType = interceptedReq.resourceType();
+                    if (['image', 'media', 'font'].includes(resourceType)) {
+                        interceptedReq.abort();
+                    } else {
+                        interceptedReq.continue();
+                    }
+                });
+            } catch (_) {}
 
             console.log(`[Native Scraper] [Attempt ${attempt}/${maxAttempts}] 🌐 Navigating to results page...`);
             await page.goto('https://www.sportybet.com/ng/liveResult/', { 
