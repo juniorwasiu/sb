@@ -105,11 +105,18 @@ function evaluatePrediction(pred, actualMatch) {
     };
 }
 
+let isAutoPredictRunning = false;
+let isAutoEvalRunning = false;
+
 /**
  * Automatically runs the multi-engine analysis for active upcoming/in-play matches.
  * Idempotent: Does not re-predict if a pending or evaluated prediction already exists.
  */
 async function autoRunEnginePredictions() {
+    if (isAutoPredictRunning) {
+        return { generated: 0, message: 'Prediction cycle already in progress' };
+    }
+    isAutoPredictRunning = true;
     try {
         // 1. Get active matches
         const activeMatches = await getUpcomingMatchesFromDb({ status: 'ALL_ACTIVE', limit: 120 });
@@ -201,6 +208,8 @@ async function autoRunEnginePredictions() {
     } catch (err) {
         console.error('[Engine Pipeline] ❌ Error in autoRunEnginePredictions:', err.message);
         return { generated: 0, error: err.message };
+    } finally {
+        isAutoPredictRunning = false;
     }
 }
 
@@ -208,6 +217,10 @@ async function autoRunEnginePredictions() {
  * Automatically evaluates all pending predictions against verified finished match results.
  */
 async function autoEvaluateEnginePredictions() {
+    if (isAutoEvalRunning) {
+        return { evaluated: 0, message: 'Evaluation cycle already in progress' };
+    }
+    isAutoEvalRunning = true;
     try {
         // 1. Fetch pending predictions
         const pendingPreds = await getEnginePredictionsFromDb({ status: 'PENDING', limit: 300 });
@@ -272,6 +285,8 @@ async function autoEvaluateEnginePredictions() {
     } catch (err) {
         console.error('[Engine Pipeline] ❌ Error in autoEvaluateEnginePredictions:', err.message);
         return { evaluated: 0, error: err.message };
+    } finally {
+        isAutoEvalRunning = false;
     }
 }
 

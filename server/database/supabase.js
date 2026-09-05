@@ -35,6 +35,17 @@ if (supabaseUrl && supabaseKey) {
     }
 }
 
+// ── Promise Timeout Helper (Ensures remote DB queries never block HTTP requests) ──
+function withTimeout(promise, timeoutMs = 3500) {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Supabase query timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        clearTimeout(timer);
+    });
+}
+
 // ── DB row mappers ───────────────────────────────────────────────────────────
 const mapMatchToDb = (match) => {
     const dateSafe   = (match.date   || '').replace(/\//g, '-');
@@ -647,9 +658,10 @@ async function saveUpcomingMatchesToDb(matches = []) {
 
     if (supabaseClient) {
         try {
-            const { error } = await supabaseClient
-                .from('upcoming_matches')
-                .upsert(rows, { onConflict: 'id' });
+            const { error } = await withTimeout(
+                supabaseClient.from('upcoming_matches').upsert(rows, { onConflict: 'id' }),
+                3500
+            );
             if (!error) {
                 console.log(`[SUPABASE] ✅ Saved/Updated ${rows.length} matches (In-play & Upcoming) with DOM odds.`);
                 saveToLocalCollection('upcoming_matches', rows);
@@ -657,9 +669,10 @@ async function saveUpcomingMatchesToDb(matches = []) {
             } else if (error.message && error.message.includes('live_score')) {
                 // Schema fallback: retry without live_score for backward compatibility
                 const cleanRows = rows.map(({ live_score, ...rest }) => rest);
-                const { error: retryErr } = await supabaseClient
-                    .from('upcoming_matches')
-                    .upsert(cleanRows, { onConflict: 'id' });
+                const { error: retryErr } = await withTimeout(
+                    supabaseClient.from('upcoming_matches').upsert(cleanRows, { onConflict: 'id' }),
+                    3500
+                );
                 if (!retryErr) {
                     console.log(`[SUPABASE] ✅ Saved ${rows.length} matches (schema fallback without live_score).`);
                     saveToLocalCollection('upcoming_matches', rows);
@@ -687,7 +700,7 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 1
             if (status && status !== 'ALL_ACTIVE' && status !== 'ALL_UNRESOLVED') q = q.eq('status', status);
             else if (status === 'ALL_UNRESOLVED') q = q.neq('status', 'PLAYED');
             q = q.order('scraped_at', { ascending: false }).limit(limit * 3);
-            const { data, error } = await q;
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) items = data;
         } catch (_) {}
     }
@@ -853,9 +866,10 @@ async function savePlayedMatchesToDb(matches = []) {
 
     if (supabaseClient) {
         try {
-            const { error } = await supabaseClient
-                .from('match_played')
-                .upsert(rows, { onConflict: 'id' });
+            const { error } = await withTimeout(
+                supabaseClient.from('match_played').upsert(rows, { onConflict: 'id' }),
+                3500
+            );
             if (!error) {
                 console.log(`[SUPABASE] ✅ Saved/Updated ${rows.length} played matches with full details into match_played.`);
                 saveToLocalCollection('match_played', rows);
@@ -879,7 +893,7 @@ async function getPlayedMatchesFromDb({ league, date, limit = 100, offset = 0 } 
             if (league && league !== 'ALL') q = q.eq('league', league);
             if (date) q = q.eq('match_date', date);
             q = q.order('associated_at', { ascending: false }).range(offset, offset + limit - 1);
-            const { data, error } = await q;
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) return data;
         } catch (_) {}
     }
@@ -908,7 +922,7 @@ async function getH2HMatchesFromDb(homeTeam, awayTeam, { league, limit = 500 } =
                 .order('uploaded_at', { ascending: false })
                 .limit(limit);
 
-            const { data, error } = await q;
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
                 results = data.map(mapMatchFromDb);
             }
@@ -973,9 +987,10 @@ async function saveEnginePredictionsToDb(predictions = []) {
 
     if (supabaseClient) {
         try {
-            const { error } = await supabaseClient
-                .from('engine_predictions')
-                .upsert(rows, { onConflict: 'id' });
+            const { error } = await withTimeout(
+                supabaseClient.from('engine_predictions').upsert(rows, { onConflict: 'id' }),
+                3500
+            );
             if (!error) {
                 console.log(`[SUPABASE] ✅ Saved/Updated ${rows.length} engine predictions in Supabase.`);
                 saveToLocalCollection('engine_predictions', rows);
@@ -999,7 +1014,7 @@ async function getEnginePredictionsFromDb({ league, status, limit = 100, offset 
             if (league && league !== 'ALL') q = q.eq('league', league);
             if (status && status !== 'ALL') q = q.eq('status', status);
             q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-            const { data, error } = await q;
+            const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) return data;
         } catch (_) {}
     }
@@ -1029,7 +1044,10 @@ async function updateEnginePredictionInDb(id, updates = {}) {
     const patch = { ...updates, updated_at: new Date().toISOString() };
     if (supabaseClient) {
         try {
-            await supabaseClient.from('engine_predictions').update(patch).eq('id', id);
+            await withTimeout(
+                supabaseClient.from('engine_predictions').update(patch).eq('id', id),
+                3500
+            );
         } catch (_) {}
     }
     updateLocalItem('engine_predictions', id, patch);
