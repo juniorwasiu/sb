@@ -5509,18 +5509,19 @@ app.get('/api/matches/played', async (req, res) => {
 app.get('/api/matches/dashboard', async (req, res) => {
     try {
         const league = req.query.league || 'ALL';
-        const cacheKey = `dashboard_${league}`;
+        const limit = parseInt(req.query.limit, 10) || 500;
+        const cacheKey = `dashboard_${league}_${limit}`;
         const cached = getCachedApiResponse(cacheKey, 3000);
         if (cached) {
             return res.json({ ...cached, telemetry: getServerTelemetry() });
         }
 
-        const telemetryStart = logMemoryStep('GET /api/matches/dashboard [START]', `League: ${league}`);
+        const telemetryStart = logMemoryStep('GET /api/matches/dashboard [START]', `League: ${league}, Limit: ${limit}`);
 
         const [inPlay, upcoming, played] = await Promise.all([
-            getUpcomingMatchesFromDb({ league, status: 'IN_PLAY', limit: 100 }),
-            getUpcomingMatchesFromDb({ league, status: 'UPCOMING', limit: 100 }),
-            getPlayedMatchesFromDb({ league, limit: 100 })
+            getUpcomingMatchesFromDb({ league, status: 'IN_PLAY', limit: 200 }),
+            getUpcomingMatchesFromDb({ league, status: 'UPCOMING', limit: limit }),
+            getPlayedMatchesFromDb({ league, limit: limit })
         ]);
 
         const telemetryEnd = logMemoryStep('GET /api/matches/dashboard [DONE]', `InPlay: ${inPlay.length}, Upcoming: ${upcoming.length}, Played: ${played.length}`);
@@ -5624,7 +5625,7 @@ app.get('/api/engine-predictions', async (req, res) => {
     try {
         const league = req.query.league || 'ALL';
         const status = req.query.status || 'ALL'; // ALL | PENDING | EVALUATED | WON | LOST
-        const limit = parseInt(req.query.limit, 10) || 100;
+        const limit = parseInt(req.query.limit, 10) || 500;
         const offset = parseInt(req.query.offset, 10) || 0;
 
         const cacheKey = `eng_pred_${league}_${status}_${limit}_${offset}`;
@@ -5633,7 +5634,7 @@ app.get('/api/engine-predictions', async (req, res) => {
             return res.json({ ...cached, telemetry: getServerTelemetry() });
         }
 
-        const telemetryStart = logMemoryStep('GET /api/engine-predictions [START]', `League: ${league}, Status: ${status}`);
+        const telemetryStart = logMemoryStep('GET /api/engine-predictions [START]', `League: ${league}, Status: ${status}, Limit: ${limit}`);
         const predictions = await getEnginePredictionsFromDb({ league, status, limit, offset });
         const telemetryEnd = logMemoryStep('GET /api/engine-predictions [DONE]', `Returned ${predictions.length} predictions`);
 

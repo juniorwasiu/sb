@@ -424,8 +424,8 @@ export default function UnifiedMatchCenter() {
 
     try {
       const [dashRes, predRes] = await Promise.all([
-        fetch(`/api/matches/dashboard`),
-        fetch(`/api/engine-predictions`)
+        fetch(`/api/matches/dashboard?limit=500`),
+        fetch(`/api/engine-predictions?limit=500`)
       ]);
 
       const roundtrip = Math.round(performance.now() - startTime);
@@ -569,9 +569,45 @@ export default function UnifiedMatchCenter() {
     return meta.name.toLowerCase().includes(target) || (m.league && m.league.toLowerCase().includes(target));
   }, [activeLeague]);
 
-  const displayedInPlay   = inPlayMatches.filter(filterByLeague);
-  const displayedUpcoming = upcomingMatches.filter(filterByLeague);
-  const displayedPlayed   = playedMatches.filter(filterByLeague);
+  // Set of played match keys for strict lifecycle deduplication
+  const playedIdSet = useMemo(() => {
+    const set = new Set();
+    playedMatches.forEach(p => {
+      if (p.id) set.add(p.id);
+      if (p.id) set.add(`played_${p.id}`);
+      set.add(`${(p.home_team || '').trim()}_${(p.away_team || '').trim()}_${(p.match_time || '').trim()}`);
+    });
+    return set;
+  }, [playedMatches]);
+
+  // 1. In-Play Matches: strictly currently live games
+  const displayedInPlay = useMemo(() => {
+    return inPlayMatches
+      .filter(filterByLeague)
+      .filter(m => !playedIdSet.has(m.id) && !playedIdSet.has(`${(m.home_team || '').trim()}_${(m.away_team || '').trim()}_${(m.match_time || '').trim()}`));
+  }, [inPlayMatches, filterByLeague, playedIdSet]);
+
+  const inPlayIdSet = useMemo(() => {
+    const set = new Set();
+    displayedInPlay.forEach(m => {
+      if (m.id) set.add(m.id);
+      set.add(`${(m.home_team || '').trim()}_${(m.away_team || '').trim()}_${(m.match_time || '').trim()}`);
+    });
+    return set;
+  }, [displayedInPlay]);
+
+  // 2. Upcoming Matches: strictly unstarted fixtures (not live, not played)
+  const displayedUpcoming = useMemo(() => {
+    return upcomingMatches
+      .filter(filterByLeague)
+      .filter(m => !playedIdSet.has(m.id) && !playedIdSet.has(`${(m.home_team || '').trim()}_${(m.away_team || '').trim()}_${(m.match_time || '').trim()}`))
+      .filter(m => !inPlayIdSet.has(m.id) && !inPlayIdSet.has(`${(m.home_team || '').trim()}_${(m.away_team || '').trim()}_${(m.match_time || '').trim()}`));
+  }, [upcomingMatches, filterByLeague, playedIdSet, inPlayIdSet]);
+
+  // 3. Played Matches: all associated and finished matches
+  const displayedPlayed = useMemo(() => {
+    return playedMatches.filter(filterByLeague);
+  }, [playedMatches, filterByLeague]);
 
   // Predictions filtering
   const allFilteredPredictions = enginePredictions.filter(filterByLeague);

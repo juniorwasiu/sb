@@ -707,7 +707,7 @@ async function saveUpcomingMatchesToDb(matches = []) {
     return { added: rows.length };
 }
 
-async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 100 } = {}) {
+async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 500 } = {}) {
     let items = [];
 
     if (supabaseClient) {
@@ -715,15 +715,16 @@ async function getUpcomingMatchesFromDb({ league, status = 'UPCOMING', limit = 1
             let q = supabaseClient.from('upcoming_matches').select('*');
             if (league && league !== 'ALL') q = q.eq('league', league);
             if (status && status !== 'ALL_ACTIVE' && status !== 'ALL_UNRESOLVED') q = q.eq('status', status);
-            else if (status === 'ALL_UNRESOLVED') q = q.neq('status', 'PLAYED');
-            q = q.order('scraped_at', { ascending: false }).limit(limit * 3);
+            else if (status === 'ALL_UNRESOLVED') q = q.neq('status', 'PLAYED').neq('status', 'FINISHED');
+            else if (status === 'UPCOMING') q = q.neq('status', 'PLAYED').neq('status', 'FINISHED');
+            q = q.order('scraped_at', { ascending: false }).limit(limit * 2);
             const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) items = data;
         } catch (_) {}
     }
     
     if (items.length === 0) {
-        items = getFromLocalCollection('upcoming_matches');
+        items = getFromLocalCollection('upcoming_matches') || [];
     }
 
     // Load recent played matches to attach real scores if available
@@ -906,7 +907,7 @@ async function savePlayedMatchesToDb(matches = []) {
     return { added: rows.length };
 }
 
-async function getPlayedMatchesFromDb({ league, date, limit = 100, offset = 0 } = {}) {
+async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } = {}) {
     if (supabaseClient) {
         try {
             let q = supabaseClient.from('match_played').select('*');
@@ -918,7 +919,7 @@ async function getPlayedMatchesFromDb({ league, date, limit = 100, offset = 0 } 
         } catch (_) {}
     }
 
-    let items = getFromLocalCollection('match_played');
+    let items = getFromLocalCollection('match_played') || [];
     if (league && league !== 'ALL') items = items.filter(i => i.league === league);
     if (date) items = items.filter(i => i.match_date === date);
     return items.slice(offset, offset + limit);
@@ -1027,7 +1028,7 @@ async function saveEnginePredictionsToDb(predictions = []) {
     return { added: rows.length };
 }
 
-async function getEnginePredictionsFromDb({ league, status, limit = 100, offset = 0 } = {}) {
+async function getEnginePredictionsFromDb({ league, status, limit = 500, offset = 0 } = {}) {
     if (supabaseClient) {
         try {
             let q = supabaseClient.from('engine_predictions').select('*');
@@ -1039,7 +1040,7 @@ async function getEnginePredictionsFromDb({ league, status, limit = 100, offset 
         } catch (_) {}
     }
 
-    let items = getFromLocalCollection('engine_predictions');
+    let items = getFromLocalCollection('engine_predictions') || [];
     if (league && league !== 'ALL') {
         const target = league.replace(' - Virtual', '').toLowerCase();
         items = items.filter(i => (i.league || '').toLowerCase().includes(target));
