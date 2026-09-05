@@ -113,6 +113,64 @@ function getLiveMatchProgress(matchTime, now = new Date()) {
   return { minuteText: "90' FT", isLive: true };
 }
 
+// ── West Africa Time (WAT = UTC+1) Helper for Yesterday 07:00 AM Threshold ────
+function getYesterday7amWatThreshold() {
+  const now = new Date();
+  const watOffsetMs = 1 * 60 * 60 * 1000;
+  const watNow = new Date(now.getTime() + watOffsetMs);
+
+  const yYear = watNow.getUTCFullYear();
+  const yMonth = watNow.getUTCMonth();
+  const yDate = watNow.getUTCDate() - 1;
+
+  // 07:00:00 AM WAT corresponds to 06:00:00 AM UTC
+  return new Date(Date.UTC(yYear, yMonth, yDate, 6, 0, 0, 0));
+}
+
+function isMatchInTimeRange(m, timeFilter) {
+  if (timeFilter === 'ALL' || !timeFilter) return true;
+  if (timeFilter === '24H_WAT') {
+    const threshold = getYesterday7amWatThreshold();
+    const thresholdMs = threshold.getTime();
+
+    // 1. Check associated_at or uploaded_at or created_at ISO timestamps
+    const iso = m.associated_at || m.uploaded_at || m.created_at;
+    if (iso) {
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) {
+        return d.getTime() >= thresholdMs;
+      }
+    }
+
+    // 2. Check match_date and match_time
+    if (m.match_date) {
+      const dStr = String(m.match_date).replace(/\//g, '-').trim();
+      let year, month, day;
+      if (dStr.includes('-')) {
+        const parts = dStr.split('-').map(Number);
+        if (parts[0] > 1000) {
+          [year, month, day] = parts;
+        } else if (parts[2] > 1000) {
+          [day, month, year] = parts;
+        }
+      }
+      if (year && month && day) {
+        let hour = 12, min = 0;
+        if (m.match_time && m.match_time.includes(':')) {
+          const tParts = m.match_time.split(':').map(Number);
+          if (!isNaN(tParts[0])) hour = tParts[0];
+          if (!isNaN(tParts[1])) min = tParts[1];
+        }
+        const matchUtc = Date.UTC(year, month - 1, day, hour, min, 0);
+        return matchUtc >= thresholdMs;
+      }
+    }
+
+    return true;
+  }
+  return true;
+}
+
 export default function UnifiedMatchCenter() {
   const [activeLeague, setActiveLeague] = useState('ALL');
   const [viewMode, setViewMode] = useState('all'); // 'all' | 'inplay' | 'upcoming' | 'played' | 'predictions'
@@ -124,12 +182,15 @@ export default function UnifiedMatchCenter() {
   const [selectedH2HMatch, setSelectedH2HMatch] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Repetitive Winning Odds Intelligence State
+  // Time Window Filter State ('24H_WAT' = from yesterday 07:00 AM WAT to now | 'ALL')
+  const [timeFilter, setTimeFilter] = useState('24H_WAT');
+
+  // Repetitive Winning Odds Intelligence State (Collapsed by default)
   const [recurringMarket, setRecurringMarket] = useState('ALL'); // 'ALL' | 'HOME' | 'AWAY' | 'DRAW'
   const [recurringMinSamples, setRecurringMinSamples] = useState(2);
   const [recurringLeagueFilter, setRecurringLeagueFilter] = useState('ALL');
   const [recurringOnlyWinning, setRecurringOnlyWinning] = useState(false);
-  const [showRecurringOddsPanel, setShowRecurringOddsPanel] = useState(true);
+  const [showRecurringOddsPanel, setShowRecurringOddsPanel] = useState(false);
 
   // Real-time Render Health & Telemetry State
   const [telemetry, setTelemetry] = useState(null);
@@ -148,17 +209,22 @@ export default function UnifiedMatchCenter() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // ── Time-Filtered Played Matches (Last 24 Hours from yesterday 07:00 WAT vs All Time) ──
+  const timeFilteredPlayed = useMemo(() => {
+    return playedMatches.filter(m => isMatchInTimeRange(m, timeFilter));
+  }, [playedMatches, timeFilter]);
+
   // ── High-Performance Zero-Leak Repetitive Odds Analytics (Single-Pass O(N)) ──
   const recurringOddsStats = useMemo(() => {
     const t0 = performance.now();
-    if (!playedMatches || playedMatches.length === 0) {
+    if (!timeFilteredPlayed || timeFilteredPlayed.length === 0) {
       return { home: [], away: [], draw: [], all: [], summary: { totalOdds: 0, highStrikeCount: 0, executionMs: 0 } };
     }
 
     const oddsMap = new Map();
 
-    for (let i = 0; i < playedMatches.length; i++) {
-      const m = playedMatches[i];
+    for (let i = 0; i < timeFilteredPlayed.length; i++) {
+      const m = timeFilteredPlayed[i];
       const odds = m.odds || {};
       const league = m.league || 'All Leagues';
       const isHome = m.winner === 'HOME_WIN' || m.winning_outcomes?.winner_1x2 === '1';
@@ -319,7 +385,7 @@ export default function UnifiedMatchCenter() {
         executionMs
       }
     };
-  }, [playedMatches]);
+  }, [timeFilteredPlayed]);
 
   // Filtered recurring odds based on active user controls
   const filteredRecurringOdds = useMemo(() => {
@@ -628,10 +694,10 @@ export default function UnifiedMatchCenter() {
       .filter(m => !inPlayIdSet.has(m.id) && !inPlayIdSet.has(`${(m.home_team || '').trim()}_${(m.away_team || '').trim()}_${(m.match_time || '').trim()}`));
   }, [upcomingMatches, filterByLeague, playedIdSet, inPlayIdSet]);
 
-  // 3. Played Matches: all associated and finished matches
+  // 3. Played Matches: all associated and finished matches within selected time window & league
   const displayedPlayed = useMemo(() => {
-    return playedMatches.filter(filterByLeague);
-  }, [playedMatches, filterByLeague]);
+    return timeFilteredPlayed.filter(filterByLeague);
+  }, [timeFilteredPlayed, filterByLeague]);
 
   // Predictions filtering
   const allFilteredPredictions = enginePredictions.filter(filterByLeague);
@@ -1606,7 +1672,7 @@ export default function UnifiedMatchCenter() {
             {/* ── SECTION 3: PLAYED MATCHES (FULL DETAILS & OUTCOMES) ───────── */}
             {(viewMode === 'all' || viewMode === 'played') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px', flexWrap: 'wrap', gap: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: GREEN, boxShadow: `0 0 10px ${GREEN}` }} />
                     <h2 style={{ fontSize: '1.3rem', fontWeight: 800, margin: 0, color: '#FFF' }}>
@@ -1617,6 +1683,95 @@ export default function UnifiedMatchCenter() {
                     </span>
                   </div>
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Odds & Outcomes Verified</span>
+                </div>
+
+                {/* ── QUICK TIME WINDOW FILTER BAR (LAST 24H FROM YESTERDAY 7AM WAT VS ALL TIME) ── */}
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  background: 'rgba(0, 0, 0, 0.35)',
+                  padding: '10px 16px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  flexWrap: 'wrap',
+                  gap: '12px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span>⏱️</span> Time Window:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setTimeFilter('24H_WAT')}
+                      style={{
+                        background: timeFilter === '24H_WAT' ? 'rgba(0, 229, 255, 0.22)' : 'rgba(255, 255, 255, 0.04)',
+                        color: timeFilter === '24H_WAT' ? NEON : 'var(--text-secondary)',
+                        border: `1px solid ${timeFilter === '24H_WAT' ? NEON : 'rgba(255, 255, 255, 0.1)'}`,
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        fontSize: '0.82rem',
+                        fontWeight: timeFilter === '24H_WAT' ? 800 : 500,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <span>⚡ Last 24 Hours</span>
+                      <span style={{
+                        fontSize: '0.68rem',
+                        background: timeFilter === '24H_WAT' ? 'rgba(0, 229, 255, 0.3)' : 'rgba(255, 255, 255, 0.08)',
+                        padding: '2px 7px',
+                        borderRadius: '10px',
+                        color: timeFilter === '24H_WAT' ? '#FFF' : 'var(--text-muted)',
+                        fontWeight: 700
+                      }}>
+                        From Yesterday 07:00 WAT
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setTimeFilter('ALL')}
+                      style={{
+                        background: timeFilter === 'ALL' ? 'rgba(0, 255, 136, 0.22)' : 'rgba(255, 255, 255, 0.04)',
+                        color: timeFilter === 'ALL' ? GREEN : 'var(--text-secondary)',
+                        border: `1px solid ${timeFilter === 'ALL' ? GREEN : 'rgba(255, 255, 255, 0.1)'}`,
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        fontSize: '0.82rem',
+                        fontWeight: timeFilter === 'ALL' ? 800 : 500,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <span>🌐 All Time</span>
+                      <span style={{
+                        fontSize: '0.68rem',
+                        background: timeFilter === 'ALL' ? 'rgba(0, 255, 136, 0.3)' : 'rgba(255, 255, 255, 0.08)',
+                        padding: '2px 7px',
+                        borderRadius: '10px',
+                        color: timeFilter === 'ALL' ? '#FFF' : 'var(--text-muted)',
+                        fontWeight: 700
+                      }}>
+                        {playedMatches.length} Matches
+                      </span>
+                    </button>
+                  </div>
+
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: timeFilter === '24H_WAT' ? NEON : GREEN }} />
+                    <span>
+                      {timeFilter === '24H_WAT'
+                        ? `Showing ${displayedPlayed.length} matches from yesterday 07:00 AM WAT to now`
+                        : `Showing all ${displayedPlayed.length} historical verified matches`}
+                    </span>
+                  </div>
                 </div>
 
                 {/* ── REPETITIVE WINNING ODDS INTELLIGENCE PANEL ── */}
@@ -1654,7 +1809,7 @@ export default function UnifiedMatchCenter() {
                       </p>
                     </div>
 
-                    {/* Quick Metric Pills */}
+                    {/* Quick Metric Pills & Collapse/Expand Toggle */}
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                       <div style={{
                         background: 'rgba(0, 255, 136, 0.1)',
@@ -1682,17 +1837,21 @@ export default function UnifiedMatchCenter() {
                         type="button"
                         onClick={() => setShowRecurringOddsPanel(prev => !prev)}
                         style={{
-                          background: 'rgba(255, 255, 255, 0.06)',
-                          border: '1px solid rgba(255, 255, 255, 0.15)',
-                          color: '#FFF',
-                          borderRadius: '6px',
-                          padding: '4px 10px',
-                          fontSize: '0.72rem',
+                          background: showRecurringOddsPanel ? 'rgba(0, 229, 255, 0.18)' : 'rgba(255, 255, 255, 0.08)',
+                          border: `1px solid ${showRecurringOddsPanel ? NEON : 'rgba(255, 255, 255, 0.2)'}`,
+                          color: showRecurringOddsPanel ? NEON : '#FFF',
+                          borderRadius: '8px',
+                          padding: '6px 14px',
+                          fontSize: '0.78rem',
                           cursor: 'pointer',
-                          fontWeight: 600
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.18s ease'
                         }}
                       >
-                        {showRecurringOddsPanel ? 'Hide Intelligence ▲' : 'Show Intelligence ▼'}
+                        <span>{showRecurringOddsPanel ? '▲ Collapse Intelligence' : `▼ Expand Intelligence (${filteredRecurringOdds.length} Odds)`}</span>
                       </button>
                     </div>
                   </div>
