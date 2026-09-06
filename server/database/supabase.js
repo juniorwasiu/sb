@@ -92,7 +92,7 @@ const mapMatchFromDb = (row) => {
 // PUBLIC DATABASE API FUNCTIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 1. Get matches — Supabase ONLY, no local fallback for results
+// 1. Get matches — Supabase ONLY, indexed by primary key id DESC
 async function getMatchesFromDb(limit = 200) {
     if (!supabaseClient) {
         throw new Error('[SUPABASE] Supabase client is not initialized. Check SUPABASE_URL and SUPABASE_KEY in .env.');
@@ -100,7 +100,7 @@ async function getMatchesFromDb(limit = 200) {
     let q = supabaseClient
         .from('vfootball_results')
         .select('id, time, date, game_id, home_team, away_team, score, league, source_tag, uploaded_at')
-        .order('uploaded_at', { ascending: false });
+        .order('id', { ascending: false });
     if (limit && typeof limit === 'number') {
         q = q.limit(limit);
     }
@@ -955,7 +955,7 @@ async function getPlayedMatchesFromDb({ league, date, limit = 500, offset = 0 } 
             let q = supabaseClient.from('vfootball_results').select('*');
             if (league && league !== 'ALL') q = q.ilike('league', `%${league.replace(' - Virtual', '')}%`);
             if (date) q = q.eq('date', date);
-            q = q.order('uploaded_at', { ascending: false }).range(offset, offset + limit - 1);
+            q = q.order('id', { ascending: false }).range(offset, offset + limit - 1);
             const { data, error } = await withTimeout(q, 3500);
             if (!error && data && data.length > 0) {
                 const converted = data.map(r => {
